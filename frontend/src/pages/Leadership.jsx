@@ -1,10 +1,30 @@
-import React from 'react';
-import { board, governance, org } from '../mock/mock';
+import React, { useState, useEffect } from 'react';
+import { board as mockBoard, governance, org } from '../mock/mock';
+import { api, mediaSrc } from '../lib/api';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
 import { ShieldCheck, FileCheck2 } from 'lucide-react';
 
 export default function Leadership() {
+  const [board, setBoard] = useState(mockBoard);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get('/media?category=board');
+        if (data && data.length) {
+          const uploaded = data.map((d) => ({
+            name: d.title || 'Team Member',
+            role: d.subtitle || '',
+            photo: mediaSrc(d.url),
+            bio: '',
+          }));
+          setBoard([...mockBoard, ...uploaded]);
+        }
+      } catch (e) {
+        /* fall back to mock */
+      }
+    })();
+  }, []);
   return (
     <div>
       <PageHero

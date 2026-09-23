@@ -97,7 +97,73 @@
 #====================================================================================================
 
 
-
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  Clone of caringsistersclub.org made grant-compliant. Added Emergent Google sign-in (auth)
+  and file & media storage (Emergent object storage) with a protected admin dashboard to
+  manage gallery photos, leadership photos, event images, and PDF documents.
+
+backend:
+  - task: "Emergent Google Auth - session exchange, /auth/me, logout"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/auth/session exchanges session_id via Emergent, stores session_token in user_sessions with 7-day expiry, sets httpOnly cookie, upserts user (role admin). GET /api/auth/me returns current user via cookie or Bearer. POST /api/auth/logout clears session. Cannot fully test session exchange without a real session_id; please test unauthenticated 401 behavior on /auth/me and /media (POST/DELETE), and that a seeded user_sessions token authenticates /auth/me (see auth_testing.md pattern)."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ ALL AUTH TESTS PASSED (3/3). Tested via /app/backend_test.py with seeded MongoDB user/session per auth_testing.md pattern. Results: (1) GET /api/auth/me returns 401 when unauthenticated ✅ (2) GET /api/auth/me with Bearer token returns correct user (email, name, role=admin) ✅ (3) POST /api/auth/logout succeeds (200) ✅. Auth dependency works correctly for protected endpoints. Session token authentication via Bearer header and cookie both functional."
+  - task: "File & media storage via Emergent object storage"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/media (multipart: file, category, title, subtitle) is auth-protected, uploads to Emergent object storage (init_storage succeeded at startup per logs), stores metadata in db.media with is_deleted flag. GET /api/media?category=... is public list. GET /api/media/file/{id} serves bytes publicly. DELETE /api/media/{id} soft-deletes (auth). Categories: gallery, board, event, document. Please test: unauthenticated POST/DELETE return 401; with a seeded session token, upload a small image + a PDF, list them, fetch the file bytes (200 + correct content-type), soft-delete removes it from list."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ ALL MEDIA TESTS PASSED (12/12). Tested via /app/backend_test.py with authenticated Bearer token. Results: (1) POST /api/media without auth returns 401 ✅ (2) Upload PNG to gallery category succeeds, returns id/url/storage_path/size ✅ (3) Upload PDF to document category with title='Form 990 2024' and subtitle='2024' succeeds ✅ (4) Invalid category returns 400 ✅ (5) GET /api/media?category=gallery lists uploaded image ✅ (6) GET /api/media?category=document lists uploaded PDF ✅ (7) GET /api/media/file/{id} returns image with Content-Type: image/png and non-empty body ✅ (8) GET /api/media/file/{id} returns PDF with Content-Type: application/pdf and non-empty body ✅ (9) DELETE /api/media/{id} without auth returns 401 ✅ (10) DELETE /api/media/{id} with auth soft-deletes (200) ✅ (11) Soft-deleted item excluded from subsequent list ✅ (12) GET /api/media/file/{id} for deleted item returns 404 ✅. Emergent object storage integration working correctly."
+
+frontend:
+  - task: "Auth context + admin dashboard + public content wiring"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/Admin.jsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Frontend not yet tested by automation; will ask user before frontend testing."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 2
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: "Please test the new backend auth + media endpoints. Read /app/auth_testing.md for the Emergent auth session-seeding pattern (insert a user with a custom user_id and a matching user_sessions doc with session_token + future expires_at, then use Authorization: Bearer <session_token>). Object storage init succeeded at startup. Focus: 401 on protected endpoints when unauthenticated; full media lifecycle (upload image + PDF, list, fetch file bytes with correct content-type, soft-delete) when authenticated. DB name is in backend/.env (DB_NAME). Do NOT edit the Testing Protocol block."
+    -agent: "testing"
+    -message: "✅ Backend testing complete. All 15 tests passed (100% success rate). Created /app/backend_test.py with comprehensive test suite covering both Emergent Google Auth and File/Media Storage features. Auth: All endpoints working correctly (401 for unauthenticated, Bearer token auth, logout). Media: Full lifecycle tested (upload image/PDF, list by category, fetch file bytes with correct Content-Type, soft-delete, 401 for protected endpoints). Emergent object storage integration confirmed working. Test data cleaned up from MongoDB. Both backend tasks marked as working: true. Ready for main agent to summarize and finish."
+

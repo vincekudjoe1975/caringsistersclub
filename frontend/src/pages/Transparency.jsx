@@ -1,10 +1,16 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { financials, org, stats } from '../mock/mock';
+import { api, mediaSrc } from '../lib/api';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
 import { FileText, Download, PieChart, TrendingUp } from 'lucide-react';
 
-function DocRow({ title, size }) {
+function DocRow({ title, size, href }) {
+  const isLink = href && href !== '#';
+  const Wrapper = isLink ? 'a' : 'button';
+  const wrapperProps = isLink
+    ? { href, target: '_blank', rel: 'noreferrer' }
+    : { onClick: (e) => e.preventDefault() };
   return (
     <div className="flex items-center justify-between py-4 px-5 rounded-xl bg-white border border-[#3B0A2E]/8 card-hover">
       <div className="flex items-center gap-3">
@@ -16,14 +22,25 @@ function DocRow({ title, size }) {
           <p className="text-[#241019]/50 text-[12.5px]">PDF &middot; {size}</p>
         </div>
       </div>
-      <button onClick={(e) => e.preventDefault()} className="flex items-center gap-2 text-[#B4247E] font-semibold text-[13.5px] hover:text-[#D14FA0] transition-colors">
+      <Wrapper {...wrapperProps} className="flex items-center gap-2 text-[#B4247E] font-semibold text-[13.5px] hover:text-[#D14FA0] transition-colors">
         <Download size={16} /> Download
-      </button>
+      </Wrapper>
     </div>
   );
 }
 
 export default function Transparency() {
+  const [uploaded, setUploaded] = useState([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get('/media?category=document');
+        setUploaded(data || []);
+      } catch (e) {
+        /* ignore */
+      }
+    })();
+  }, []);
   return (
     <div>
       <PageHero
@@ -98,8 +115,18 @@ export default function Transparency() {
             </div>
           </div>
         </div>
+        {uploaded.length > 0 && (
+          <div className="max-w-5xl mx-auto px-5 lg:px-8 mt-12">
+            <h3 className="font-serif text-[24px] text-[#3B0A2E] font-semibold mb-6">Published Documents</h3>
+            <div className="grid md:grid-cols-2 gap-3">
+              {uploaded.map((d) => (
+                <DocRow key={d.id} title={d.title || d.original_name} size={d.subtitle || `${(d.size / 1024).toFixed(0)} KB`} href={mediaSrc(d.url)} />
+              ))}
+            </div>
+          </div>
+        )}
         <p className="max-w-5xl mx-auto px-5 lg:px-8 text-[#241019]/55 text-[13px] italic mt-8">
-          Documents are sample placeholders for demonstration. {org.name} (EIN {org.ein}) is a {org.status}.
+          Sample placeholders shown for demonstration; published documents above are managed by staff. {org.name} (EIN {org.ein}) is a {org.status}.
         </p>
       </section>
     </div>

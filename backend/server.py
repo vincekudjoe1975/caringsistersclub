@@ -66,6 +66,254 @@ async def get_status_checks():
     
     return status_checks
 
+# ---------- Emergent Google Auth + File/Media Storage ----------
+import requests as _requests
+from fastapi import Request, Response, HTTPException, UploadFile, File, Form, Depends, Header, Query
+from typing import Optional
+from datetime import timedelta
+
+# ---- Emergent Object Storage config ----
+STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
+STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
+EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
+APP_NAME = "caring-sisters-club"
+_storage_key = None
+
+
+def init_storage(force: bool = False):
+    global _storage_key
+    if _storage_key and not force:
+        return _storage_key
+    resp = _requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY}, timeout=30)
+    resp.raise_for_status()
+    _storage_key = resp.json()["storage_key"]
+    return _storage_key
+
+
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    resp = _requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": content_type},
+        data=data, timeout=120,
+    )
+    if resp.status_code == 404:
+        key = init_storage(force=True)
+        resp = _requests.put(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key, "Content-Type": content_type},
+            data=data, timeout=120,
+        )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_object(path: str):
+    key = init_storage()
+    resp = _requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    if resp.status_code == 404:
+        key = init_storage(force=True)
+        resp = _requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+
+EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+ALLOWED_CATEGORIES = {"gallery", "board", "document", "event"}
+
+
+class SessionRequest(BaseModel):
+    session_id: str
+
+
+async def get_current_user(request: Request):
+    token = request.cookies.get("session_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    expires_at = session["expires_at"]
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        await db.user_sessions.delete_one({"session_token": token})
+        raise HTTPException(status_code=401, detail="Session expired")
+    user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+@api_router.post("/auth/session")
+async def auth_session(payload: SessionRequest, response: Response):
+    try:
+        r = _requests.get(
+            EMERGENT_SESSION_URL,
+            headers={"X-Session-ID": payload.session_id},
+            timeout=15,
+        )
+    except Exception:
+        raise HTTPException(status_code=502, detail="Auth service unreachable")
+    if r.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid session_id")
+    data = r.json()
+    email = data.get("email")
+    if not email:
+        raise HTTPException(status_code=401, detail="No email returned")
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        user_id = existing["user_id"]
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"name": data.get("name"), "picture": data.get("picture")}},
+        )
+    else:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        await db.users.insert_one({
+            "user_id": user_id,
+            "email": email,
+            "name": data.get("name"),
+            "picture": data.get("picture"),
+            "role": "admin",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    session_token = data.get("session_token")
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    response.set_cookie(
+        key="session_token", value=session_token, httponly=True,
+        secure=True, samesite="none", max_age=7 * 24 * 60 * 60, path="/",
+    )
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    return user
+
+
+@api_router.get("/auth/me")
+async def auth_me(user=Depends(get_current_user)):
+    return user
+
+
+@api_router.post("/auth/logout")
+async def auth_logout(request: Request, response: Response):
+    token = request.cookies.get("session_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if token:
+        await db.user_sessions.delete_one({"session_token": token})
+    response.delete_cookie("session_token", path="/")
+    return {"message": "Logged out"}
+
+
+def _media_url(item_id: str) -> str:
+    return f"/api/media/file/{item_id}"
+
+
+@api_router.post("/media")
+async def upload_media(
+    file: UploadFile = File(...),
+    category: str = Form(...),
+    title: Optional[str] = Form(None),
+    subtitle: Optional[str] = Form(None),
+    user=Depends(get_current_user),
+):
+    if category not in ALLOWED_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Invalid category")
+    item_id = str(uuid.uuid4())
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    storage_path = f"{APP_NAME}/{category}/{item_id}.{ext}"
+    data = await file.read()
+    content_type = file.content_type or "application/octet-stream"
+    try:
+        result = put_object(storage_path, data, content_type)
+    except Exception as e:
+        logging.error(f"Storage upload failed: {e}")
+        raise HTTPException(status_code=502, detail="File storage upload failed")
+    doc = {
+        "id": item_id,
+        "category": category,
+        "storage_path": result.get("path", storage_path),
+        "original_name": file.filename,
+        "content_type": content_type,
+        "title": title,
+        "subtitle": subtitle,
+        "size": result.get("size", len(data)),
+        "is_deleted": False,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "uploaded_by": user["email"],
+    }
+    await db.media.insert_one(doc)
+    doc.pop("_id", None)
+    doc["url"] = _media_url(item_id)
+    return doc
+
+
+@api_router.get("/media")
+async def list_media(category: Optional[str] = None):
+    query = {"is_deleted": {"$ne": True}}
+    if category:
+        query["category"] = category
+    items = await db.media.find(query, {"_id": 0}).sort("uploaded_at", -1).to_list(500)
+    for it in items:
+        it["url"] = _media_url(it["id"])
+    return items
+
+
+@api_router.get("/media/file/{item_id}")
+async def get_media_file(item_id: str):
+    item = await db.media.find_one({"id": item_id, "is_deleted": {"$ne": True}}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        data, content_type = get_object(item["storage_path"])
+    except Exception as e:
+        logging.error(f"Storage fetch failed: {e}")
+        raise HTTPException(status_code=404, detail="File missing")
+    return Response(content=data, media_type=item.get("content_type", content_type))
+
+
+@api_router.delete("/media/{item_id}")
+async def delete_media(item_id: str, user=Depends(get_current_user)):
+    item = await db.media.find_one({"id": item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Not found")
+    await db.media.update_one({"id": item_id}, {"$set": {"is_deleted": True}})
+    return {"message": "Deleted"}
+
+
+@app.on_event("startup")
+async def startup_storage():
+    try:
+        init_storage()
+        logging.info("Object storage initialized")
+    except Exception as e:
+        logging.error(f"Storage init failed: {e}")
+
+
+@app.on_event("startup")
+async def startup_indexes():
+    try:
+        await db.users.create_index("email", unique=True)
+        await db.users.create_index("user_id", unique=True)
+        await db.user_sessions.create_index("session_token")
+        await db.media.create_index("category")
+    except Exception as e:
+        logging.warning(f"Index creation warning: {e}")
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
