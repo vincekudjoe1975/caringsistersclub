@@ -2,6 +2,13 @@
 // NOTE: All organizational/legal/financial details below are SAMPLE/DEMO
 // placeholders and are NOT real. Replace with verified data before launch.
 
+import femImg from '../assets/team/fem.jpg';
+import yeamaImg from '../assets/team/yeama.jpg';
+import patriciaImg from '../assets/team/patricia.jpg';
+import josephineImg from '../assets/team/josephine.jpg';
+import finnahImg from '../assets/team/finnah.jpg';
+import tiggyImg from '../assets/team/tiggy.jpg';
+
 export const org = {
   name: 'The Caring Sisters Club, Inc.',
   shortName: 'Caring Sisters Club',
@@ -92,18 +99,15 @@ export const story = [
 ];
 
 export const board = [
-  { name: 'Dr. Amara Okonkwo', role: 'Founder & Board Chair', affiliation: 'Public Health Strategist', bio: 'A physician and community organizer with 20 years advancing health equity across the Diaspora.' },
-  { name: 'Naomi Adeyemi', role: 'Vice Chair', affiliation: 'Corporate Attorney, Adeyemi & Co.', bio: 'Guides governance and compliance, ensuring the club upholds the highest fiduciary standards.' },
-  { name: 'Grace Mensah', role: 'Treasurer', affiliation: 'CPA, Certified Nonprofit Accountant', bio: 'Oversees financial stewardship, audits, and transparent reporting to members and funders.' },
-  { name: 'Simone Baptiste', role: 'Secretary', affiliation: 'Communications Director', bio: 'Keeps the board accountable and tells the stories of the sisters we serve.' },
-  { name: 'Fatima Diallo', role: 'Director of Programs', affiliation: 'Social Impact Consultant', bio: 'Designs and evaluates the programs that deliver measurable outcomes for members.' },
-  { name: 'Yolanda Carter', role: 'Director of Development', affiliation: 'Philanthropy Advisor', bio: 'Leads grant strategy and donor relationships that sustain our mission long-term.' },
+  { name: 'Fem Mansaray', role: 'Founder & President', photo: femImg, bio: 'Founder and President of Caring Sisters Club, leading the vision to connect and empower women of the Diaspora.' },
+  { name: 'Yeama Conteh', role: 'Co-Founder & Vice-President', photo: yeamaImg, bio: 'Co-Founder and Vice-President, championing member support, education, and community programs.' },
+  { name: 'Patricia Nguessan', role: 'Co-Founder & Board Member', photo: patriciaImg, bio: 'Co-Founder and Board Member dedicated to sisterhood, service, and philanthropic impact.' },
+  { name: 'Josephine Margai', role: 'Co-Founder & Board Member', photo: josephineImg, bio: 'Co-Founder and Board Member helping steward the club\u2019s mission and community engagement.' },
+  { name: 'Finnah Mansaray', role: 'Co-Founder & Board Member', photo: finnahImg, bio: 'Co-Founder and Board Member supporting governance and the growth of the sisterhood.' },
+  { name: 'Tiggy Steves', role: 'Media & Organizing Secretary', photo: tiggyImg, bio: 'Media and Organizing Secretary, coordinating communications, events, and outreach.' },
 ];
 
-export const executives = [
-  { name: 'Renee Thompson', role: 'Executive Director', bio: 'Leads day-to-day operations, staff, and strategic execution across all chapters.' },
-  { name: 'Priya Sharma', role: 'Program Operations Manager', bio: 'Coordinates volunteers, events, and member services nationwide.' },
-];
+export const executives = [];
 
 export const governance = [
   { title: 'Conflict of Interest Policy', desc: 'All directors annually disclose potential conflicts to protect the organization’s integrity.' },
