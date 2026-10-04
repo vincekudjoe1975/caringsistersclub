@@ -1,11 +1,48 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
-import { Loader2, DollarSign, Repeat, Gift, TrendingUp } from 'lucide-react';
+import { useToast } from '../hooks/use-toast';
+import { Loader2, DollarSign, Repeat, Gift, TrendingUp, Download, Mail } from 'lucide-react';
 
 export default function AdminDonations() {
+  const { toast } = useToast();
   const [data, setData] = useState(null);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [sending, setSending] = useState(false);
+  const thisYear = new Date().getFullYear();
+
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const res = await api.get('/admin/donations/export', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'text/csv' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'caring-sisters-donations.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      toast({ title: 'Export failed', description: 'Please try again.', variant: 'destructive' });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const sendStatements = async () => {
+    if (!window.confirm(`Email ${thisYear} giving statements to all donors with an email on file?`)) return;
+    setSending(true);
+    try {
+      const { data: r } = await api.post(`/admin/donations/send-statements?year=${thisYear}`);
+      toast({ title: 'Statements sent', description: `${r.sent} of ${r.recipients} donors emailed for ${r.year}.` });
+    } catch (e) {
+      toast({ title: 'Send failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
+    } finally {
+      setSending(false);
+    }
+  };
 
   const load = useCallback(async (f) => {
     setLoading(true);
@@ -50,14 +87,26 @@ export default function AdminDonations() {
         })}
       </div>
 
-      <div className="flex gap-2 mb-5">
-        {[{ k: 'all', l: 'All' }, { k: 'one-time', l: 'One-Time' }, { k: 'monthly', l: 'Monthly' }].map((f) => (
-          <button key={f.k} onClick={() => setFilter(f.k)}
-            className={`px-4 py-2 rounded-full text-[13.5px] font-semibold transition-all ${filter === f.k ? 'text-white' : 'text-[#3B0A2E] bg-white'}`}
-            style={filter === f.k ? { background: '#B4247E' } : { border: '1px solid rgba(59,10,46,0.1)' }}>
-            {f.l}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+        <div className="flex gap-2">
+          {[{ k: 'all', l: 'All' }, { k: 'one-time', l: 'One-Time' }, { k: 'monthly', l: 'Monthly' }].map((f) => (
+            <button key={f.k} onClick={() => setFilter(f.k)}
+              className={`px-4 py-2 rounded-full text-[13.5px] font-semibold transition-all ${filter === f.k ? 'text-white' : 'text-[#3B0A2E] bg-white'}`}
+              style={filter === f.k ? { background: '#B4247E' } : { border: '1px solid rgba(59,10,46,0.1)' }}>
+              {f.l}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={exportCsv} disabled={exporting}
+            className="px-4 py-2 rounded-full text-[13.5px] font-semibold flex items-center gap-2 bg-white text-[#3B0A2E] disabled:opacity-60" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>
+            {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Export CSV
           </button>
-        ))}
+          <button onClick={sendStatements} disabled={sending}
+            className="px-4 py-2 rounded-full text-[13.5px] font-semibold flex items-center gap-2 btn-magenta disabled:opacity-60">
+            {sending ? <Loader2 size={15} className="animate-spin" /> : <Mail size={15} />} Email {thisYear} Statements
+          </button>
+        </div>
       </div>
 
       {loading ? (

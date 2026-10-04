@@ -1,13 +1,29 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, Target, Save } from 'lucide-react';
+import { Loader2, Target, Save, Send } from 'lucide-react';
 
 export default function AdminCampaign() {
   const { toast } = useToast();
   const [form, setForm] = useState({ campaign_title: '', campaign_subtitle: '', goal: '', deadline: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState('');
+  const [sendingProgress, setSendingProgress] = useState(false);
+
+  const sendProgress = async () => {
+    if (!window.confirm('Send a progress update email to all past donors?')) return;
+    setSendingProgress(true);
+    try {
+      const { data: r } = await api.post('/admin/campaign/send-progress', { message: note });
+      toast({ title: 'Progress email sent', description: `We're ${r.percent}% there — ${r.sent} of ${r.recipients} donors emailed.` });
+      setNote('');
+    } catch (e) {
+      toast({ title: 'Send failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
+    } finally {
+      setSendingProgress(false);
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -95,6 +111,20 @@ export default function AdminCampaign() {
           {saving ? <><Loader2 className="animate-spin" size={16} /> Saving…</> : <><Save size={16} /> Save Campaign</>}
         </button>
       </form>
+
+      <div className="bg-white rounded-2xl p-8 border border-[#3B0A2E]/8 mt-6">
+        <h2 className="font-serif text-[22px] text-[#3B0A2E] font-semibold mb-1 flex items-center gap-2">
+          <Send size={20} className="text-[#B4247E]" /> Campaign Progress Email
+        </h2>
+        <p className="text-[#241019]/60 text-[13.5px] mb-5">Email all past donors a "we're X% there" update with the current progress bar. Add an optional personal note.</p>
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3}
+          placeholder="Optional note, e.g. 'Just two weeks left — help us cross the finish line!'"
+          className="w-full rounded-lg border border-[#3B0A2E]/15 px-4 py-3 text-[14px] focus:outline-none focus:border-[#B4247E] resize-none mb-4" />
+        <button onClick={sendProgress} disabled={sendingProgress}
+          className="btn-magenta rounded-full px-7 py-3 font-semibold flex items-center gap-2 disabled:opacity-60">
+          {sendingProgress ? <><Loader2 className="animate-spin" size={16} /> Sending…</> : <><Send size={16} /> Send Progress Update</>}
+        </button>
+      </div>
     </div>
   );
 }

@@ -845,7 +845,141 @@ async def admin_donations(frequency: Optional[str] = None, user=Depends(require_
     }
 
 
-# ---------- Milestone Emails (staff alerts at 25/50/100%) ----------
+# ---------- Admin: CSV export, year-end statements, progress emails ----------
+import csv
+import io
+from fastapi.responses import StreamingResponse
+
+
+def _txn_display_name(t: dict) -> str:
+    if t.get("anonymous"):
+        return "Anonymous"
+    return (t.get("donor_name") or "").strip() or "Anonymous"
+
+
+@api_router.get("/admin/donations/export")
+async def export_donations_csv(year: Optional[int] = None, user=Depends(require_admin)):
+    query = {"payment_status": "paid"}
+    rows = await db.payment_transactions.find(query, {"_id": 0}).sort("updated_at", 1).to_list(5000)
+    if year:
+        rows = [r for r in rows if (r.get("updated_at") or "").startswith(str(year))]
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Date", "Donor Name", "Email", "Amount (USD)", "Type", "Renewal", "Transaction ID"])
+    for r in rows:
+        date = (r.get("updated_at") or "")[:10]
+        writer.writerow([
+            date,
+            _txn_display_name(r),
+            r.get("donor_email") or "",
+            f"{float(r.get('amount', 0)):.2f}",
+            "Monthly" if r.get("frequency") == "monthly" else "One-Time",
+            "Yes" if r.get("is_renewal") else "No",
+            r.get("session_id") or "",
+        ])
+    buf.seek(0)
+    fname = f"caring-sisters-donations{'-' + str(year) if year else ''}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
+def _year_statement_html(name: str, year: int, total: float, gifts: list) -> str:
+    rows = "".join(
+        f'<tr><td style="padding:8px 12px;font-size:13px;color:#4a3340;border-top:1px solid #eadfe6">{_esc((g.get("updated_at") or "")[:10])}</td>'
+        f'<td style="padding:8px 12px;font-size:13px;color:#4a3340;border-top:1px solid #eadfe6">{"Monthly" if g.get("frequency")=="monthly" else "One-Time"}</td>'
+        f'<td align="right" style="padding:8px 12px;font-size:13px;color:#3B0A2E;font-weight:bold;border-top:1px solid #eadfe6">${float(g.get("amount",0)):,.2f}</td></tr>'
+        for g in gifts
+    )
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9;padding:0;margin:0"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        '<tr><td style="background:#3B0A2E;padding:26px 32px;color:#F7EFE9;font-family:Georgia,serif">'
+        '<div style="font-size:19px;font-weight:bold">The Caring Sisters Club</div>'
+        f'<div style="font-size:11px;color:#CBA24B;letter-spacing:3px;text-transform:uppercase;margin-top:4px">{year} Annual Giving Statement</div></td></tr>'
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:22px;margin:0 0 12px">Thank you, {_esc(name)}</h1>'
+        f'<p style="font-size:14px;line-height:1.6;color:#4a3340;margin:0 0 18px">Here is a summary of your tax-deductible contributions to The Caring Sisters Club during {year}. Please retain this statement for your records.</p>'
+        '<table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:16px">'
+        '<tr style="background:#faf2f7"><td style="padding:8px 12px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#B4247E">Date</td>'
+        '<td style="padding:8px 12px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#B4247E">Type</td>'
+        '<td align="right" style="padding:8px 12px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#B4247E">Amount</td></tr>'
+        f'{rows}</table>'
+        '<table role="presentation" width="100%" style="background:#3B0A2E;border-radius:12px">'
+        f'<tr><td style="padding:16px 22px;font-size:14px;color:#F7EFE9">Total {year} contributions</td>'
+        f'<td align="right" style="padding:16px 22px;font-size:20px;font-weight:bold;color:#CBA24B">${total:,.2f}</td></tr></table>'
+        '<p style="font-size:12px;line-height:1.6;color:#6b5560;margin:18px 0 0">The Caring Sisters Club, Inc. is a 501(c)(3) tax-exempt organization (EIN 88-1234567, sample). No goods or services were provided in exchange for these contributions. Please consult your tax advisor.</p>'
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">With gratitude, The Caring Sisters Club. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+@api_router.post("/admin/donations/send-statements")
+async def send_year_statements(year: Optional[int] = None, user=Depends(require_admin)):
+    yr = year or datetime.now(timezone.utc).year
+    rows = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(5000)
+    rows = [r for r in rows if (r.get("updated_at") or "").startswith(str(yr)) and (r.get("donor_email") or "").strip()]
+    by_email = {}
+    for r in rows:
+        by_email.setdefault(r["donor_email"].strip().lower(), []).append(r)
+    sent = 0
+    for email, gifts in by_email.items():
+        total = sum(float(g.get("amount", 0)) for g in gifts)
+        name = next((g.get("donor_name") for g in gifts if (g.get("donor_name") or "").strip()), None) or "Friend"
+        gifts_sorted = sorted(gifts, key=lambda g: g.get("updated_at") or "")
+        html = _year_statement_html(name, yr, total, gifts_sorted)
+        result = await send_email(to=email, subject=f"Your {yr} giving statement — The Caring Sisters Club", html=html)
+        if result is not None:
+            sent += 1
+    return {"year": yr, "recipients": len(by_email), "sent": sent}
+
+
+class ProgressEmail(BaseModel):
+    message: Optional[str] = None
+
+
+def _progress_email_html(pct: int, raised: float, goal: float, title: str, note: str) -> str:
+    bar_w = max(3, min(100, pct))
+    note_html = f'<p style="font-size:14px;line-height:1.6;color:#4a3340;margin:0 0 18px">{_esc(note)}</p>' if note else ''
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9;padding:0;margin:0"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        '<tr><td style="background:#3B0A2E;padding:26px 32px;color:#F7EFE9;font-family:Georgia,serif">'
+        '<div style="font-size:19px;font-weight:bold">The Caring Sisters Club</div>'
+        '<div style="font-size:11px;color:#CBA24B;letter-spacing:3px;text-transform:uppercase;margin-top:4px">Campaign Update</div></td></tr>'
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#B4247E;font-size:26px;margin:0 0 10px">We\'re {pct}% there!</h1>'
+        f'<p style="font-size:14px;line-height:1.6;color:#4a3340;margin:0 0 8px">Thanks to supporters like you, <strong>{_esc(title)}</strong> has raised <strong>${raised:,.0f}</strong> of our <strong>${goal:,.0f}</strong> goal.</p>'
+        f'{note_html}'
+        f'<div style="height:16px;border-radius:999px;background:#eadfe6;overflow:hidden;margin:6px 0 20px"><div style="height:16px;width:{bar_w}%;background:#B4247E;border-radius:999px"></div></div>'
+        '<a href="https://caring-sisters-clone.preview.emergentagent.com/donate" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">Give Again</a>'
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You\'re receiving this because you supported The Caring Sisters Club. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+@api_router.post("/admin/campaign/send-progress")
+async def send_progress_email(payload: ProgressEmail, user=Depends(require_admin)):
+    settings = await _get_settings()
+    goal = float(settings.get("goal") or 0)
+    paid = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(5000)
+    total = sum(float(t.get("amount", 0)) for t in paid)
+    pct = int((total / goal) * 100) if goal > 0 else 0
+    emails = sorted({(t.get("donor_email") or "").strip().lower() for t in paid if (t.get("donor_email") or "").strip()})
+    html = _progress_email_html(pct, total, goal, settings.get("campaign_title"), payload.message or "")
+    sent = 0
+    for email in emails:
+        result = await send_email(to=email, subject=f"We're {pct}% to our goal — thank you!", html=html)
+        if result is not None:
+            sent += 1
+    return {"percent": pct, "recipients": len(emails), "sent": sent}
+
+
+
 MILESTONES = [25, 50, 100]
 
 
