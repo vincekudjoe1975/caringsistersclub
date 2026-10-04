@@ -151,6 +151,14 @@ async def get_current_user(request: Request):
     return user
 
 
+async def require_admin(request: Request):
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+
 @api_router.post("/auth/session")
 async def auth_session(payload: SessionRequest, response: Response):
     try:
@@ -175,13 +183,20 @@ async def auth_session(payload: SessionRequest, response: Response):
             {"$set": {"name": data.get("name"), "picture": data.get("picture")}},
         )
     else:
+        # Self-bootstrapping allowlist:
+        # - First ever user becomes the owner/admin.
+        # - A pre-approved email (allowed_emails) becomes admin.
+        # - Everyone else is 'pending' until an admin approves them.
+        admin_count = await db.users.count_documents({"role": "admin"})
+        preapproved = await db.allowed_emails.find_one({"email": email.lower()})
+        role = "admin" if (admin_count == 0 or preapproved) else "pending"
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         await db.users.insert_one({
             "user_id": user_id,
             "email": email,
             "name": data.get("name"),
             "picture": data.get("picture"),
-            "role": "admin",
+            "role": role,
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
     session_token = data.get("session_token")
@@ -228,7 +243,7 @@ async def upload_media(
     category: str = Form(...),
     title: Optional[str] = Form(None),
     subtitle: Optional[str] = Form(None),
-    user=Depends(get_current_user),
+    user=Depends(require_admin),
 ):
     if category not in ALLOWED_CATEGORIES:
         raise HTTPException(status_code=400, detail="Invalid category")
@@ -287,7 +302,7 @@ async def get_media_file(item_id: str):
 
 
 @api_router.delete("/media/{item_id}")
-async def delete_media(item_id: str, user=Depends(get_current_user)):
+async def delete_media(item_id: str, user=Depends(require_admin)):
     item = await db.media.find_one({"id": item_id}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Not found")
@@ -309,6 +324,7 @@ class DonationCheckout(BaseModel):
     frequency: str = "one-time"  # or "monthly"
     donor_name: Optional[str] = None
     donor_email: Optional[str] = None
+    anonymous: bool = False
     origin_url: str
 
 
@@ -363,6 +379,7 @@ async def create_donation_checkout(req: DonationCheckout):
         "frequency": req.frequency,
         "donor_name": req.donor_name or "",
         "donor_email": req.donor_email or "",
+        "anonymous": bool(req.anonymous),
         "status": "initiated",
         "payment_status": "pending",
         "created_at": now,
@@ -371,17 +388,19 @@ async def create_donation_checkout(req: DonationCheckout):
     return {"checkout_url": session.url, "session_id": session.id}
 
 
-async def _record_paid_donation(session_id: str, txn: dict):
-    """Insert a donation submission once, so staff see it in the admin inbox."""
+async def _record_paid_donation(session_id: str, txn: dict, recipient_email: str = None):
+    """Insert a donation submission once, and send a receipt email."""
     existing = await db.submissions.find_one({"data.session_id": session_id})
     if existing:
         return
+    donor_email = (recipient_email or txn.get("donor_email") or "").strip()
+    donor_name = (txn.get("donor_name") or "").strip() or "Friend"
     await db.submissions.insert_one({
         "id": str(uuid.uuid4()),
         "type": "donation",
         "data": {
             "name": txn.get("donor_name") or "Anonymous",
-            "email": txn.get("donor_email") or "",
+            "email": donor_email,
             "amount": f"${txn.get('amount')}",
             "frequency": txn.get("frequency"),
             "status": "Paid",
@@ -390,6 +409,13 @@ async def _record_paid_donation(session_id: str, txn: dict):
         "read": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
+    if donor_email:
+        html = _receipt_html(donor_name, txn.get("amount"), txn.get("frequency"))
+        await send_email(
+            to=donor_email,
+            subject="Thank you for your gift to The Caring Sisters Club",
+            html=html,
+        )
 
 
 @api_router.get("/payments/status/{session_id}")
@@ -412,7 +438,8 @@ async def donation_status(session_id: str):
                     }},
                 )
                 record = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
-                await _record_paid_donation(session_id, record)
+                cust_email = (s.get("customer_details") or {}).get("email")
+                await _record_paid_donation(session_id, record, recipient_email=cust_email)
         except Exception as e:
             logging.warning(f"Stripe status check failed: {e}")
     return {
@@ -446,7 +473,8 @@ async def stripe_webhook(request: Request):
         )
         txn = await db.payment_transactions.find_one({"session_id": obj["id"]}, {"_id": 0})
         if txn:
-            await _record_paid_donation(obj["id"], txn)
+            cust_email = (obj.get("customer_details") or {}).get("email")
+            await _record_paid_donation(obj["id"], txn, recipient_email=cust_email)
     elif t == "checkout.session.expired":
         await db.payment_transactions.update_one(
             {"session_id": obj["id"]},
@@ -482,7 +510,7 @@ async def create_submission(payload: SubmissionCreate):
 
 
 @api_router.get("/submissions")
-async def list_submissions(type: Optional[str] = None, user=Depends(get_current_user)):
+async def list_submissions(type: Optional[str] = None, user=Depends(require_admin)):
     query = {}
     if type:
         query["type"] = type
@@ -491,7 +519,7 @@ async def list_submissions(type: Optional[str] = None, user=Depends(get_current_
 
 
 @api_router.get("/submissions/counts")
-async def submission_counts(user=Depends(get_current_user)):
+async def submission_counts(user=Depends(require_admin)):
     out = {}
     for t in ALLOWED_SUB_TYPES:
         total = await db.submissions.count_documents({"type": t})
@@ -501,15 +529,251 @@ async def submission_counts(user=Depends(get_current_user)):
 
 
 @api_router.patch("/submissions/{item_id}/read")
-async def mark_submission_read(item_id: str, user=Depends(get_current_user)):
+async def mark_submission_read(item_id: str, user=Depends(require_admin)):
     await db.submissions.update_one({"id": item_id}, {"$set": {"read": True}})
     return {"message": "ok"}
 
 
 @api_router.delete("/submissions/{item_id}")
-async def delete_submission(item_id: str, user=Depends(get_current_user)):
+async def delete_submission(item_id: str, user=Depends(require_admin)):
     await db.submissions.delete_one({"id": item_id})
     return {"message": "Deleted"}
+
+
+# ---------- Email (Emergent-managed Resend) ----------
+import re
+import httpx
+from html import escape as _esc
+from html.parser import HTMLParser
+from urllib.parse import urlparse
+import ipaddress
+
+EMAIL_BASE_URL = "https://integrations.emergentagent.com"
+EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY")
+EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "The Caring Sisters Club")
+EMAIL_REPLY_TO = os.environ.get("EMAIL_REPLY_TO")
+
+_SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
+_CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
+             "send us your password", "enter your password below", "confirm your card number",
+             "your full card number", "seed phrase", "recovery phrase", "verify your card",
+             "social security number", "confirm your bank details")
+_HOSTISH = re.compile(r"\b(?:https?://)?((?:[a-z0-9-]+\.)+[a-z]{2,})", re.I)
+
+
+def _host_ok(host: str) -> bool:
+    if not host or "xn--" in host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        pass
+    return not any(host == s or host.endswith("." + s) for s in _SHORTENERS)
+
+
+def _same_site(shown: str, real: str) -> bool:
+    return shown == real or real.endswith("." + shown) or shown.endswith("." + real)
+
+
+class _EmailScan(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.tags, self.urls, self.anchors = set(), [], []
+        self._href, self._text = None, []
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.add(tag.lower())
+        self.urls += [v for k, v in attrs if k.lower() in ("href", "src") and v]
+        if tag.lower() == "a":
+            self._href = dict((k.lower(), v) for k, v in attrs).get("href")
+            self._text = []
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._text.append(data)
+
+    def handle_endtag(self, tag):
+        if tag.lower() == "a" and self._href is not None:
+            self.anchors.append((self._href, "".join(self._text)))
+            self._href, self._text = None, []
+
+
+def _assert_safe_email(subject: str, html: str) -> None:
+    scan = _EmailScan(); scan.feed(html)
+    if scan.tags & {"form", "input", "textarea", "select"}:
+        raise ValueError("No forms or input fields in email (G2)")
+    body = f"{subject}\n{html}".lower()
+    for p in _CRED_ASK:
+        if p in body:
+            raise ValueError(f"Email asks the recipient for credentials: {p!r} (G2)")
+    for url in scan.urls:
+        low = url.strip().lower()
+        if low.startswith(("mailto:", "tel:", "cid:", "#")):
+            continue
+        if not low.startswith("https://"):
+            raise ValueError(f"Email links/assets must be absolute https: {url!r} (G3)")
+        host = urlparse(low).hostname or ""
+        if not _host_ok(host) or urlparse(low).username is not None:
+            raise ValueError(f"Shortened, numeric-host or credential-bearing URL: {url!r} (G3)")
+    for href, text in scan.anchors:
+        real = urlparse(href.strip().lower()).hostname or ""
+        if not real:
+            continue
+        for m in _HOSTISH.finditer(text):
+            if not _same_site(m.group(1).lower(), real):
+                raise ValueError(f"Anchor text {m.group(1)!r} != real link host {real!r} (G3)")
+
+
+async def send_email(*, to: str, subject: str, html: str, reply_to: str = None):
+    if not EMAIL_KEY:
+        logging.warning("EMERGENT_EMAIL_KEY not set; skipping email send")
+        return None
+    _assert_safe_email(subject, html)
+    payload = {"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME}
+    if reply_to or EMAIL_REPLY_TO:
+        payload["contact_email"] = reply_to or EMAIL_REPLY_TO
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{EMAIL_BASE_URL}/api/v1/email/send",
+                headers={"X-Email-Key": EMAIL_KEY},
+                json=payload,
+            )
+        resp.raise_for_status()
+        return resp.json().get("id")
+    except Exception as e:
+        logging.error(f"Email send error: {e}")
+        return None
+
+
+def _receipt_html(name: str, amount, frequency: str) -> str:
+    freq_txt = "monthly" if frequency == "monthly" else "one-time"
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9;padding:0;margin:0">'
+        '<tr><td align="center" style="padding:28px 16px;font-family:Georgia,\'Times New Roman\',serif">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden">'
+        '<tr><td style="background:#3B0A2E;padding:28px 32px;color:#F7EFE9">'
+        '<div style="font-size:20px;font-weight:bold;letter-spacing:1px">The Caring Sisters Club</div>'
+        '<div style="font-size:11px;color:#CBA24B;letter-spacing:3px;text-transform:uppercase;margin-top:4px">Love &middot; Respect &middot; Empowerment</div>'
+        '</td></tr>'
+        '<tr><td style="padding:32px;font-family:Arial,Helvetica,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 16px">Thank you, {_esc(name)}!</h1>'
+        f'<p style="font-size:15px;line-height:1.6;color:#4a3340;margin:0 0 16px">Your generosity fuels professional empowerment, housing support, and community care for women across the Diaspora. We are deeply grateful for your {freq_txt} gift.</p>'
+        '<table role="presentation" width="100%" style="background:#faf2f7;border-radius:12px;margin:8px 0 20px">'
+        f'<tr><td style="padding:18px 22px;font-size:14px;color:#3B0A2E">Gift amount</td>'
+        f'<td align="right" style="padding:18px 22px;font-size:20px;font-weight:bold;color:#B4247E">${_esc(str(amount))}{" / month" if frequency=="monthly" else ""}</td></tr>'
+        '</table>'
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:0 0 8px">This email serves as your donation receipt. The Caring Sisters Club, Inc. is a 501(c)(3) tax-exempt organization (EIN 88-1234567, sample). Your contribution is tax-deductible to the extent allowed by law. No goods or services were provided in exchange for this gift.</p>'
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:16px 0 0">With gratitude,<br/>The Caring Sisters Club</p>'
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:18px 32px;font-family:Arial,sans-serif">'
+        '<p style="font-size:11px;color:#b79aae;margin:0;line-height:1.5">Sent by The Caring Sisters Club. We never ask for your password or card details by email.</p>'
+        '</td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+# ---------- Donor Wall (public) ----------
+try:
+    FUNDRAISING_GOAL = float(os.environ.get("FUNDRAISING_GOAL", "50000"))
+except ValueError:
+    FUNDRAISING_GOAL = 50000.0
+
+
+def _display_name(txn: dict) -> str:
+    if txn.get("anonymous") or not (txn.get("donor_name") or "").strip():
+        return "Anonymous"
+    parts = txn["donor_name"].strip().split()
+    if len(parts) == 1:
+        return parts[0]
+    return f"{parts[0]} {parts[-1][0]}."
+
+
+@api_router.get("/donations/public")
+async def donations_public():
+    paid = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(2000)
+    total = sum(float(t.get("amount", 0)) for t in paid)
+    recent_src = sorted(paid, key=lambda t: t.get("updated_at", ""), reverse=True)[:12]
+    recent = [{
+        "name": _display_name(t),
+        "amount": t.get("amount"),
+        "frequency": t.get("frequency"),
+        "date": t.get("updated_at"),
+    } for t in recent_src]
+    return {
+        "total_raised": round(total, 2),
+        "goal": FUNDRAISING_GOAL,
+        "donor_count": len(paid),
+        "recent": recent,
+    }
+
+
+# ---------- Admin: Donations ----------
+@api_router.get("/admin/donations")
+async def admin_donations(frequency: Optional[str] = None, user=Depends(require_admin)):
+    query = {"payment_status": "paid"}
+    if frequency in ("monthly", "one-time"):
+        query["frequency"] = frequency
+    items = await db.payment_transactions.find(query, {"_id": 0}).sort("updated_at", -1).to_list(2000)
+    all_paid = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(2000)
+    total = sum(float(t.get("amount", 0)) for t in all_paid)
+    monthly_ct = sum(1 for t in all_paid if t.get("frequency") == "monthly")
+    onetime_ct = sum(1 for t in all_paid if t.get("frequency") != "monthly")
+    return {
+        "items": items,
+        "summary": {
+            "total_raised": round(total, 2),
+            "count": len(all_paid),
+            "monthly_count": monthly_ct,
+            "onetime_count": onetime_ct,
+        },
+    }
+
+
+# ---------- Admin: Team Access (allowlist management) ----------
+class AllowEmail(BaseModel):
+    email: str
+
+
+class RoleUpdate(BaseModel):
+    role: str
+
+
+@api_router.get("/admin/team")
+async def admin_team(user=Depends(require_admin)):
+    users = await db.users.find({}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    allowed = await db.allowed_emails.find({}, {"_id": 0}).to_list(500)
+    return {"users": users, "allowed_emails": [a["email"] for a in allowed], "me": user["user_id"]}
+
+
+@api_router.post("/admin/team/allow")
+async def admin_team_allow(payload: AllowEmail, user=Depends(require_admin)):
+    email = payload.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    await db.allowed_emails.update_one({"email": email}, {"$set": {"email": email}}, upsert=True)
+    # Promote an already-pending user with this email
+    await db.users.update_one({"email": email}, {"$set": {"role": "admin"}})
+    return {"message": "Email approved"}
+
+
+@api_router.post("/admin/team/{user_id}/role")
+async def admin_team_role(user_id: str, payload: RoleUpdate, user=Depends(require_admin)):
+    if payload.role not in ("admin", "pending"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+    if user_id == user["user_id"] and payload.role != "admin":
+        raise HTTPException(status_code=400, detail="You cannot remove your own admin access")
+    await db.users.update_one({"user_id": user_id}, {"$set": {"role": payload.role}})
+    return {"message": "Role updated"}
+
+
+@api_router.post("/admin/team/revoke-email")
+async def admin_team_revoke_email(payload: AllowEmail, user=Depends(require_admin)):
+    email = payload.email.strip().lower()
+    await db.allowed_emails.delete_one({"email": email})
+    return {"message": "Email removed from allowlist"}
+
 
 
 @app.on_event("startup")

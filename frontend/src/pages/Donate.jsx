@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { donationTiers, org } from '../mock/mock';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
+import DonorWall from '../components/DonorWall';
 import { Heart, ShieldCheck, Repeat, CreditCard, CheckCircle2, Loader2 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 import { api } from '../lib/api';
@@ -12,6 +13,7 @@ export default function Donate() {
   const [freq, setFreq] = useState('one-time');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [anonymous, setAnonymous] = useState(false);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
@@ -30,6 +32,7 @@ export default function Donate() {
         frequency: freq,
         donor_name: name,
         donor_email: email,
+        anonymous: anonymous,
         origin_url: window.location.origin,
       });
       if (data.checkout_url) {
@@ -104,6 +107,12 @@ export default function Donate() {
               </div>
             </div>
 
+            <label className="flex items-center gap-2.5 mb-5 cursor-pointer select-none">
+              <input type="checkbox" checked={anonymous} onChange={(e) => setAnonymous(e.target.checked)}
+                className="w-4 h-4 accent-[#B4247E]" />
+              <span className="text-[13.5px] text-[#3B0A2E]">Appear anonymously on the donor wall</span>
+            </label>
+
             <div className="rounded-xl p-4 mb-6 flex items-center gap-3" style={{ background: '#F7EFE9' }}>
               <CreditCard size={20} className="text-[#B4247E]" />
               <p className="text-[12.5px] text-[#3B0A2E]/70">Secure checkout by Stripe. Test mode: use card <strong>4242 4242 4242 4242</strong>, any future expiry & CVC.</p>
@@ -133,6 +142,7 @@ export default function Donate() {
           </Reveal>
         </div>
       </section>
+      <DonorWall />
     </div>
   );
 }

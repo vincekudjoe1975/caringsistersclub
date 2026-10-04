@@ -4,8 +4,10 @@ import { useAuth } from '../context/AuthContext';
 import { api, mediaSrc } from '../lib/api';
 import Logo from '../components/Logo';
 import AdminSubmissions from './AdminSubmissions';
+import AdminDonations from './AdminDonations';
+import AdminTeam from './AdminTeam';
 import { useToast } from '../hooks/use-toast';
-import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox } from 'lucide-react';
+import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock } from 'lucide-react';
 
 const TABS = [
   { key: 'gallery', label: 'Gallery Photos', icon: ImageIcon, accept: 'image/*', titleLabel: 'Caption', subLabel: '' },
@@ -82,6 +84,26 @@ export default function Admin() {
     return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#B4247E]" size={36} /></div>;
   }
 
+  if (user && user.role !== 'admin') {
+    return (
+      <div className="csc-hero-gradient min-h-screen flex items-center justify-center px-5">
+        <div className="bg-white rounded-3xl p-10 max-w-md text-center" style={{ boxShadow: '0 40px 80px -30px rgba(0,0,0,0.5)' }}>
+          <span className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }}>
+            <Clock size={30} className="text-white" />
+          </span>
+          <h1 className="font-serif text-[26px] text-[#3B0A2E] font-semibold mb-3">Access pending approval</h1>
+          <p className="text-[#241019]/65 text-[14.5px] mb-7">
+            Thanks for signing in{user?.name ? `, ${user.name}` : ''}. Your account needs to be approved by an existing administrator before you can access the dashboard.
+          </p>
+          <div className="flex justify-center gap-3">
+            <button onClick={() => navigate('/')} className="rounded-full px-6 py-2.5 font-semibold text-[14px]" style={{ border: '1px solid rgba(59,10,46,0.2)', color: '#3B0A2E' }}>View Site</button>
+            <button onClick={logout} className="btn-magenta rounded-full px-6 py-2.5 font-semibold text-[14px] flex items-center gap-2"><LogOut size={14} /> Sign Out</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen" style={{ background: '#F7EFE9' }}>
       {/* Top bar */}
@@ -107,8 +129,13 @@ export default function Admin() {
         </div>
 
         {/* View switch */}
-        <div className="inline-flex gap-1 p-1.5 rounded-full mb-8 bg-white border border-[#3B0A2E]/8">
-          {[{ k: 'media', l: 'Media Library', icon: Images }, { k: 'inbox', l: 'Form Submissions', icon: Inbox }].map((v) => {
+        <div className="inline-flex flex-wrap gap-1 p-1.5 rounded-full mb-8 bg-white border border-[#3B0A2E]/8">
+          {[
+            { k: 'media', l: 'Media Library', icon: Images },
+            { k: 'inbox', l: 'Form Submissions', icon: Inbox },
+            { k: 'donations', l: 'Donations', icon: DollarSign },
+            { k: 'team', l: 'Team Access', icon: ShieldCheck },
+          ].map((v) => {
             const Icon = v.icon;
             return (
               <button key={v.k} onClick={() => setView(v.k)}
@@ -122,6 +149,10 @@ export default function Admin() {
 
         {view === 'inbox' ? (
           <AdminSubmissions />
+        ) : view === 'donations' ? (
+          <AdminDonations />
+        ) : view === 'team' ? (
+          <AdminTeam currentUserId={user?.user_id} />
         ) : (
         <>
         {/* Tabs */}
