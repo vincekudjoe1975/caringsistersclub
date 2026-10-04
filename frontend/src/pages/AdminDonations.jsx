@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, DollarSign, Repeat, Gift, TrendingUp, Download, Mail, RefreshCw } from 'lucide-react';
+import { Loader2, DollarSign, Repeat, Gift, TrendingUp, Download, Mail, RefreshCw, Sparkles } from 'lucide-react';
 
 export default function AdminDonations() {
   const { toast } = useToast();
@@ -13,6 +13,8 @@ export default function AdminDonations() {
   const [exporting, setExporting] = useState(false);
   const [sending, setSending] = useState(false);
   const [reminding, setReminding] = useState(false);
+  const [newIds, setNewIds] = useState([]);
+  const knownIds = useRef(null); // null until first load; then a Set of seen session_ids
   const thisYear = new Date().getFullYear();
 
   const exportCsv = async () => {
@@ -65,6 +67,23 @@ export default function AdminDonations() {
     try {
       const q = f === 'all' ? '' : `?frequency=${f === 'one-time' ? 'one-time' : 'monthly'}`;
       const res = await api.get(`/admin/donations${q}`);
+      const items = res.data?.items || [];
+      // Detect gifts that just arrived (only after the first load has established a baseline)
+      if (knownIds.current) {
+        const fresh = items.filter((it) => it.session_id && !knownIds.current.has(it.session_id));
+        if (fresh.length > 0) {
+          setNewIds(fresh.map((it) => it.session_id));
+          const first = fresh[0];
+          toast({
+            title: '🎉 A new gift just arrived!',
+            description: fresh.length === 1
+              ? `${first.anonymous ? 'Anonymous' : (first.donor_name || 'A donor')} gave $${Number(first.amount).toLocaleString()}.`
+              : `${fresh.length} new donations came in.`,
+          });
+          setTimeout(() => setNewIds([]), 6000);
+        }
+      }
+      knownIds.current = new Set(items.map((it) => it.session_id));
       setData(res.data);
       setLastUpdated(new Date());
     } catch (e) {
@@ -73,9 +92,10 @@ export default function AdminDonations() {
     } finally {
       if (silent) setRefreshing(false); else setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
-  useEffect(() => { load(filter); }, [filter, load]);
+  // Reset the baseline when the filter changes so switching tabs doesn't flag everything as "new"
+  useEffect(() => { knownIds.current = null; setNewIds([]); load(filter); }, [filter, load]);
 
   // Near-real-time: refresh silently every 20s and whenever the tab regains focus
   useEffect(() => {
@@ -171,9 +191,15 @@ export default function AdminDonations() {
               </tr>
             </thead>
             <tbody>
-              {data.items.map((it) => (
-                <tr key={it.session_id} className="border-t border-[#3B0A2E]/8 text-[13.5px]">
-                  <td className="px-5 py-3 text-[#241019]/70 whitespace-nowrap">{it.updated_at ? new Date(it.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+              {data.items.map((it) => {
+                const isNew = newIds.includes(it.session_id);
+                return (
+                <tr key={it.session_id} data-testid={isNew ? 'donation-row-new' : 'donation-row'}
+                  className={`border-t border-[#3B0A2E]/8 text-[13.5px] ${isNew ? 'gift-row-new' : ''}`}>
+                  <td className="px-5 py-3 text-[#241019]/70 whitespace-nowrap">
+                    {isNew && <Sparkles size={13} className="inline-block mr-1.5 text-[#CBA24B] align-[-2px]" />}
+                    {it.updated_at ? new Date(it.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                  </td>
                   <td className="px-5 py-3 text-[#3B0A2E] font-medium">{it.anonymous ? 'Anonymous' : (it.donor_name || '—')}</td>
                   <td className="px-5 py-3 text-[#241019]/60">{it.donor_email || '—'}</td>
                   <td className="px-5 py-3">
@@ -183,7 +209,8 @@ export default function AdminDonations() {
                   </td>
                   <td className="px-5 py-3 text-right font-semibold text-[#3B0A2E]">${Number(it.amount).toLocaleString()}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

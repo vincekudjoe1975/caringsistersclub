@@ -6,6 +6,7 @@ export const API = `${BACKEND_URL}/api`;
 export const api = axios.create({
   baseURL: API,
   withCredentials: true,
+  headers: { 'X-Requested-With': 'XMLHttpRequest' },
 });
 
 // Build a full URL for a media item served by the backend

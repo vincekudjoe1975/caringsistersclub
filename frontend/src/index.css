@@ -78,6 +78,19 @@ code {
   animation: csc-marquee 28s linear infinite;
 }
 
+/* New-donation highlight: gentle gold-to-transparent flash with a soft left accent */
+@keyframes giftRowFlash {
+  0%   { background-color: #fbf0d8; box-shadow: inset 3px 0 0 #CBA24B; }
+  70%  { background-color: #fdf6e8; box-shadow: inset 3px 0 0 #CBA24B; }
+  100% { background-color: transparent; box-shadow: inset 3px 0 0 transparent; }
+}
+.gift-row-new {
+  animation: giftRowFlash 6s ease-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gift-row-new { animation: none; background-color: #fbf0d8; }
+}
+
 /* Reveal on scroll */
 .reveal {
   opacity: 0;

@@ -28,7 +28,7 @@ export default function AdminCampaign() {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await api.get('/settings');
+        const { data } = await api.get('/admin/settings');
         setForm({
           campaign_title: data.campaign_title || '',
           campaign_subtitle: data.campaign_subtitle || '',

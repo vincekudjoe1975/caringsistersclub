@@ -844,6 +844,19 @@ class SettingsUpdate(BaseModel):
 
 @api_router.get("/settings")
 async def get_settings():
+    # Public endpoint: expose only public campaign fields (SEC-003 — no internal
+    # thank-you config such as sender/note/threshold).
+    s = await _get_settings()
+    return {
+        "campaign_title": s["campaign_title"],
+        "campaign_subtitle": s["campaign_subtitle"],
+        "goal": s["goal"],
+        "deadline": s["deadline"],
+    }
+
+
+@api_router.get("/admin/settings")
+async def admin_get_settings(user=Depends(require_admin)):
     return await _get_settings()
 
 
@@ -1423,6 +1436,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# CSRF protection (SEC-002): require a custom header on any state-changing request
+# that carries a session cookie. A cross-site <form> auto-POST sends the victim's
+# cookie but cannot set a custom header (and a cross-origin XHR that tries is blocked
+# by CORS). Requests without a session cookie (Stripe webhook, public forms) are
+# unaffected, as are safe methods.
+from starlette.responses import JSONResponse as _JSONResponse
+
+_CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+
+
+@app.middleware("http")
+async def csrf_protect(request: Request, call_next):
+    if (
+        request.method not in _CSRF_SAFE_METHODS
+        and request.cookies.get("session_token")
+        and request.headers.get("x-requested-with") != "XMLHttpRequest"
+    ):
+        return _JSONResponse(status_code=403, content={"detail": "CSRF validation failed"})
+    return await call_next(request)
 
 # Configure logging
 logging.basicConfig(
