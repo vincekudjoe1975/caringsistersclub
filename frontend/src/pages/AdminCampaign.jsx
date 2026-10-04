@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, Target, Save, Send, Heart } from 'lucide-react';
+import { Loader2, Target, Save, Send, Heart, Mail } from 'lucide-react';
 
 export default function AdminCampaign() {
   const { toast } = useToast();
@@ -10,6 +10,23 @@ export default function AdminCampaign() {
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState('');
   const [sendingProgress, setSendingProgress] = useState(false);
+  const [sendingTest, setSendingTest] = useState(false);
+
+  const sendTestReceipt = async () => {
+    setSendingTest(true);
+    try {
+      const { data } = await api.post('/admin/email/test-receipt');
+      if (data.sent) {
+        toast({ title: 'Test receipt sent', description: `Check ${data.to} — a sample receipt is on its way.` });
+      } else {
+        toast({ title: 'Not delivered', description: data.detail || 'The provider could not deliver to your address.', variant: 'destructive' });
+      }
+    } catch (e) {
+      toast({ title: 'Send failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
+    } finally {
+      setSendingTest(false);
+    }
+  };
 
   const sendProgress = async () => {
     if (!window.confirm('Send a progress update email to all past donors?')) return;
@@ -171,6 +188,17 @@ export default function AdminCampaign() {
         <button onClick={sendProgress} disabled={sendingProgress}
           className="btn-magenta rounded-full px-7 py-3 font-semibold flex items-center gap-2 disabled:opacity-60">
           {sendingProgress ? <><Loader2 className="animate-spin" size={16} /> Sending…</> : <><Send size={16} /> Send Progress Update</>}
+        </button>
+      </div>
+
+      <div className="bg-white rounded-2xl p-8 border border-[#3B0A2E]/8 mt-6">
+        <h2 className="font-serif text-[22px] text-[#3B0A2E] font-semibold mb-1 flex items-center gap-2">
+          <Mail size={20} className="text-[#B4247E]" /> Email Delivery Test
+        </h2>
+        <p className="text-[#241019]/60 text-[13.5px] mb-5">Send a sample branded donation receipt to your own admin inbox to confirm emails are being delivered.</p>
+        <button onClick={sendTestReceipt} disabled={sendingTest} data-testid="send-test-receipt-btn"
+          className="rounded-full px-7 py-3 font-semibold flex items-center gap-2 bg-white text-[#3B0A2E] disabled:opacity-60" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>
+          {sendingTest ? <><Loader2 className="animate-spin" size={16} /> Sending…</> : <><Mail size={16} /> Send Me a Test Receipt</>}
         </button>
       </div>
     </div>

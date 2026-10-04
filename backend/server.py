@@ -366,8 +366,42 @@ def _create_stripe_donation_session(req: "DonationCheckout", amount: float, mont
         raise HTTPException(status_code=502, detail="Could not create checkout session")
 
 
+import time as _time
+from collections import deque, defaultdict
+
+_RATE_BUCKETS: dict = defaultdict(deque)
+
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _rate_limit(request: Request, bucket: str, max_hits: int, window_s: int):
+    """Gentle in-memory per-IP sliding-window limiter for public endpoints."""
+    ip = _client_ip(request)
+    key = f"{bucket}:{ip}"
+    now = _time.monotonic()
+    dq = _RATE_BUCKETS[key]
+    while dq and dq[0] <= now - window_s:
+        dq.popleft()
+    if len(dq) >= max_hits:
+        retry = int(window_s - (now - dq[0])) + 1
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please slow down and try again in a moment.",
+            headers={"Retry-After": str(retry)},
+        )
+    dq.append(now)
+    if not dq:
+        _RATE_BUCKETS.pop(key, None)
+
+
 @api_router.post("/payments/checkout")
-async def create_donation_checkout(req: DonationCheckout):
+async def create_donation_checkout(req: DonationCheckout, request: Request):
+    _rate_limit(request, "checkout", max_hits=6, window_s=300)
     amount = _validate_donation_amount(req.amount)
     monthly = req.frequency == "monthly"
     session = _create_stripe_donation_session(req, amount, monthly)
@@ -540,7 +574,8 @@ class SubmissionCreate(BaseModel):
 
 
 @api_router.post("/submissions")
-async def create_submission(payload: SubmissionCreate):
+async def create_submission(payload: SubmissionCreate, request: Request):
+    _rate_limit(request, "submission", max_hits=5, window_s=60)
     data = payload.model_dump()
     stype = data.get("type")
     if stype not in ALLOWED_SUB_TYPES:
@@ -1200,6 +1235,69 @@ async def update_donor_notes(email: str, payload: DonorNotes, user=Depends(requi
     await db.donor_notes.update_one({"email": em}, {"$set": update}, upsert=True)
     doc = await db.donor_notes.find_one({"email": em}, {"_id": 0})
     return {"email": em, "note": doc.get("note", ""), "tags": doc.get("tags", [])}
+
+
+# ---------- Reactivation ("we miss you") + test receipt ----------
+def _reactivation_email_html(name: str) -> str:
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9;padding:0;margin:0"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        '<tr><td style="background:#3B0A2E;padding:26px 32px;color:#F7EFE9;font-family:Georgia,serif">'
+        '<div style="font-size:19px;font-weight:bold">The Caring Sisters Club</div>'
+        '<div style="font-size:11px;color:#CBA24B;letter-spacing:3px;text-transform:uppercase;margin-top:4px">We Miss You</div></td></tr>'
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#B4247E;font-size:24px;margin:0 0 14px">We miss you, {_esc(name)}</h1>'
+        '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 16px">It has been a little while since your last gift, and we wanted to reach out — not to ask, but to say thank you. Your past generosity helped empower women of the Diaspora through friendship, professional growth, and community care.</p>'
+        '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">If you would like to rejoin our community of givers, we would be honored to welcome you back. Every gift, of any size, makes a real difference.</p>'
+        '<a href="https://caring-sisters-clone.preview.emergentagent.com/donate" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">Rejoin Our Mission</a>'
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:22px 0 0">With warmth and gratitude,<br/>The Caring Sisters Club</p>'
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you previously supported The Caring Sisters Club. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+@api_router.post("/admin/donors/{email}/reactivation")
+async def send_reactivation_email(email: str, user=Depends(require_admin)):
+    em = email.strip().lower()
+    # Recipient must be an existing donor on record (G4: not arbitrary caller input).
+    gift = await db.payment_transactions.find_one(
+        {"payment_status": "paid", "donor_email": {"$regex": f"^{re.escape(em)}$", "$options": "i"}},
+        {"_id": 0},
+    )
+    if not gift:
+        raise HTTPException(status_code=404, detail="No donor with that email on record")
+    name = (gift.get("donor_name") or "").strip() or "Friend"
+    result = await send_email(
+        to=em,
+        subject="We miss you at The Caring Sisters Club",
+        html=_reactivation_email_html(name),
+    )
+    await db.reactivation_sent.insert_one({
+        "email": em,
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+        "sent_by": user.get("user_id"),
+        "delivered": result is not None,
+    })
+    if result is None:
+        return {"sent": False, "email": em, "detail": "The email provider could not deliver to this address."}
+    return {"sent": True, "email": em}
+
+
+@api_router.post("/admin/email/test-receipt")
+async def send_test_receipt(user=Depends(require_admin)):
+    # Sends the real branded receipt template to the logged-in admin's OWN email.
+    to = (user.get("email") or "").strip()
+    if not to:
+        raise HTTPException(status_code=400, detail="Your admin account has no email on file")
+    result = await send_email(
+        to=to,
+        subject="Test receipt — The Caring Sisters Club",
+        html=_receipt_html(user.get("name") or "Friend", 100, "one-time"),
+    )
+    if result is None:
+        return {"sent": False, "to": to, "detail": "The email provider could not deliver to your address."}
+    return {"sent": True, "to": to}
 
 
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------

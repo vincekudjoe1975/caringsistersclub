@@ -60,6 +60,16 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - **Live Donation Feed** (AdminDonations.jsx): when auto-refresh brings in a new paid gift,
   the row flashes a gentle gold highlight (`.gift-row-new`, Sparkles icon) and a toast
   "🎉 A new gift just arrived!" fires. Verified 100% by automated tester.
+- **Test Receipt** (admin-only `POST /api/admin/email/test-receipt`): sends the real branded
+  receipt template to the logged-in admin's OWN email (G4-safe). Button in AdminCampaign →
+  "Email Delivery Test". Real delivery confirmed (202) via the production send_email path.
+- **Reactivation "We Miss You" email** (`POST /api/admin/donors/{email}/reactivation`,
+  admin-only, CSRF-protected): one-click warm email to a lapsed donor; recipient must be an
+  existing donor on record (404 otherwise, G4-safe). Button appears in the lapsed section of
+  the AdminDonors profile modal. Template delivery confirmed (202).
+- **Rate limiting**: gentle in-memory per-IP sliding-window limiter (`_rate_limit`) on public
+  `POST /api/submissions` (5/60s) and `POST /api/payments/checkout` (6/300s); returns 429 with
+  Retry-After. Verified (400×5 then 429).
 
 ## Known issues / notes
 - **Email delivery works** via the Emergent platform-verified domain (202 + id for real

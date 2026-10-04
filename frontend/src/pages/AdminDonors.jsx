@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, Search, X, Repeat, Calendar, AlertTriangle, Tag, Save } from 'lucide-react';
+import { Loader2, Search, X, Repeat, Calendar, AlertTriangle, Tag, Save, HeartHandshake } from 'lucide-react';
 
 function fmt(n) {
   return `$${Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
@@ -24,6 +24,7 @@ export default function AdminDonors() {
   const [tagsDraft, setTagsDraft] = useState([]);
   const [tagInput, setTagInput] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
+  const [sendingReactivation, setSendingReactivation] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -66,6 +67,24 @@ export default function AdminDonors() {
   };
 
   const removeTag = (t) => setTagsDraft(tagsDraft.filter((x) => x !== t));
+
+  const sendReactivation = async () => {
+    if (!selected?.email) return;
+    if (!window.confirm(`Send a warm "we miss you" email to ${selected.email}?`)) return;
+    setSendingReactivation(true);
+    try {
+      const { data } = await api.post(`/admin/donors/${encodeURIComponent(selected.email)}/reactivation`);
+      if (data.sent) {
+        toast({ title: 'Email sent', description: `"We miss you" note sent to ${data.email}.` });
+      } else {
+        toast({ title: 'Not delivered', description: data.detail || 'The provider could not deliver to that address.', variant: 'destructive' });
+      }
+    } catch (e) {
+      toast({ title: 'Send failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
+    } finally {
+      setSendingReactivation(false);
+    }
+  };
 
   const saveNotes = async () => {
     if (!selected?.email) return;
@@ -205,9 +224,15 @@ export default function AdminDonors() {
                   </ul>
 
                   {detail.lapsed && (
-                    <div className="flex items-center gap-2.5 rounded-xl p-3 mt-5" style={{ background: '#fdf1ed' }}>
-                      <AlertTriangle size={16} className="text-[#c1431f] shrink-0" />
-                      <p className="text-[12.5px] text-[#7a2f18]">This monthly donor hasn't had a recurring gift in over 35 days. Consider reaching out.</p>
+                    <div className="rounded-xl p-4 mt-5" style={{ background: '#fdf1ed' }} data-testid="lapsed-detail-block">
+                      <div className="flex items-center gap-2.5 mb-3">
+                        <AlertTriangle size={16} className="text-[#c1431f] shrink-0" />
+                        <p className="text-[12.5px] text-[#7a2f18]">This monthly donor hasn't had a recurring gift in over 35 days. Consider reaching out.</p>
+                      </div>
+                      <button onClick={sendReactivation} disabled={sendingReactivation || !selected?.email} data-testid="send-reactivation-btn"
+                        className="rounded-full px-5 py-2.5 font-semibold text-[13px] flex items-center gap-2 text-white disabled:opacity-60" style={{ background: '#c1431f' }}>
+                        {sendingReactivation ? <><Loader2 size={14} className="animate-spin" /> Sending…</> : <><HeartHandshake size={15} /> Send "We Miss You" Email</>}
+                      </button>
                     </div>
                   )}
 
