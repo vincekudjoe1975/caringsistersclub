@@ -21,8 +21,8 @@ export default function Footer() {
               A sisterhood empowering women of the Diaspora through friendship, professional growth, and philanthropy.
             </p>
             <div className="flex items-center gap-3 mt-5">
-              {[Instagram, Facebook, Linkedin, Youtube].map((Icon, i) => (
-                <a key={i} href="#" aria-label="social link"
+              {[{ Icon: Instagram, label: 'Instagram' }, { Icon: Facebook, label: 'Facebook' }, { Icon: Linkedin, label: 'LinkedIn' }, { Icon: Youtube, label: 'YouTube' }].map(({ Icon, label }) => (
+                <a key={label} href="#" aria-label={label}
                   className="w-9 h-9 rounded-full flex items-center justify-center border border-white/15 hover:border-[#CBA24B] hover:text-[#CBA24B] transition-colors">
                   <Icon size={16} />
                 </a>

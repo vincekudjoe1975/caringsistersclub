@@ -59,8 +59,8 @@ export default function Legal({ type }) {
         <div className="max-w-3xl mx-auto px-5 lg:px-8">
           <p className="text-[13px] text-[#241019]/50 italic mb-10">Last updated: {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}. This is a sample legal document provided for demonstration and should be reviewed by counsel before publishing.</p>
           <div className="space-y-9">
-            {data.sections.map((s, i) => (
-              <div key={i}>
+            {data.sections.map((s) => (
+              <div key={s.h}>
                 <h2 className="font-serif text-[22px] text-[#3B0A2E] font-semibold mb-3">{s.h}</h2>
                 <p className="text-[#241019]/75 text-[15.5px] leading-relaxed">{s.p}</p>
               </div>

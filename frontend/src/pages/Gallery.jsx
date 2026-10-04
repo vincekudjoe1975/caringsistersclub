@@ -18,7 +18,7 @@ export default function Gallery() {
           setItems([...uploaded, ...mockGallery]);
         }
       } catch (e) {
-        /* fall back to mock */
+        console.error('Gallery: failed to load uploaded media, using defaults', e);
       }
     })();
   }, []);
@@ -38,7 +38,7 @@ export default function Gallery() {
         <div className="max-w-7xl mx-auto px-5 lg:px-8">
           <div className="columns-1 sm:columns-2 lg:columns-3 gap-5 [&>*]:mb-5">
             {items.map((g, i) => (
-              <Reveal key={i} delay={(i % 3) * 80}>
+              <Reveal key={`${g.src}-${i}`} delay={(i % 3) * 80}>
                 <button onClick={() => setIdx(i)} className="block w-full img-zoom rounded-2xl overflow-hidden relative group">
                   <img src={g.src} alt={g.caption} className={`w-full object-cover ${g.tall ? 'h-[420px]' : 'h-[290px]'}`} />
                   <div className="absolute inset-0 flex items-end p-5 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'linear-gradient(transparent 50%, rgba(41,6,31,0.8))' }}>

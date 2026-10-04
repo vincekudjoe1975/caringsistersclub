@@ -37,7 +37,7 @@ export default function Transparency() {
         const { data } = await api.get('/media?category=document');
         setUploaded(data || []);
       } catch (e) {
-        /* ignore */
+        console.error('Transparency: failed to load documents', e);
       }
     })();
   }, []);

@@ -94,7 +94,7 @@ export default function Contact() {
           </div>
           <Accordion type="single" collapsible className="space-y-4">
             {faqs.map((f, i) => (
-              <AccordionItem key={i} value={`item-${i}`} className="bg-white rounded-xl border border-[#3B0A2E]/8 px-6">
+              <AccordionItem key={f.q} value={`item-${i}`} className="bg-white rounded-xl border border-[#3B0A2E]/8 px-6">
                 <AccordionTrigger className="text-left font-serif text-[17px] text-[#3B0A2E] hover:no-underline">{f.q}</AccordionTrigger>
                 <AccordionContent className="text-[#241019]/70 text-[14.5px] leading-relaxed">{f.a}</AccordionContent>
               </AccordionItem>

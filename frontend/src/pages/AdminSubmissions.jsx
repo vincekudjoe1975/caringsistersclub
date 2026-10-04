@@ -26,7 +26,7 @@ export default function AdminSubmissions() {
     try {
       const { data } = await api.get('/submissions/counts');
       setCounts(data);
-    } catch (e) { /* ignore */ }
+    } catch (e) { console.error('AdminSubmissions: failed to load counts', e); }
   }, []);
 
   const load = useCallback(async (t) => {
@@ -49,7 +49,7 @@ export default function AdminSubmissions() {
       await api.patch(`/submissions/${id}/read`);
       setItems((prev) => prev.map((i) => (i.id === id ? { ...i, read: true } : i)));
       loadCounts();
-    } catch (e) { /* ignore */ }
+    } catch (e) { console.error('AdminSubmissions: failed to mark read', e); }
   };
 
   const remove = async (id) => {

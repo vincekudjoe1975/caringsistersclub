@@ -21,7 +21,7 @@ export default function Leadership() {
           setBoard([...mockBoard, ...uploaded]);
         }
       } catch (e) {
-        /* fall back to mock */
+        console.error('Leadership: failed to load board photos, using defaults', e);
       }
     })();
   }, []);

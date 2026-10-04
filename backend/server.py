@@ -277,6 +277,7 @@ async def get_media_file(item_id: str):
     item = await db.media.find_one({"id": item_id, "is_deleted": {"$ne": True}}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Not found")
+    data, content_type = None, None
     try:
         data, content_type = get_object(item["storage_path"])
     except Exception as e:
@@ -311,12 +312,14 @@ class DonationCheckout(BaseModel):
     origin_url: str
 
 
-@api_router.post("/payments/checkout")
-async def create_donation_checkout(req: DonationCheckout):
-    amount = float(req.amount)
+def _validate_donation_amount(amount: float) -> float:
+    amount = float(amount)
     if amount < DONATION_MIN or amount > DONATION_MAX:
         raise HTTPException(status_code=400, detail="Invalid donation amount")
-    monthly = req.frequency == "monthly"
+    return amount
+
+
+def _build_donation_price_data(amount: float, monthly: bool) -> dict:
     price_data = {
         "currency": "usd",
         "product_data": {"name": "Monthly Donation" if monthly else "One-Time Donation"},
@@ -324,9 +327,13 @@ async def create_donation_checkout(req: DonationCheckout):
     }
     if monthly:
         price_data["recurring"] = {"interval": "month"}
+    return price_data
+
+
+def _create_stripe_donation_session(req: "DonationCheckout", amount: float, monthly: bool):
     try:
-        session = stripe.checkout.Session.create(
-            line_items=[{"price_data": price_data, "quantity": 1}],
+        return stripe.checkout.Session.create(
+            line_items=[{"price_data": _build_donation_price_data(amount, monthly), "quantity": 1}],
             mode="subscription" if monthly else "payment",
             success_url=f"{req.origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{req.origin_url}/donate",
@@ -341,6 +348,14 @@ async def create_donation_checkout(req: DonationCheckout):
     except Exception as e:
         logging.error(f"Stripe checkout error: {e}")
         raise HTTPException(status_code=502, detail="Could not create checkout session")
+
+
+@api_router.post("/payments/checkout")
+async def create_donation_checkout(req: DonationCheckout):
+    amount = _validate_donation_amount(req.amount)
+    monthly = req.frequency == "monthly"
+    session = _create_stripe_donation_session(req, amount, monthly)
+    now = datetime.now(timezone.utc).isoformat()
     await db.payment_transactions.insert_one({
         "session_id": session.id,
         "amount": amount,
@@ -350,8 +365,8 @@ async def create_donation_checkout(req: DonationCheckout):
         "donor_email": req.donor_email or "",
         "status": "initiated",
         "payment_status": "pending",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": now,
+        "updated_at": now,
     })
     return {"checkout_url": session.url, "session_id": session.id}
 

@@ -12,6 +12,7 @@ export function AuthProvider({ children }) {
       const { data } = await api.get('/auth/me');
       setUser(data);
     } catch (e) {
+      console.error('Auth: not authenticated or session check failed', e);
       setUser(false);
     }
   }, []);
@@ -29,7 +30,7 @@ export function AuthProvider({ children }) {
     try {
       await api.post('/auth/logout');
     } catch (e) {
-      /* ignore */
+      console.error('Auth: logout request failed', e);
     }
     setUser(false);
     window.location.href = '/';
