@@ -294,6 +294,63 @@ async def delete_media(item_id: str, user=Depends(get_current_user)):
     return {"message": "Deleted"}
 
 
+# ---------- Form Submissions (public create, admin manage) ----------
+ALLOWED_SUB_TYPES = {"volunteer", "member", "contact", "rsvp", "donation"}
+
+
+class SubmissionCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    type: str
+
+
+@api_router.post("/submissions")
+async def create_submission(payload: SubmissionCreate):
+    data = payload.model_dump()
+    stype = data.get("type")
+    if stype not in ALLOWED_SUB_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid submission type")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "type": stype,
+        "data": {k: v for k, v in data.items() if k != "type"},
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.submissions.insert_one(doc)
+    return {"id": doc["id"], "message": "Received"}
+
+
+@api_router.get("/submissions")
+async def list_submissions(type: Optional[str] = None, user=Depends(get_current_user)):
+    query = {}
+    if type:
+        query["type"] = type
+    items = await db.submissions.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return items
+
+
+@api_router.get("/submissions/counts")
+async def submission_counts(user=Depends(get_current_user)):
+    out = {}
+    for t in ALLOWED_SUB_TYPES:
+        total = await db.submissions.count_documents({"type": t})
+        unread = await db.submissions.count_documents({"type": t, "read": False})
+        out[t] = {"total": total, "unread": unread}
+    return out
+
+
+@api_router.patch("/submissions/{item_id}/read")
+async def mark_submission_read(item_id: str, user=Depends(get_current_user)):
+    await db.submissions.update_one({"id": item_id}, {"$set": {"read": True}})
+    return {"message": "ok"}
+
+
+@api_router.delete("/submissions/{item_id}")
+async def delete_submission(item_id: str, user=Depends(get_current_user)):
+    await db.submissions.delete_one({"id": item_id})
+    return {"message": "Deleted"}
+
+
 @app.on_event("startup")
 async def startup_storage():
     try:

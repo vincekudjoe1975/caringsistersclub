@@ -4,6 +4,7 @@ import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
 import { Heart, ShieldCheck, Repeat, CreditCard, CheckCircle2 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
+import { api } from '../lib/api';
 
 export default function Donate() {
   const [amount, setAmount] = useState(50);
@@ -21,6 +22,7 @@ export default function Donate() {
       return;
     }
     setDone(true);
+    api.post('/submissions', { type: 'donation', amount: finalAmount, frequency: freq }).catch(() => {});
     toast({ title: 'Thank you for your generosity! (demo)', description: `Your ${freq} gift of $${finalAmount} would be processed securely. No real payment was taken.` });
   };
 

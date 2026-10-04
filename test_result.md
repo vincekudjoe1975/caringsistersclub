@@ -136,6 +136,21 @@ backend:
         -agent: "testing"
         -comment: "✅ ALL MEDIA TESTS PASSED (12/12). Tested via /app/backend_test.py with authenticated Bearer token. Results: (1) POST /api/media without auth returns 401 ✅ (2) Upload PNG to gallery category succeeds, returns id/url/storage_path/size ✅ (3) Upload PDF to document category with title='Form 990 2024' and subtitle='2024' succeeds ✅ (4) Invalid category returns 400 ✅ (5) GET /api/media?category=gallery lists uploaded image ✅ (6) GET /api/media?category=document lists uploaded PDF ✅ (7) GET /api/media/file/{id} returns image with Content-Type: image/png and non-empty body ✅ (8) GET /api/media/file/{id} returns PDF with Content-Type: application/pdf and non-empty body ✅ (9) DELETE /api/media/{id} without auth returns 401 ✅ (10) DELETE /api/media/{id} with auth soft-deletes (200) ✅ (11) Soft-deleted item excluded from subsequent list ✅ (12) GET /api/media/file/{id} for deleted item returns 404 ✅. Emergent object storage integration working correctly."
 
+  - task: "Form submissions - public create, admin list/counts/read/delete"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/submissions is PUBLIC, accepts {type, ...fields}; type must be volunteer|member|contact|rsvp|donation (invalid -> 400). Stores {id, type, data, read:false, created_at} in db.submissions. GET /api/submissions?type= (auth), GET /api/submissions/counts (auth) returns per-type {total, unread}, PATCH /api/submissions/{id}/read (auth), DELETE /api/submissions/{id} (auth). Please test: public create for each valid type + 400 invalid; unauthenticated GET/PATCH/DELETE return 401; with seeded Bearer token: list returns created items, counts reflect totals/unread, marking read decrements unread, delete removes item."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ ALL FORM SUBMISSION TESTS PASSED (14/14). Tested via /app/backend_test.py with seeded MongoDB user/session per auth_testing.md pattern. Results: (1) POST /api/submissions for each valid type (volunteer, member, contact, rsvp, donation) returns 200 with id ✅ (2) POST /api/submissions with invalid type 'spam' returns 400 ✅ (3) GET /api/submissions without auth returns 401 ✅ (4) GET /api/submissions/counts without auth returns 401 ✅ (5) PATCH /api/submissions/{id}/read without auth returns 401 ✅ (6) DELETE /api/submissions/{id} without auth returns 401 ✅ (7) GET /api/submissions?type=volunteer with Bearer token returns created submission ✅ (8) GET /api/submissions/counts with Bearer token returns correct structure with total/unread for all types ✅ (9) PATCH /api/submissions/{id}/read with Bearer token decrements unread count (1->0) ✅ (10) DELETE /api/submissions/{id} with Bearer token removes item from list and decrements total count ✅. All endpoints working correctly. Test data cleaned up from MongoDB."
+
 frontend:
   - task: "Auth context + admin dashboard + public content wiring"
     implemented: true
@@ -152,7 +167,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 2
+  test_sequence: 3
   run_ui: false
 
 test_plan:
@@ -163,7 +178,15 @@ test_plan:
 
 agent_communication:
     -agent: "main"
+    -message: "New task to test: Form submissions endpoints in backend/server.py. Use the seeded Bearer token pattern from /app/auth_testing.md for the auth-protected endpoints. POST /api/submissions is PUBLIC. Verify: create one submission for each valid type (volunteer, member, contact, rsvp, donation) returns 200 with id; invalid type returns 400; unauthenticated GET /api/submissions, GET /api/submissions/counts, PATCH /api/submissions/{id}/read, DELETE /api/submissions/{id} all return 401; with Bearer token, list shows created items (filter by type works), counts returns per-type total/unread, PATCH read decrements unread for that type, DELETE removes the item. Clean up test data after."
+
+agent_communication:
+    -agent: "main"
     -message: "Please test the new backend auth + media endpoints. Read /app/auth_testing.md for the Emergent auth session-seeding pattern (insert a user with a custom user_id and a matching user_sessions doc with session_token + future expires_at, then use Authorization: Bearer <session_token>). Object storage init succeeded at startup. Focus: 401 on protected endpoints when unauthenticated; full media lifecycle (upload image + PDF, list, fetch file bytes with correct content-type, soft-delete) when authenticated. DB name is in backend/.env (DB_NAME). Do NOT edit the Testing Protocol block."
     -agent: "testing"
     -message: "✅ Backend testing complete. All 15 tests passed (100% success rate). Created /app/backend_test.py with comprehensive test suite covering both Emergent Google Auth and File/Media Storage features. Auth: All endpoints working correctly (401 for unauthenticated, Bearer token auth, logout). Media: Full lifecycle tested (upload image/PDF, list by category, fetch file bytes with correct Content-Type, soft-delete, 401 for protected endpoints). Emergent object storage integration confirmed working. Test data cleaned up from MongoDB. Both backend tasks marked as working: true. Ready for main agent to summarize and finish."
+
+agent_communication:
+    -agent: "testing"
+    -message: "✅ Form submissions testing complete. All 14 tests passed (100% success rate). Extended /app/backend_test.py to include comprehensive form submission tests. Results: (1) Public POST /api/submissions works for all 5 valid types (volunteer, member, contact, rsvp, donation), each returns 200 with id. (2) Invalid type 'spam' correctly returns 400. (3) All protected endpoints (GET /api/submissions, GET /api/submissions/counts, PATCH /api/submissions/{id}/read, DELETE /api/submissions/{id}) return 401 when unauthenticated. (4) With Bearer token authentication: list by type works correctly, counts endpoint returns proper structure with total/unread for all types, mark-as-read decrements unread count, delete removes item and decrements total. All test data cleaned up from MongoDB. Task marked as working: true. All backend features now fully tested and working."
 

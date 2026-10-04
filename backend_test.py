@@ -22,6 +22,7 @@ test_session_token = None
 test_email = None
 uploaded_image_id = None
 uploaded_pdf_id = None
+submission_ids = {}  # Store submission IDs by type
 
 def print_section(title):
     """Print a formatted section header"""
@@ -95,6 +96,10 @@ def cleanup_test_data():
     # Delete test media
     result = db.media.delete_many({"uploaded_by": {"$regex": "test\\.admin\\."}})
     print(f"✓ Deleted {result.deleted_count} test media item(s)")
+    
+    # Delete test submissions
+    result = db.submissions.delete_many({"data.email": {"$regex": "test\\.submission\\."}})
+    print(f"✓ Deleted {result.deleted_count} test submission(s)")
     
     client.close()
 
@@ -520,6 +525,480 @@ def test_media_fetch_deleted_file():
     return passed
 
 # ============================================================================
+# TEST 3: Form Submissions
+# ============================================================================
+
+def test_submission_create_volunteer():
+    """Test creating a volunteer submission (PUBLIC)"""
+    print_section("TEST 3.1: Submissions - Create Volunteer (Public)")
+    
+    global submission_ids
+    
+    payload = {
+        "type": "volunteer",
+        "name": "John Volunteer",
+        "email": "test.submission.volunteer@example.com",
+        "interest": "Community outreach"
+    }
+    
+    response = requests.post(f"{API_BASE}/submissions", json=payload)
+    
+    passed = False
+    if response.status_code == 200:
+        data = response.json()
+        if 'id' in data:
+            submission_ids['volunteer'] = data['id']
+            passed = True
+            print_test(
+                "POST /api/submissions (volunteer) returns 200 with id",
+                True,
+                f"ID: {data['id']}"
+            )
+        else:
+            print_test(
+                "POST /api/submissions (volunteer) returns 200 with id",
+                False,
+                f"Missing 'id' in response: {data}"
+            )
+    else:
+        print_test(
+            "POST /api/submissions (volunteer) returns 200 with id",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+def test_submission_create_member():
+    """Test creating a member submission (PUBLIC)"""
+    print_section("TEST 3.2: Submissions - Create Member (Public)")
+    
+    global submission_ids
+    
+    payload = {
+        "type": "member",
+        "name": "Jane Member",
+        "email": "test.submission.member@example.com",
+        "phone": "555-1234"
+    }
+    
+    response = requests.post(f"{API_BASE}/submissions", json=payload)
+    
+    passed = False
+    if response.status_code == 200:
+        data = response.json()
+        if 'id' in data:
+            submission_ids['member'] = data['id']
+            passed = True
+            print_test(
+                "POST /api/submissions (member) returns 200 with id",
+                True,
+                f"ID: {data['id']}"
+            )
+        else:
+            print_test(
+                "POST /api/submissions (member) returns 200 with id",
+                False,
+                f"Missing 'id' in response: {data}"
+            )
+    else:
+        print_test(
+            "POST /api/submissions (member) returns 200 with id",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+def test_submission_create_contact():
+    """Test creating a contact submission (PUBLIC)"""
+    print_section("TEST 3.3: Submissions - Create Contact (Public)")
+    
+    global submission_ids
+    
+    payload = {
+        "type": "contact",
+        "name": "Bob Contact",
+        "email": "test.submission.contact@example.com",
+        "subject": "General inquiry",
+        "message": "I have a question about your organization."
+    }
+    
+    response = requests.post(f"{API_BASE}/submissions", json=payload)
+    
+    passed = False
+    if response.status_code == 200:
+        data = response.json()
+        if 'id' in data:
+            submission_ids['contact'] = data['id']
+            passed = True
+            print_test(
+                "POST /api/submissions (contact) returns 200 with id",
+                True,
+                f"ID: {data['id']}"
+            )
+        else:
+            print_test(
+                "POST /api/submissions (contact) returns 200 with id",
+                False,
+                f"Missing 'id' in response: {data}"
+            )
+    else:
+        print_test(
+            "POST /api/submissions (contact) returns 200 with id",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+def test_submission_create_rsvp():
+    """Test creating an RSVP submission (PUBLIC)"""
+    print_section("TEST 3.4: Submissions - Create RSVP (Public)")
+    
+    global submission_ids
+    
+    payload = {
+        "type": "rsvp",
+        "name": "Alice RSVP",
+        "email": "test.submission.rsvp@example.com",
+        "event": "Annual Gala 2024"
+    }
+    
+    response = requests.post(f"{API_BASE}/submissions", json=payload)
+    
+    passed = False
+    if response.status_code == 200:
+        data = response.json()
+        if 'id' in data:
+            submission_ids['rsvp'] = data['id']
+            passed = True
+            print_test(
+                "POST /api/submissions (rsvp) returns 200 with id",
+                True,
+                f"ID: {data['id']}"
+            )
+        else:
+            print_test(
+                "POST /api/submissions (rsvp) returns 200 with id",
+                False,
+                f"Missing 'id' in response: {data}"
+            )
+    else:
+        print_test(
+            "POST /api/submissions (rsvp) returns 200 with id",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+def test_submission_create_donation():
+    """Test creating a donation submission (PUBLIC)"""
+    print_section("TEST 3.5: Submissions - Create Donation (Public)")
+    
+    global submission_ids
+    
+    payload = {
+        "type": "donation",
+        "amount": 100,
+        "frequency": "monthly",
+        "email": "test.submission.donation@example.com"
+    }
+    
+    response = requests.post(f"{API_BASE}/submissions", json=payload)
+    
+    passed = False
+    if response.status_code == 200:
+        data = response.json()
+        if 'id' in data:
+            submission_ids['donation'] = data['id']
+            passed = True
+            print_test(
+                "POST /api/submissions (donation) returns 200 with id",
+                True,
+                f"ID: {data['id']}"
+            )
+        else:
+            print_test(
+                "POST /api/submissions (donation) returns 200 with id",
+                False,
+                f"Missing 'id' in response: {data}"
+            )
+    else:
+        print_test(
+            "POST /api/submissions (donation) returns 200 with id",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+def test_submission_create_invalid_type():
+    """Test that invalid submission type returns 400"""
+    print_section("TEST 3.6: Submissions - Invalid Type")
+    
+    payload = {
+        "type": "spam",
+        "name": "Spammer"
+    }
+    
+    response = requests.post(f"{API_BASE}/submissions", json=payload)
+    
+    passed = response.status_code == 400
+    print_test(
+        "POST /api/submissions with invalid type returns 400",
+        passed,
+        f"Status: {response.status_code}"
+    )
+    
+    return passed
+
+def test_submission_list_unauthenticated():
+    """Test that GET /api/submissions returns 401 when unauthenticated"""
+    print_section("TEST 3.7: Submissions - Unauthenticated List")
+    
+    response = requests.get(f"{API_BASE}/submissions")
+    
+    passed = response.status_code == 401
+    print_test(
+        "GET /api/submissions without auth returns 401",
+        passed,
+        f"Status: {response.status_code}"
+    )
+    
+    return passed
+
+def test_submission_counts_unauthenticated():
+    """Test that GET /api/submissions/counts returns 401 when unauthenticated"""
+    print_section("TEST 3.8: Submissions - Unauthenticated Counts")
+    
+    response = requests.get(f"{API_BASE}/submissions/counts")
+    
+    passed = response.status_code == 401
+    print_test(
+        "GET /api/submissions/counts without auth returns 401",
+        passed,
+        f"Status: {response.status_code}"
+    )
+    
+    return passed
+
+def test_submission_mark_read_unauthenticated():
+    """Test that PATCH /api/submissions/{id}/read returns 401 when unauthenticated"""
+    print_section("TEST 3.9: Submissions - Unauthenticated Mark Read")
+    
+    # Use any ID (doesn't matter if it exists for 401 test)
+    response = requests.patch(f"{API_BASE}/submissions/anyid/read")
+    
+    passed = response.status_code == 401
+    print_test(
+        "PATCH /api/submissions/{id}/read without auth returns 401",
+        passed,
+        f"Status: {response.status_code}"
+    )
+    
+    return passed
+
+def test_submission_delete_unauthenticated():
+    """Test that DELETE /api/submissions/{id} returns 401 when unauthenticated"""
+    print_section("TEST 3.10: Submissions - Unauthenticated Delete")
+    
+    # Use any ID (doesn't matter if it exists for 401 test)
+    response = requests.delete(f"{API_BASE}/submissions/anyid")
+    
+    passed = response.status_code == 401
+    print_test(
+        "DELETE /api/submissions/{id} without auth returns 401",
+        passed,
+        f"Status: {response.status_code}"
+    )
+    
+    return passed
+
+def test_submission_list_by_type():
+    """Test listing submissions filtered by type (authenticated)"""
+    print_section("TEST 3.11: Submissions - List by Type (Authenticated)")
+    
+    headers = {"Authorization": f"Bearer {test_session_token}"}
+    response = requests.get(f"{API_BASE}/submissions?type=volunteer", headers=headers)
+    
+    passed = False
+    if response.status_code == 200:
+        items = response.json()
+        if isinstance(items, list):
+            # Check if our volunteer submission is in the list
+            found = any(item.get('id') == submission_ids.get('volunteer') for item in items)
+            if found:
+                passed = True
+                print_test(
+                    "GET /api/submissions?type=volunteer returns created submission",
+                    True,
+                    f"Found volunteer submission in list of {len(items)} item(s)"
+                )
+            else:
+                print_test(
+                    "GET /api/submissions?type=volunteer returns created submission",
+                    False,
+                    f"Volunteer submission not found in list of {len(items)} items"
+                )
+        else:
+            print_test(
+                "GET /api/submissions?type=volunteer returns created submission",
+                False,
+                f"Response is not a list: {items}"
+            )
+    else:
+        print_test(
+            "GET /api/submissions?type=volunteer returns created submission",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+def test_submission_counts():
+    """Test getting submission counts (authenticated)"""
+    print_section("TEST 3.12: Submissions - Counts (Authenticated)")
+    
+    headers = {"Authorization": f"Bearer {test_session_token}"}
+    response = requests.get(f"{API_BASE}/submissions/counts", headers=headers)
+    
+    passed = False
+    if response.status_code == 200:
+        counts = response.json()
+        # Check that all types are present and have total/unread
+        expected_types = ['volunteer', 'member', 'contact', 'rsvp', 'donation']
+        all_present = all(t in counts for t in expected_types)
+        all_have_fields = all(
+            'total' in counts.get(t, {}) and 'unread' in counts.get(t, {})
+            for t in expected_types
+        )
+        
+        if all_present and all_have_fields:
+            # Check that counts are correct (at least 1 for each type we created)
+            correct_counts = all(
+                counts[t]['total'] >= 1 and counts[t]['unread'] >= 1
+                for t in expected_types
+            )
+            if correct_counts:
+                passed = True
+                print_test(
+                    "GET /api/submissions/counts returns correct structure and counts",
+                    True,
+                    f"All types present with total/unread. Example: volunteer={counts['volunteer']}"
+                )
+            else:
+                print_test(
+                    "GET /api/submissions/counts returns correct structure and counts",
+                    False,
+                    f"Counts incorrect: {counts}"
+                )
+        else:
+            print_test(
+                "GET /api/submissions/counts returns correct structure and counts",
+                False,
+                f"Missing types or fields: {counts}"
+            )
+    else:
+        print_test(
+            "GET /api/submissions/counts returns correct structure and counts",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+def test_submission_mark_read():
+    """Test marking a submission as read (authenticated)"""
+    print_section("TEST 3.13: Submissions - Mark as Read (Authenticated)")
+    
+    headers = {"Authorization": f"Bearer {test_session_token}"}
+    volunteer_id = submission_ids.get('volunteer')
+    
+    # First get the initial unread count for volunteer
+    counts_before = requests.get(f"{API_BASE}/submissions/counts", headers=headers).json()
+    unread_before = counts_before.get('volunteer', {}).get('unread', 0)
+    
+    # Mark as read
+    response = requests.patch(f"{API_BASE}/submissions/{volunteer_id}/read", headers=headers)
+    
+    passed = False
+    if response.status_code == 200:
+        # Check that unread count decreased
+        counts_after = requests.get(f"{API_BASE}/submissions/counts", headers=headers).json()
+        unread_after = counts_after.get('volunteer', {}).get('unread', 0)
+        
+        if unread_after == unread_before - 1:
+            passed = True
+            print_test(
+                "PATCH /api/submissions/{id}/read decrements unread count",
+                True,
+                f"Unread count: {unread_before} -> {unread_after}"
+            )
+        else:
+            print_test(
+                "PATCH /api/submissions/{id}/read decrements unread count",
+                False,
+                f"Unread count did not decrease correctly: {unread_before} -> {unread_after}"
+            )
+    else:
+        print_test(
+            "PATCH /api/submissions/{id}/read decrements unread count",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+def test_submission_delete():
+    """Test deleting a submission (authenticated)"""
+    print_section("TEST 3.14: Submissions - Delete (Authenticated)")
+    
+    headers = {"Authorization": f"Bearer {test_session_token}"}
+    contact_id = submission_ids.get('contact')
+    
+    # First get the initial total count for contact
+    counts_before = requests.get(f"{API_BASE}/submissions/counts", headers=headers).json()
+    total_before = counts_before.get('contact', {}).get('total', 0)
+    
+    # Delete the submission
+    response = requests.delete(f"{API_BASE}/submissions/{contact_id}", headers=headers)
+    
+    passed = False
+    if response.status_code == 200:
+        # Check that it's no longer in the list
+        list_response = requests.get(f"{API_BASE}/submissions?type=contact", headers=headers)
+        items = list_response.json()
+        found = any(item.get('id') == contact_id for item in items)
+        
+        # Check that total count decreased
+        counts_after = requests.get(f"{API_BASE}/submissions/counts", headers=headers).json()
+        total_after = counts_after.get('contact', {}).get('total', 0)
+        
+        if not found and total_after == total_before - 1:
+            passed = True
+            print_test(
+                "DELETE /api/submissions/{id} removes item and decrements total",
+                True,
+                f"Item removed from list, total count: {total_before} -> {total_after}"
+            )
+        else:
+            print_test(
+                "DELETE /api/submissions/{id} removes item and decrements total",
+                False,
+                f"Item still in list: {found}, total: {total_before} -> {total_after}"
+            )
+    else:
+        print_test(
+            "DELETE /api/submissions/{id} removes item and decrements total",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+# ============================================================================
 # MAIN TEST RUNNER
 # ============================================================================
 
@@ -553,6 +1032,22 @@ def main():
         results['media_delete_auth'] = test_media_delete_authenticated()
         results['media_list_after_delete'] = test_media_list_after_delete()
         results['media_fetch_deleted'] = test_media_fetch_deleted_file()
+        
+        # Test 3: Form Submissions
+        results['submission_create_volunteer'] = test_submission_create_volunteer()
+        results['submission_create_member'] = test_submission_create_member()
+        results['submission_create_contact'] = test_submission_create_contact()
+        results['submission_create_rsvp'] = test_submission_create_rsvp()
+        results['submission_create_donation'] = test_submission_create_donation()
+        results['submission_invalid_type'] = test_submission_create_invalid_type()
+        results['submission_list_unauth'] = test_submission_list_unauthenticated()
+        results['submission_counts_unauth'] = test_submission_counts_unauthenticated()
+        results['submission_mark_read_unauth'] = test_submission_mark_read_unauthenticated()
+        results['submission_delete_unauth'] = test_submission_delete_unauthenticated()
+        results['submission_list_by_type'] = test_submission_list_by_type()
+        results['submission_counts'] = test_submission_counts()
+        results['submission_mark_read'] = test_submission_mark_read()
+        results['submission_delete'] = test_submission_delete()
         
     finally:
         # Cleanup

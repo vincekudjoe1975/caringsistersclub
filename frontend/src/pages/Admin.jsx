@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api, mediaSrc } from '../lib/api';
 import Logo from '../components/Logo';
+import AdminSubmissions from './AdminSubmissions';
 import { useToast } from '../hooks/use-toast';
-import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home } from 'lucide-react';
+import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox } from 'lucide-react';
 
 const TABS = [
   { key: 'gallery', label: 'Gallery Photos', icon: ImageIcon, accept: 'image/*', titleLabel: 'Caption', subLabel: '' },
@@ -18,6 +19,7 @@ export default function Admin() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [tab, setTab] = useState('gallery');
+  const [view, setView] = useState('media');
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -101,9 +103,27 @@ export default function Admin() {
       <div className="max-w-7xl mx-auto px-5 lg:px-8 py-10">
         <div className="mb-8">
           <h1 className="font-serif text-[32px] text-[#3B0A2E] font-semibold">Content Manager</h1>
-          <p className="text-[#241019]/65 text-[14.5px] mt-1">Welcome{user?.name ? `, ${user.name}` : ''}. Upload and manage media stored securely in the cloud.</p>
+          <p className="text-[#241019]/65 text-[14.5px] mt-1">Welcome{user?.name ? `, ${user.name}` : ''}. Manage media and review form submissions.</p>
         </div>
 
+        {/* View switch */}
+        <div className="inline-flex gap-1 p-1.5 rounded-full mb-8 bg-white border border-[#3B0A2E]/8">
+          {[{ k: 'media', l: 'Media Library', icon: Images }, { k: 'inbox', l: 'Form Submissions', icon: Inbox }].map((v) => {
+            const Icon = v.icon;
+            return (
+              <button key={v.k} onClick={() => setView(v.k)}
+                className={`px-5 py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 transition-all ${view === v.k ? 'text-white' : 'text-[#3B0A2E]'}`}
+                style={view === v.k ? { background: '#3B0A2E' } : {}}>
+                <Icon size={16} /> {v.l}
+              </button>
+            );
+          })}
+        </div>
+
+        {view === 'inbox' ? (
+          <AdminSubmissions />
+        ) : (
+        <>
         {/* Tabs */}
         <div className="flex flex-wrap gap-2 mb-8">
           {TABS.map((t) => {
@@ -192,6 +212,8 @@ export default function Admin() {
             )}
           </div>
         </div>
+        </>
+        )}
       </div>
     </div>
   );

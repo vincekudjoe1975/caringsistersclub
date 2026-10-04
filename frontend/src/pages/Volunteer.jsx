@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { api } from '../lib/api';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
 import { CheckCircle2, Users, HandHeart } from 'lucide-react';
@@ -14,6 +15,7 @@ export default function Volunteer() {
 
   const submit = (e) => {
     e.preventDefault();
+    api.post('/submissions', { type: tab === 'member' ? 'member' : 'volunteer', ...form }).catch(() => {});
     setSubmitted(true);
     toast({ title: `${tab === 'volunteer' ? 'Volunteer' : 'Membership'} application received! (demo)`, description: `Thank you, ${form.name}. A chapter lead would reach out within 3 business days.` });
   };

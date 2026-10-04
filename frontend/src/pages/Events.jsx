@@ -5,6 +5,7 @@ import Reveal from '../components/Reveal';
 import { Calendar, MapPin, Clock, Users, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { useToast } from '../hooks/use-toast';
+import { api } from '../lib/api';
 
 function fmtDate(d) {
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -17,6 +18,7 @@ export default function Events() {
 
   const submitRsvp = (e) => {
     e.preventDefault();
+    api.post('/submissions', { type: 'rsvp', event: selected.title, event_date: selected.date, ...form }).catch(() => {});
     toast({ title: 'RSVP confirmed! (demo)', description: `You're registered for "${selected.title}". A confirmation would be emailed to ${form.email}.` });
     setSelected(null);
     setForm({ name: '', email: '', guests: 1 });

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { org, faqs } from '../mock/mock';
+import { api } from '../lib/api';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
 import { MapPin, Phone, Mail, Clock, Send } from 'lucide-react';
@@ -12,6 +13,7 @@ export default function Contact() {
 
   const submit = (e) => {
     e.preventDefault();
+    api.post('/submissions', { type: 'contact', ...form }).catch(() => {});
     toast({ title: 'Message sent! (demo)', description: `Thank you, ${form.name}. We'll respond to ${form.email} shortly.` });
     setForm({ name: '', email: '', subject: '', message: '' });
   };
