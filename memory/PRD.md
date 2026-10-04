@@ -43,6 +43,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
   campaign settings; `_maybe_send_thankyou()` fires a personal board-member email on any
   newly-paid gift ≥ threshold (default $250), deduped via `thankyou_sent`. UI in AdminCampaign.
   Tested (threshold gating + dedup). Email send attempts but sandbox returns 422.
+- **Admin Donations auto-refresh** (AdminDonations.jsx): silent re-fetch every 20s, re-fetch
+  on tab/window focus + visibilitychange, manual "Refresh" button, and an "Updated HH:MM"
+  timestamp. Verified 100% by automated tester (new paid donation appeared within ~16s with
+  no page reload; summary cards updated).
 
 ## Known issues / notes
 - **Email delivery**: Emergent email sandbox returns HTTP 422; emails are attempted/recorded
