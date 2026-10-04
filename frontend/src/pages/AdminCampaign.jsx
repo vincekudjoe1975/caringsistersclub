@@ -111,6 +111,8 @@ export default function AdminCampaign() {
             <label className="text-[13px] font-semibold text-[#3B0A2E]">Campaign Deadline <span className="text-[#241019]/40 font-normal">(optional)</span></label>
             <input type="date" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })}
               className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+            <p className="text-[12px] text-[#241019]/50 mt-1.5">Shows a countdown on the donor wall. Leave empty for no deadline.</p>
+          </div>
         </div>
 
         <div className="mt-8 pt-7 border-t border-[#3B0A2E]/10">
