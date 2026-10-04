@@ -1,0 +1,92 @@
+import React, { useEffect, useState } from 'react';
+import { api } from '../lib/api';
+import { useToast } from '../hooks/use-toast';
+import { Loader2, Target, Save } from 'lucide-react';
+
+export default function AdminCampaign() {
+  const { toast } = useToast();
+  const [form, setForm] = useState({ campaign_title: '', campaign_subtitle: '', goal: '' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get('/settings');
+        setForm({
+          campaign_title: data.campaign_title || '',
+          campaign_subtitle: data.campaign_subtitle || '',
+          goal: data.goal || '',
+        });
+      } catch (e) {
+        console.error('AdminCampaign: failed to load settings', e);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const save = async (e) => {
+    e.preventDefault();
+    const goalNum = Number(form.goal);
+    if (!goalNum || goalNum <= 0) {
+      toast({ title: 'Enter a valid goal amount', variant: 'destructive' });
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put('/admin/settings', {
+        campaign_title: form.campaign_title,
+        campaign_subtitle: form.campaign_subtitle,
+        goal: goalNum,
+      });
+      toast({ title: 'Campaign updated', description: 'Your donor wall now reflects the changes.' });
+    } catch (err) {
+      toast({ title: 'Save failed', description: err?.response?.data?.detail || 'Try again', variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-[#B4247E]" size={32} /></div>;
+  }
+
+  return (
+    <div className="max-w-xl">
+      <form onSubmit={save} className="bg-white rounded-2xl p-8 border border-[#3B0A2E]/8">
+        <h2 className="font-serif text-[22px] text-[#3B0A2E] font-semibold mb-1 flex items-center gap-2">
+          <Target size={20} className="text-[#B4247E]" /> Fundraising Campaign
+        </h2>
+        <p className="text-[#241019]/60 text-[13.5px] mb-6">These appear on the public donor wall and thermometer.</p>
+
+        <div className="space-y-5">
+          <div>
+            <label className="text-[13px] font-semibold text-[#3B0A2E]">Eyebrow (small label)</label>
+            <input value={form.campaign_subtitle} onChange={(e) => setForm({ ...form, campaign_subtitle: e.target.value })}
+              placeholder="Our Community of Givers"
+              className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+          </div>
+          <div>
+            <label className="text-[13px] font-semibold text-[#3B0A2E]">Campaign Title</label>
+            <input value={form.campaign_title} onChange={(e) => setForm({ ...form, campaign_title: e.target.value })}
+              placeholder="Together we're making it happen"
+              className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+          </div>
+          <div>
+            <label className="text-[13px] font-semibold text-[#3B0A2E]">Fundraising Goal ($)</label>
+            <div className="relative mt-1.5">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#3B0A2E] font-semibold">$</span>
+              <input type="number" min={1} value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })}
+                className="w-full rounded-lg border border-[#3B0A2E]/15 pl-8 pr-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+            </div>
+          </div>
+        </div>
+
+        <button type="submit" disabled={saving} className="btn-magenta rounded-full px-7 py-3 font-semibold mt-7 flex items-center gap-2 disabled:opacity-60">
+          {saving ? <><Loader2 className="animate-spin" size={16} /> Saving…</> : <><Save size={16} /> Save Campaign</>}
+        </button>
+      </form>
+    </div>
+  );
+}

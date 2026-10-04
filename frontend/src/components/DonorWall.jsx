@@ -36,8 +36,8 @@ export default function DonorWall() {
     <section className="py-20 lg:py-24" style={{ background: '#F7EFE9' }}>
       <div className="max-w-6xl mx-auto px-5 lg:px-8">
         <div className="text-center max-w-2xl mx-auto mb-12">
-          <p className="eyebrow text-[#B4247E] mb-4">Our Community of Givers</p>
-          <h2 className="font-serif text-[32px] lg:text-[42px] text-[#3B0A2E] font-semibold">Together we're making it happen</h2>
+          <p className="eyebrow text-[#B4247E] mb-4">{data.campaign_subtitle || 'Our Community of Givers'}</p>
+          <h2 className="font-serif text-[32px] lg:text-[42px] text-[#3B0A2E] font-semibold">{data.campaign_title || "Together we're making it happen"}</h2>
         </div>
 
         <div className="grid lg:grid-cols-[1.3fr_1fr] gap-10 items-start">

@@ -6,8 +6,9 @@ import Logo from '../components/Logo';
 import AdminSubmissions from './AdminSubmissions';
 import AdminDonations from './AdminDonations';
 import AdminTeam from './AdminTeam';
+import AdminCampaign from './AdminCampaign';
 import { useToast } from '../hooks/use-toast';
-import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock } from 'lucide-react';
+import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target } from 'lucide-react';
 
 const TABS = [
   { key: 'gallery', label: 'Gallery Photos', icon: ImageIcon, accept: 'image/*', titleLabel: 'Caption', subLabel: '' },
@@ -134,6 +135,7 @@ export default function Admin() {
             { k: 'media', l: 'Media Library', icon: Images },
             { k: 'inbox', l: 'Form Submissions', icon: Inbox },
             { k: 'donations', l: 'Donations', icon: DollarSign },
+            { k: 'campaign', l: 'Campaign', icon: Target },
             { k: 'team', l: 'Team Access', icon: ShieldCheck },
           ].map((v) => {
             const Icon = v.icon;
@@ -151,6 +153,8 @@ export default function Admin() {
           <AdminSubmissions />
         ) : view === 'donations' ? (
           <AdminDonations />
+        ) : view === 'campaign' ? (
+          <AdminCampaign />
         ) : view === 'team' ? (
           <AdminTeam currentUserId={user?.user_id} />
         ) : (

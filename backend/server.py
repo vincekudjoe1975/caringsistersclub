@@ -480,7 +480,50 @@ async def stripe_webhook(request: Request):
             {"session_id": obj["id"]},
             {"$set": {"status": "expired", "payment_status": "expired", "updated_at": datetime.now(timezone.utc).isoformat()}},
         )
+    elif t == "invoice.payment_succeeded":
+        # Recurring monthly donation renewal (skip the first invoice of a new subscription)
+        if obj.get("billing_reason") == "subscription_cycle":
+            await _handle_recurring_renewal(obj)
     return {"status": "ok"}
+
+
+async def _handle_recurring_renewal(invoice: dict):
+    renewal_id = invoice.get("id")
+    if not renewal_id:
+        return
+    if await db.payment_transactions.find_one({"session_id": renewal_id}):
+        return  # already processed
+    sub_id = invoice.get("subscription")
+    orig = await db.payment_transactions.find_one(
+        {"stripe_subscription_id": sub_id}, {"_id": 0}
+    ) if sub_id else None
+    email = invoice.get("customer_email") or (orig.get("donor_email") if orig else "")
+    amount = float(invoice.get("amount_paid") or 0) / 100.0
+    now = datetime.now(timezone.utc).isoformat()
+    txn = {
+        "session_id": renewal_id,
+        "amount": amount,
+        "currency": "usd",
+        "frequency": "monthly",
+        "donor_name": (orig.get("donor_name") if orig else "") or "",
+        "donor_email": email or "",
+        "anonymous": bool(orig.get("anonymous")) if orig else False,
+        "status": "completed",
+        "payment_status": "paid",
+        "stripe_subscription_id": sub_id,
+        "is_renewal": True,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.payment_transactions.insert_one(txn)
+    if email:
+        donor_name = (txn["donor_name"] or "").strip() or "Friend"
+        html = _receipt_html(donor_name, amount, "monthly")
+        await send_email(
+            to=email,
+            subject="Your recurring gift to The Caring Sisters Club",
+            html=html,
+        )
 
 
 # ---------- Form Submissions (public create, admin manage) ----------
@@ -690,8 +733,55 @@ def _display_name(txn: dict) -> str:
     return f"{parts[0]} {parts[-1][0]}."
 
 
+# ---------- Campaign Settings (editable goal + title) ----------
+DEFAULT_SETTINGS = {
+    "campaign_title": "Together we're making it happen",
+    "campaign_subtitle": "Our Community of Givers",
+    "goal": FUNDRAISING_GOAL,
+}
+
+
+async def _get_settings():
+    doc = await db.settings.find_one({"key": "site"}, {"_id": 0})
+    if not doc:
+        return dict(DEFAULT_SETTINGS)
+    return {
+        "campaign_title": doc.get("campaign_title") or DEFAULT_SETTINGS["campaign_title"],
+        "campaign_subtitle": doc.get("campaign_subtitle") or DEFAULT_SETTINGS["campaign_subtitle"],
+        "goal": float(doc.get("goal") or DEFAULT_SETTINGS["goal"]),
+    }
+
+
+class SettingsUpdate(BaseModel):
+    campaign_title: Optional[str] = None
+    campaign_subtitle: Optional[str] = None
+    goal: Optional[float] = None
+
+
+@api_router.get("/settings")
+async def get_settings():
+    return await _get_settings()
+
+
+@api_router.put("/admin/settings")
+async def update_settings(payload: SettingsUpdate, user=Depends(require_admin)):
+    update = {}
+    if payload.campaign_title is not None:
+        update["campaign_title"] = payload.campaign_title.strip()
+    if payload.campaign_subtitle is not None:
+        update["campaign_subtitle"] = payload.campaign_subtitle.strip()
+    if payload.goal is not None:
+        if payload.goal <= 0:
+            raise HTTPException(status_code=400, detail="Goal must be greater than zero")
+        update["goal"] = float(payload.goal)
+    if update:
+        await db.settings.update_one({"key": "site"}, {"$set": update}, upsert=True)
+    return await _get_settings()
+
+
 @api_router.get("/donations/public")
 async def donations_public():
+    settings = await _get_settings()
     paid = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(2000)
     total = sum(float(t.get("amount", 0)) for t in paid)
     recent_src = sorted(paid, key=lambda t: t.get("updated_at", ""), reverse=True)[:12]
@@ -703,7 +793,9 @@ async def donations_public():
     } for t in recent_src]
     return {
         "total_raised": round(total, 2),
-        "goal": FUNDRAISING_GOAL,
+        "goal": settings["goal"],
+        "campaign_title": settings["campaign_title"],
+        "campaign_subtitle": settings["campaign_subtitle"],
         "donor_count": len(paid),
         "recent": recent,
     }
