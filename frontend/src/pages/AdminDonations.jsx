@@ -161,6 +161,46 @@ export default function AdminDonations() {
           </table>
         </div>
       )}
+
+      {(data?.pending_items || []).length > 0 && (
+        <div className="mt-8" data-testid="pending-donations-section">
+          <div className="flex items-center gap-2 mb-3">
+            <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold">Pending / Incomplete checkouts</h3>
+            <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full" style={{ background: '#f0ece4', color: '#8a6d2f' }}>
+              {data.pending_items.length}
+            </span>
+          </div>
+          <p className="text-[#241019]/50 text-[12.5px] mb-4">Checkouts that were started but not completed on Stripe. These are not counted in totals above.</p>
+          <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 overflow-hidden">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="text-[#241019]/55 text-[12px] uppercase tracking-wide" style={{ background: '#faf6ee' }}>
+                  <th className="px-5 py-3 font-semibold">Started</th>
+                  <th className="px-5 py-3 font-semibold">Donor</th>
+                  <th className="px-5 py-3 font-semibold">Email</th>
+                  <th className="px-5 py-3 font-semibold">Type</th>
+                  <th className="px-5 py-3 font-semibold text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.pending_items.map((it) => (
+                  <tr key={it.session_id} className="border-t border-[#3B0A2E]/8 text-[13.5px]" data-testid="pending-donation-row">
+                    <td className="px-5 py-3 text-[#241019]/70 whitespace-nowrap">{it.created_at ? new Date(it.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                    <td className="px-5 py-3 text-[#3B0A2E] font-medium">{it.anonymous ? 'Anonymous' : (it.donor_name || '—')}</td>
+                    <td className="px-5 py-3 text-[#241019]/60">{it.donor_email || '—'}</td>
+                    <td className="px-5 py-3">
+                      <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full" style={it.frequency === 'monthly' ? { background: '#f2e6ee', color: '#B4247E' } : { background: '#f0ece4', color: '#8a6d2f' }}>
+                        {it.frequency === 'monthly' ? 'Monthly' : 'One-Time'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-right font-semibold text-[#241019]/50">${Number(it.amount).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

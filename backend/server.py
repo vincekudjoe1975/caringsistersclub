@@ -817,6 +817,9 @@ async def admin_donations(frequency: Optional[str] = None, user=Depends(require_
         query["frequency"] = frequency
     items = await db.payment_transactions.find(query, {"_id": 0}).sort("updated_at", -1).to_list(2000)
     all_paid = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(2000)
+    pending_items = await db.payment_transactions.find(
+        {"payment_status": {"$nin": ["paid", "expired"]}}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
     total = sum(float(t.get("amount", 0)) for t in all_paid)
     monthly_ct = sum(1 for t in all_paid if t.get("frequency") == "monthly")
     onetime_ct = sum(1 for t in all_paid if t.get("frequency") != "monthly")
@@ -834,6 +837,7 @@ async def admin_donations(frequency: Optional[str] = None, user=Depends(require_
 
     return {
         "items": items,
+        "pending_items": pending_items,
         "summary": {
             "total_raised": round(total, 2),
             "count": len(all_paid),
