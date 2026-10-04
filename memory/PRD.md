@@ -47,17 +47,35 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
   on tab/window focus + visibilitychange, manual "Refresh" button, and an "Updated HH:MM"
   timestamp. Verified 100% by automated tester (new paid donation appeared within ~16s with
   no page reload; summary cards updated).
+- **Email delivery confirmed working**: the Emergent managed email uses a platform-verified
+  sending domain (no Resend account/domain setup needed). The earlier HTTP 422 was the
+  provider blocking fake `@example.com` test addresses ("Undeliverable recipient"); real
+  recipient addresses return 202 + message id. Verified live.
+- **Security hardening** (from audit): (a) SEC-003 fixed — public `GET /api/settings` now
+  returns only public campaign fields; new admin-only `GET /api/admin/settings` returns the
+  full config (AdminCampaign uses it). (b) SEC-002 CSRF — a `csrf_protect` middleware blocks
+  mutating requests that carry a `session_token` cookie but lack `X-Requested-With:
+  XMLHttpRequest`; the frontend axios instance (`lib/api.js`) sends this header on every call.
+  Stripe webhook and public form posts (no cookie) are unaffected. Verified end-to-end.
+- **Live Donation Feed** (AdminDonations.jsx): when auto-refresh brings in a new paid gift,
+  the row flashes a gentle gold highlight (`.gift-row-new`, Sparkles icon) and a toast
+  "🎉 A new gift just arrived!" fires. Verified 100% by automated tester.
 
 ## Known issues / notes
-- **Email delivery**: Emergent email sandbox returns HTTP 422; emails are attempted/recorded
-  but NOT actually delivered. Needs verified sender domain to go live. Affects receipts,
-  statements, progress, milestone, reminder, and thank-you emails.
+- **Email delivery works** via the Emergent platform-verified domain (202 + id for real
+  addresses). It rejects obviously-fake recipients like `@example.com` with HTTP 422
+  ("Undeliverable recipient") — expected, not a bug. `send_email` swallows failures (logs,
+  returns None) so a bad address never breaks checkout or a bulk loop.
 - **Stripe is sandbox/claimable** — Donate does not accept real cards until onboarding/Go-Live.
+- CSRF is enforced via `X-Requested-With` header on cookie-auth mutations; any future
+  non-axios client must send this header.
 - Scheduler runtime persistence over long periods unverified.
 - Never run destructive seed/cleanup on `payment_transactions` without preserving real data.
 
 ## Backlog / next (P1)
 - Stripe Go-Live guidance + production credential configuration (user action).
-- Verify email sender domain so emails actually deliver.
 - Optional: cross-check lapsed status against live Stripe subscription status.
-- User still to confirm a fresh monthly donation lands in the DB after full Stripe completion.
+- Optional security hardening (P3 from audit): rate-limit public POSTs, upload size cap,
+  `X-Content-Type-Options: nosniff` on served media.
+- User still to confirm a fresh monthly donation lands in the DB after full Stripe completion
+  (on the SAME environment they view the admin — preview vs deployed use separate DBs).

@@ -1,0 +1,44 @@
+{
+  "summary": "Live Donation Feed + CSRF regression verified end-to-end for Caring Sisters Club admin. All four test cases PASSED. Session cookie 'qa-livefeed-tok' auth worked. Inserted a paid donation directly into MongoDB payment_transactions, triggered admin UI auto-refresh (and manual refresh), and confirmed the new row rendered with gold highlight, Sparkles icon, correct testid, and a toast. CSRF-protected admin PUT /admin/settings (Campaign save) and donor notes save both succeeded with the X-Requested-With header set by the axios instance.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": [
+    {
+      "case": "Live Donation Feed - new row highlight + toast",
+      "status": "PASS",
+      "evidence": "After inserting qa_livefeed donation and refreshing, element with data-testid='donation-row-new' exists, has class 'gift-row-new', contains a Sparkles SVG, and the text 'LiveFeed Tester ... $500 ... One-Time' appears. Toast captured: '🎉 A new gift just arrived! LiveFeed Tester gave $500.' Totals updated $300->$800 and 2->3 Gifts. Auto-refresh (20s) path also observed on first run (toast fired without manual refresh)."
+    },
+    {
+      "case": "CSRF - Campaign Save (PUT /admin/settings)",
+      "status": "PASS",
+      "evidence": "Changed Large-Gift Threshold to 275, clicked Save Campaign, toast 'Campaign updated - Your donor wall now reflects the changes.' displayed. Reverted to 250 successfully."
+    },
+    {
+      "case": "CSRF - Donor Notes Save",
+      "status": "PASS",
+      "evidence": "Opened first donor, filled a note, clicked data-testid='save-notes-btn', toast 'Saved - Donor notes and tags updated.' displayed."
+    },
+    {
+      "case": "Regression - Manual Refresh + Last Updated timestamp",
+      "status": "PASS",
+      "evidence": "data-testid='refresh-donations-btn' present and clickable; data-testid='donations-last-updated' shows e.g. 'Updated 9:03 AM'."
+    }
+  ],
+  "test_report_links": ["/tmp/insert_donation.py", "/tmp/cleanup_donation.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AdminDonations.jsx: knownIds baseline is reset to null whenever the filter changes, which is correct, but if the admin switches filter at the exact moment a new gift arrives, that gift will be swallowed silently (no toast/highlight). Low-priority edge case.",
+    "AdminDonations.jsx line 83: newIds auto-clears after 6s via setTimeout, which could race with another refresh that queues more newIds. Current state replacement with setNewIds(fresh.map(...)) means a 2nd batch during the 6s window will overwrite the first. Minor."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (skipped per request)", "frontend": "100%" },
+  "test_credentials": "session_token cookie 'qa-livefeed-tok' injected per review_request",
+  "seed_data_creation": "Inserted + deleted one payment_transactions doc with source='qa_livefeed'. The 2 real donations preserved. Verified cleanup: deleted 1.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The newIds highlight auto-clears after 6s. If verifying via auto-refresh (20s), check for the toast rather than the testid, OR trigger via manual refresh and check within 5s. The toast fires in the same branch that applies the testid/class/sparkles."
+}
