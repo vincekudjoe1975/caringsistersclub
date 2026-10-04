@@ -416,6 +416,7 @@ async def _record_paid_donation(session_id: str, txn: dict, recipient_email: str
             subject="Thank you for your gift to The Caring Sisters Club",
             html=html,
         )
+    await _maybe_send_thankyou(txn, recipient_email=donor_email)
     await _check_milestones()
 
 
@@ -525,6 +526,7 @@ async def _handle_recurring_renewal(invoice: dict):
             subject="Your recurring gift to The Caring Sisters Club",
             html=html,
         )
+    await _maybe_send_thankyou(txn, recipient_email=email)
     await _check_milestones()
 
 
@@ -726,6 +728,71 @@ except ValueError:
     FUNDRAISING_GOAL = 50000.0
 
 
+def _thankyou_email_html(name: str, amount, frequency: str, sender_name: str, note: str) -> str:
+    freq_txt = " monthly" if frequency == "monthly" else ""
+    note_html = (
+        f'<p style="font-size:15px;line-height:1.7;color:#4a3340;margin:0 0 18px">{_esc(note)}</p>'
+        if note else ""
+    )
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9;padding:0;margin:0">'
+        '<tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden">'
+        '<tr><td style="background:#3B0A2E;padding:28px 32px;color:#F7EFE9;font-family:Georgia,serif">'
+        '<div style="font-size:20px;font-weight:bold;letter-spacing:1px">The Caring Sisters Club</div>'
+        '<div style="font-size:11px;color:#CBA24B;letter-spacing:3px;text-transform:uppercase;margin-top:4px">A Personal Thank You</div>'
+        '</td></tr>'
+        '<tr><td style="padding:32px;font-family:Arial,Helvetica,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#B4247E;font-size:24px;margin:0 0 16px">Dear {_esc(name)},</h1>'
+        f'<p style="font-size:15px;line-height:1.7;color:#4a3340;margin:0 0 18px">Your extraordinary{freq_txt} gift of <strong>${_esc(str(amount))}</strong> truly moved us. I am writing to you personally to say thank you from the bottom of my heart.</p>'
+        f'{note_html}'
+        '<p style="font-size:14px;line-height:1.6;color:#6b5560;margin:18px 0 0">With deep gratitude,</p>'
+        f'<p style="font-family:Georgia,serif;font-size:16px;color:#3B0A2E;margin:4px 0 0;font-weight:bold">{_esc(sender_name)}</p>'
+        '<p style="font-size:13px;color:#6b5560;margin:2px 0 0">The Caring Sisters Club</p>'
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:18px 32px;font-family:Arial,sans-serif">'
+        '<p style="font-size:11px;color:#b79aae;margin:0;line-height:1.5">A formal tax receipt has been sent separately. We never ask for your password or card details by email.</p>'
+        '</td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _maybe_send_thankyou(txn: dict, recipient_email: str = None):
+    """Send a personal board-member thank-you for gifts at or above the configured threshold."""
+    try:
+        settings = await _get_settings()
+        if not settings.get("thankyou_enabled"):
+            return
+        threshold = float(settings.get("thankyou_threshold") or 0)
+        amount = float(txn.get("amount") or 0)
+        if threshold <= 0 or amount < threshold:
+            return
+        email = (recipient_email or txn.get("donor_email") or "").strip()
+        if not email:
+            return
+        session_id = txn.get("session_id")
+        if session_id and await db.thankyou_sent.find_one({"session_id": session_id}):
+            return
+        donor_name = (txn.get("donor_name") or "").strip() or "Friend"
+        html = _thankyou_email_html(
+            donor_name, txn.get("amount"), txn.get("frequency"),
+            settings.get("thankyou_sender_name"), settings.get("thankyou_note"),
+        )
+        await send_email(
+            to=email,
+            subject=f"A personal thank you from {settings.get('thankyou_sender_name')}",
+            html=html,
+        )
+        await db.thankyou_sent.insert_one({
+            "session_id": session_id,
+            "email": email,
+            "amount": amount,
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as e:
+        logging.error(f"Thank-you automation failed: {e}")
+
+
 def _display_name(txn: dict) -> str:
     if txn.get("anonymous") or not (txn.get("donor_name") or "").strip():
         return "Anonymous"
@@ -741,6 +808,10 @@ DEFAULT_SETTINGS = {
     "campaign_subtitle": "Our Community of Givers",
     "goal": FUNDRAISING_GOAL,
     "deadline": None,
+    "thankyou_enabled": True,
+    "thankyou_threshold": 250.0,
+    "thankyou_sender_name": "Fem Mansaray, Founder & President",
+    "thankyou_note": "On behalf of our entire board and the women we serve, I wanted to personally thank you. Gifts like yours are transformational, and we are honored to have you in our sisterhood.",
 }
 
 
@@ -753,6 +824,10 @@ async def _get_settings():
         "campaign_subtitle": doc.get("campaign_subtitle") or DEFAULT_SETTINGS["campaign_subtitle"],
         "goal": float(doc.get("goal") or DEFAULT_SETTINGS["goal"]),
         "deadline": doc.get("deadline"),
+        "thankyou_enabled": doc.get("thankyou_enabled", DEFAULT_SETTINGS["thankyou_enabled"]),
+        "thankyou_threshold": float(doc.get("thankyou_threshold") or DEFAULT_SETTINGS["thankyou_threshold"]),
+        "thankyou_sender_name": doc.get("thankyou_sender_name") or DEFAULT_SETTINGS["thankyou_sender_name"],
+        "thankyou_note": doc.get("thankyou_note") or DEFAULT_SETTINGS["thankyou_note"],
     }
 
 
@@ -761,6 +836,10 @@ class SettingsUpdate(BaseModel):
     campaign_subtitle: Optional[str] = None
     goal: Optional[float] = None
     deadline: Optional[str] = None  # ISO date (YYYY-MM-DD) or "" to clear
+    thankyou_enabled: Optional[bool] = None
+    thankyou_threshold: Optional[float] = None
+    thankyou_sender_name: Optional[str] = None
+    thankyou_note: Optional[str] = None
 
 
 @api_router.get("/settings")
@@ -781,6 +860,16 @@ async def update_settings(payload: SettingsUpdate, user=Depends(require_admin)):
         update["goal"] = float(payload.goal)
     if payload.deadline is not None:
         update["deadline"] = payload.deadline.strip() or None
+    if payload.thankyou_enabled is not None:
+        update["thankyou_enabled"] = bool(payload.thankyou_enabled)
+    if payload.thankyou_threshold is not None:
+        if payload.thankyou_threshold < 0:
+            raise HTTPException(status_code=400, detail="Threshold cannot be negative")
+        update["thankyou_threshold"] = float(payload.thankyou_threshold)
+    if payload.thankyou_sender_name is not None:
+        update["thankyou_sender_name"] = payload.thankyou_sender_name.strip()
+    if payload.thankyou_note is not None:
+        update["thankyou_note"] = payload.thankyou_note.strip()
     if update:
         await db.settings.update_one({"key": "site"}, {"$set": update}, upsert=True)
     return await _get_settings()
@@ -988,6 +1077,21 @@ async def send_progress_email(payload: ProgressEmail, user=Depends(require_admin
 
 
 # ---------- Admin: Donor Profiles ----------
+LAPSED_GRACE_DAYS = 35  # a monthly donor whose last monthly gift predates this is "lapsed"
+
+
+def _is_lapsed(last_monthly_iso: str) -> bool:
+    if not last_monthly_iso:
+        return False
+    try:
+        last = datetime.fromisoformat(last_monthly_iso.replace("Z", "+00:00"))
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return (datetime.now(timezone.utc) - last).days > LAPSED_GRACE_DAYS
+
+
 @api_router.get("/admin/donors")
 async def admin_donors(user=Depends(require_admin)):
     paid = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(5000)
@@ -1001,27 +1105,43 @@ async def admin_donors(user=Depends(require_admin)):
             "lifetime": 0.0,
             "gifts": 0,
             "last_gift": "",
+            "last_monthly_gift": "",
             "has_monthly": False,
             "anonymous_only": True,
         })
         p["lifetime"] += float(t.get("amount", 0))
         p["gifts"] += 1
+        upd = t.get("updated_at") or ""
         if t.get("frequency") == "monthly":
             p["has_monthly"] = True
+            if upd > p["last_monthly_gift"]:
+                p["last_monthly_gift"] = upd
         if not t.get("anonymous") and (t.get("donor_name") or "").strip():
             p["name"] = t["donor_name"].strip()
             p["anonymous_only"] = False
-        upd = t.get("updated_at") or ""
         if upd > p["last_gift"]:
             p["last_gift"] = upd
+    # Attach private notes/tags (keyed by email)
+    notes_docs = await db.donor_notes.find({}, {"_id": 0}).to_list(5000)
+    notes_map = {n["email"]: n for n in notes_docs}
     out = []
     for p in profiles.values():
         p["lifetime"] = round(p["lifetime"], 2)
         if not p["name"]:
             p["name"] = "Anonymous" if p["anonymous_only"] else (p["email"] or "Anonymous")
+        p["lapsed"] = bool(p["has_monthly"] and _is_lapsed(p["last_monthly_gift"]))
+        nd = notes_map.get(p["email"]) if p["email"] else None
+        p["tags"] = (nd.get("tags") if nd else []) or []
+        p["has_note"] = bool(nd and (nd.get("note") or "").strip())
         out.append(p)
     out.sort(key=lambda x: x["lifetime"], reverse=True)
-    return {"donors": out, "count": len(out)}
+    lapsed_count = sum(1 for p in out if p.get("lapsed"))
+    return {"donors": out, "count": len(out), "lapsed_count": lapsed_count}
+
+
+class DonorNotes(BaseModel):
+    note: Optional[str] = None
+    tags: Optional[List[str]] = None
 
 
 @api_router.get("/admin/donors/{email}")
@@ -1033,7 +1153,40 @@ async def admin_donor_detail(email: str, user=Depends(require_admin)):
     ).sort("updated_at", -1).to_list(2000)
     lifetime = round(sum(float(g.get("amount", 0)) for g in gifts), 2)
     name = next((g.get("donor_name") for g in gifts if (g.get("donor_name") or "").strip() and not g.get("anonymous")), None) or em
-    return {"email": em, "name": name, "lifetime": lifetime, "gift_count": len(gifts), "gifts": gifts}
+    last_monthly = next((g.get("updated_at") for g in gifts if g.get("frequency") == "monthly"), "")
+    has_monthly = any(g.get("frequency") == "monthly" for g in gifts)
+    nd = await db.donor_notes.find_one({"email": em}, {"_id": 0}) or {}
+    return {
+        "email": em,
+        "name": name,
+        "lifetime": lifetime,
+        "gift_count": len(gifts),
+        "gifts": gifts,
+        "note": nd.get("note", ""),
+        "tags": nd.get("tags", []),
+        "lapsed": bool(has_monthly and _is_lapsed(last_monthly)),
+        "has_monthly": has_monthly,
+    }
+
+
+@api_router.put("/admin/donors/{email}/notes")
+async def update_donor_notes(email: str, payload: DonorNotes, user=Depends(require_admin)):
+    em = email.strip().lower()
+    if not em or "@" not in em:
+        raise HTTPException(status_code=400, detail="Valid donor email required")
+    update = {"email": em, "updated_at": datetime.now(timezone.utc).isoformat(), "updated_by": user.get("user_id")}
+    if payload.note is not None:
+        update["note"] = payload.note.strip()
+    if payload.tags is not None:
+        clean = []
+        for t in payload.tags:
+            t = (t or "").strip()
+            if t and t not in clean:
+                clean.append(t)
+        update["tags"] = clean[:20]
+    await db.donor_notes.update_one({"email": em}, {"$set": update}, upsert=True)
+    doc = await db.donor_notes.find_one({"email": em}, {"_id": 0})
+    return {"email": em, "note": doc.get("note", ""), "tags": doc.get("tags", [])}
 
 
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------

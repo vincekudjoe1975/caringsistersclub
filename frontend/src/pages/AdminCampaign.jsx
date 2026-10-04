@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, Target, Save, Send } from 'lucide-react';
+import { Loader2, Target, Save, Send, Heart } from 'lucide-react';
 
 export default function AdminCampaign() {
   const { toast } = useToast();
-  const [form, setForm] = useState({ campaign_title: '', campaign_subtitle: '', goal: '', deadline: '' });
+  const [form, setForm] = useState({ campaign_title: '', campaign_subtitle: '', goal: '', deadline: '', thankyou_enabled: true, thankyou_threshold: '', thankyou_sender_name: '', thankyou_note: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState('');
@@ -34,6 +34,10 @@ export default function AdminCampaign() {
           campaign_subtitle: data.campaign_subtitle || '',
           goal: data.goal || '',
           deadline: data.deadline || '',
+          thankyou_enabled: data.thankyou_enabled !== false,
+          thankyou_threshold: data.thankyou_threshold ?? '',
+          thankyou_sender_name: data.thankyou_sender_name || '',
+          thankyou_note: data.thankyou_note || '',
         });
       } catch (e) {
         console.error('AdminCampaign: failed to load settings', e);
@@ -57,6 +61,10 @@ export default function AdminCampaign() {
         campaign_subtitle: form.campaign_subtitle,
         goal: goalNum,
         deadline: form.deadline || '',
+        thankyou_enabled: form.thankyou_enabled,
+        thankyou_threshold: Number(form.thankyou_threshold) || 0,
+        thankyou_sender_name: form.thankyou_sender_name,
+        thankyou_note: form.thankyou_note,
       });
       toast({ title: 'Campaign updated', description: 'Your donor wall now reflects the changes.' });
     } catch (err) {
@@ -103,7 +111,45 @@ export default function AdminCampaign() {
             <label className="text-[13px] font-semibold text-[#3B0A2E]">Campaign Deadline <span className="text-[#241019]/40 font-normal">(optional)</span></label>
             <input type="date" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })}
               className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
-            <p className="text-[12px] text-[#241019]/50 mt-1.5">Shows a countdown on the donor wall. Leave empty for no deadline.</p>
+        </div>
+
+        <div className="mt-8 pt-7 border-t border-[#3B0A2E]/10">
+          <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold mb-1 flex items-center gap-2">
+            <Heart size={18} className="text-[#B4247E]" /> Thank-You Automation
+          </h3>
+          <p className="text-[#241019]/60 text-[13px] mb-5">Automatically email a warm, personal note from a board member when a gift meets your large-gift threshold.</p>
+
+          <label className="flex items-center gap-3 mb-5 cursor-pointer" data-testid="thankyou-enabled-toggle">
+            <input type="checkbox" checked={form.thankyou_enabled}
+              onChange={(e) => setForm({ ...form, thankyou_enabled: e.target.checked })}
+              className="w-4 h-4 accent-[#B4247E]" />
+            <span className="text-[13.5px] text-[#3B0A2E] font-medium">Send automatic thank-you emails for large gifts</span>
+          </label>
+
+          <div className={`space-y-5 ${form.thankyou_enabled ? '' : 'opacity-50 pointer-events-none'}`}>
+            <div>
+              <label className="text-[13px] font-semibold text-[#3B0A2E]">Large-Gift Threshold ($)</label>
+              <div className="relative mt-1.5">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#3B0A2E] font-semibold">$</span>
+                <input type="number" min={0} value={form.thankyou_threshold} data-testid="thankyou-threshold-input"
+                  onChange={(e) => setForm({ ...form, thankyou_threshold: e.target.value })}
+                  className="w-full rounded-lg border border-[#3B0A2E]/15 pl-8 pr-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+              </div>
+              <p className="text-[12px] text-[#241019]/50 mt-1.5">Gifts at or above this amount trigger a personal thank-you.</p>
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-[#3B0A2E]">Sender (board member)</label>
+              <input value={form.thankyou_sender_name} data-testid="thankyou-sender-input"
+                onChange={(e) => setForm({ ...form, thankyou_sender_name: e.target.value })}
+                placeholder="Fem Mansaray, Founder & President"
+                className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-[#3B0A2E]">Personal Message</label>
+              <textarea value={form.thankyou_note} rows={3} data-testid="thankyou-note-input"
+                onChange={(e) => setForm({ ...form, thankyou_note: e.target.value })}
+                className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-3 text-[14px] focus:outline-none focus:border-[#B4247E] resize-none" />
+            </div>
           </div>
         </div>
 
