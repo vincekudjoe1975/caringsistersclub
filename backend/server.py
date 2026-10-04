@@ -416,6 +416,7 @@ async def _record_paid_donation(session_id: str, txn: dict, recipient_email: str
             subject="Thank you for your gift to The Caring Sisters Club",
             html=html,
         )
+    await _check_milestones()
 
 
 @api_router.get("/payments/status/{session_id}")
@@ -524,6 +525,7 @@ async def _handle_recurring_renewal(invoice: dict):
             subject="Your recurring gift to The Caring Sisters Club",
             html=html,
         )
+    await _check_milestones()
 
 
 # ---------- Form Submissions (public create, admin manage) ----------
@@ -738,6 +740,7 @@ DEFAULT_SETTINGS = {
     "campaign_title": "Together we're making it happen",
     "campaign_subtitle": "Our Community of Givers",
     "goal": FUNDRAISING_GOAL,
+    "deadline": None,
 }
 
 
@@ -749,6 +752,7 @@ async def _get_settings():
         "campaign_title": doc.get("campaign_title") or DEFAULT_SETTINGS["campaign_title"],
         "campaign_subtitle": doc.get("campaign_subtitle") or DEFAULT_SETTINGS["campaign_subtitle"],
         "goal": float(doc.get("goal") or DEFAULT_SETTINGS["goal"]),
+        "deadline": doc.get("deadline"),
     }
 
 
@@ -756,6 +760,7 @@ class SettingsUpdate(BaseModel):
     campaign_title: Optional[str] = None
     campaign_subtitle: Optional[str] = None
     goal: Optional[float] = None
+    deadline: Optional[str] = None  # ISO date (YYYY-MM-DD) or "" to clear
 
 
 @api_router.get("/settings")
@@ -774,6 +779,8 @@ async def update_settings(payload: SettingsUpdate, user=Depends(require_admin)):
         if payload.goal <= 0:
             raise HTTPException(status_code=400, detail="Goal must be greater than zero")
         update["goal"] = float(payload.goal)
+    if payload.deadline is not None:
+        update["deadline"] = payload.deadline.strip() or None
     if update:
         await db.settings.update_one({"key": "site"}, {"$set": update}, upsert=True)
     return await _get_settings()
@@ -796,6 +803,7 @@ async def donations_public():
         "goal": settings["goal"],
         "campaign_title": settings["campaign_title"],
         "campaign_subtitle": settings["campaign_subtitle"],
+        "deadline": settings["deadline"],
         "donor_count": len(paid),
         "recent": recent,
     }
@@ -812,6 +820,18 @@ async def admin_donations(frequency: Optional[str] = None, user=Depends(require_
     total = sum(float(t.get("amount", 0)) for t in all_paid)
     monthly_ct = sum(1 for t in all_paid if t.get("frequency") == "monthly")
     onetime_ct = sum(1 for t in all_paid if t.get("frequency") != "monthly")
+
+    # Active recurring donors: unique subscriptions with a paid monthly gift.
+    # Monthly recurring revenue (MRR) = sum of one gift per active subscription.
+    active_subs = {}
+    for t in all_paid:
+        if t.get("frequency") == "monthly" and t.get("stripe_subscription_id"):
+            active_subs[t["stripe_subscription_id"]] = float(t.get("amount", 0))
+    # Fallback: monthly gifts without a subscription id (e.g. seeded/test)
+    monthly_no_sub = [t for t in all_paid if t.get("frequency") == "monthly" and not t.get("stripe_subscription_id")]
+    mrr = sum(active_subs.values()) + sum(float(t.get("amount", 0)) for t in monthly_no_sub)
+    active_recurring = len(active_subs) + len(monthly_no_sub)
+
     return {
         "items": items,
         "summary": {
@@ -819,8 +839,73 @@ async def admin_donations(frequency: Optional[str] = None, user=Depends(require_
             "count": len(all_paid),
             "monthly_count": monthly_ct,
             "onetime_count": onetime_ct,
+            "active_recurring": active_recurring,
+            "monthly_revenue": round(mrr, 2),
         },
     }
+
+
+# ---------- Milestone Emails (staff alerts at 25/50/100%) ----------
+MILESTONES = [25, 50, 100]
+
+
+def _milestone_email_html(pct: int, raised: float, goal: float, title: str) -> str:
+    title = title or "our fundraising campaign"
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9;padding:0;margin:0">'
+        '<tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden">'
+        '<tr><td style="background:#3B0A2E;padding:26px 32px;color:#F7EFE9;font-family:Georgia,serif">'
+        '<div style="font-size:19px;font-weight:bold">The Caring Sisters Club</div>'
+        '<div style="font-size:11px;color:#CBA24B;letter-spacing:3px;text-transform:uppercase;margin-top:4px">Campaign Update</div>'
+        '</td></tr>'
+        '<tr><td style="padding:32px;font-family:Arial,Helvetica,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#B4247E;font-size:30px;margin:0 0 8px">{pct}% reached!</h1>'
+        f'<p style="font-size:15px;line-height:1.6;color:#4a3340;margin:0 0 16px">Great news &mdash; <strong>{_esc(title)}</strong> has reached <strong>{pct}%</strong> of its goal.</p>'
+        '<table role="presentation" width="100%" style="background:#faf2f7;border-radius:12px">'
+        f'<tr><td style="padding:16px 22px;font-size:14px;color:#3B0A2E">Raised so far</td>'
+        f'<td align="right" style="padding:16px 22px;font-size:18px;font-weight:bold;color:#B4247E">${_esc(f"{raised:,.0f}")} of ${_esc(f"{goal:,.0f}")}</td></tr>'
+        '</table>'
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">This is an automated update for staff. Keep up the wonderful work!</p>'
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif">'
+        '<p style="font-size:11px;color:#b79aae;margin:0">Sent by The Caring Sisters Club admin system.</p>'
+        '</td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _check_milestones():
+    try:
+        settings = await _get_settings()
+        goal = float(settings.get("goal") or 0)
+        if goal <= 0:
+            return
+        paid = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(5000)
+        total = sum(float(t.get("amount", 0)) for t in paid)
+        pct = (total / goal) * 100
+        for m in MILESTONES:
+            if pct < m:
+                continue
+            already = await db.milestones_sent.find_one({"goal": goal, "milestone": m})
+            if already:
+                continue
+            await db.milestones_sent.insert_one({
+                "goal": goal, "milestone": m,
+                "total_at_send": round(total, 2),
+                "sent_at": datetime.now(timezone.utc).isoformat(),
+            })
+            admins = await db.users.find({"role": "admin"}, {"_id": 0, "email": 1}).to_list(200)
+            html = _milestone_email_html(m, total, goal, settings.get("campaign_title"))
+            for a in admins:
+                if a.get("email"):
+                    await send_email(
+                        to=a["email"],
+                        subject=f"Milestone reached: {m}% of your fundraising goal!",
+                        html=html,
+                    )
+    except Exception as e:
+        logging.error(f"Milestone check failed: {e}")
 
 
 # ---------- Admin: Team Access (allowlist management) ----------

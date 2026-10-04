@@ -29,8 +29,8 @@ export default function AdminDonations() {
   const cards = [
     { label: 'Total Raised', value: fmt(s.total_raised), icon: TrendingUp },
     { label: 'Total Gifts', value: s.count ?? 0, icon: Gift },
-    { label: 'Monthly', value: s.monthly_count ?? 0, icon: Repeat },
-    { label: 'One-Time', value: s.onetime_count ?? 0, icon: DollarSign },
+    { label: 'Active Monthly Donors', value: s.active_recurring ?? 0, icon: Repeat },
+    { label: 'Expected / Month', value: fmt(s.monthly_revenue), icon: DollarSign },
   ];
 
   return (

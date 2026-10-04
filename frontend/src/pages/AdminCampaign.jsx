@@ -5,7 +5,7 @@ import { Loader2, Target, Save } from 'lucide-react';
 
 export default function AdminCampaign() {
   const { toast } = useToast();
-  const [form, setForm] = useState({ campaign_title: '', campaign_subtitle: '', goal: '' });
+  const [form, setForm] = useState({ campaign_title: '', campaign_subtitle: '', goal: '', deadline: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -17,6 +17,7 @@ export default function AdminCampaign() {
           campaign_title: data.campaign_title || '',
           campaign_subtitle: data.campaign_subtitle || '',
           goal: data.goal || '',
+          deadline: data.deadline || '',
         });
       } catch (e) {
         console.error('AdminCampaign: failed to load settings', e);
@@ -39,6 +40,7 @@ export default function AdminCampaign() {
         campaign_title: form.campaign_title,
         campaign_subtitle: form.campaign_subtitle,
         goal: goalNum,
+        deadline: form.deadline || '',
       });
       toast({ title: 'Campaign updated', description: 'Your donor wall now reflects the changes.' });
     } catch (err) {
@@ -80,6 +82,12 @@ export default function AdminCampaign() {
               <input type="number" min={1} value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })}
                 className="w-full rounded-lg border border-[#3B0A2E]/15 pl-8 pr-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
             </div>
+          </div>
+          <div>
+            <label className="text-[13px] font-semibold text-[#3B0A2E]">Campaign Deadline <span className="text-[#241019]/40 font-normal">(optional)</span></label>
+            <input type="date" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })}
+              className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+            <p className="text-[12px] text-[#241019]/50 mt-1.5">Shows a countdown on the donor wall. Leave empty for no deadline.</p>
           </div>
         </div>
 

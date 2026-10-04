@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import Reveal from './Reveal';
-import { Heart, TrendingUp, Users } from 'lucide-react';
+import { Heart, TrendingUp, Users, CalendarClock } from 'lucide-react';
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -11,6 +11,13 @@ function timeAgo(iso) {
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function daysLeft(deadline) {
+  if (!deadline) return null;
+  const end = new Date(deadline + 'T23:59:59');
+  const diff = Math.ceil((end.getTime() - Date.now()) / 86400000);
+  return diff;
 }
 
 export default function DonorWall() {
@@ -57,6 +64,22 @@ export default function DonorWall() {
                   <Heart size={12} className="text-white fill-white" />
                 </div>
               </div>
+              {(() => {
+                const dl = daysLeft(data.deadline);
+                if (dl === null) return null;
+                return (
+                  <div className="mt-5 flex items-center gap-2.5 rounded-xl px-4 py-3" style={{ background: dl <= 7 ? '#fbeaf3' : '#faf2f7' }}>
+                    <CalendarClock size={18} className="text-[#B4247E] shrink-0" />
+                    <p className="text-[13.5px] text-[#3B0A2E]">
+                      {dl > 0 ? (
+                        <><strong>{dl} day{dl === 1 ? '' : 's'} left</strong> to reach our goal &mdash; every gift counts!</>
+                      ) : (
+                        <>This campaign has ended. Thank you to everyone who gave!</>
+                      )}
+                    </p>
+                  </div>
+                );
+              })()}
               <div className="grid grid-cols-2 gap-4 mt-7">
                 <div className="flex items-center gap-3">
                   <span className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: '#faf2f7' }}><Users size={18} className="text-[#B4247E]" /></span>
