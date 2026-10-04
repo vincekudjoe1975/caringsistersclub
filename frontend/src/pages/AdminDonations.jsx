@@ -1,13 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, DollarSign, Repeat, Gift, TrendingUp, Download, Mail } from 'lucide-react';
+import { Loader2, DollarSign, Repeat, Gift, TrendingUp, Download, Mail, RefreshCw } from 'lucide-react';
 
 export default function AdminDonations() {
   const { toast } = useToast();
   const [data, setData] = useState(null);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [sending, setSending] = useState(false);
   const [reminding, setReminding] = useState(false);
@@ -58,21 +60,36 @@ export default function AdminDonations() {
     }
   };
 
-  const load = useCallback(async (f) => {
-    setLoading(true);
+  const load = useCallback(async (f, silent = false) => {
+    if (silent) setRefreshing(true); else setLoading(true);
     try {
       const q = f === 'all' ? '' : `?frequency=${f === 'one-time' ? 'one-time' : 'monthly'}`;
       const res = await api.get(`/admin/donations${q}`);
       setData(res.data);
+      setLastUpdated(new Date());
     } catch (e) {
       console.error('AdminDonations: failed to load', e);
-      setData({ items: [], summary: {} });
+      if (!silent) setData({ items: [], summary: {} });
     } finally {
-      setLoading(false);
+      if (silent) setRefreshing(false); else setLoading(false);
     }
   }, []);
 
   useEffect(() => { load(filter); }, [filter, load]);
+
+  // Near-real-time: refresh silently every 20s and whenever the tab regains focus
+  useEffect(() => {
+    const tick = () => load(filter, true);
+    const interval = setInterval(tick, 20000);
+    const onVisible = () => { if (document.visibilityState === 'visible') tick(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', tick);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', tick);
+    };
+  }, [filter, load]);
 
   const s = data?.summary || {};
   const fmt = (n) => `$${Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
@@ -111,7 +128,17 @@ export default function AdminDonations() {
             </button>
           ))}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {lastUpdated && (
+            <span className="text-[11.5px] text-[#241019]/45 mr-1" data-testid="donations-last-updated">
+              Updated {lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+            </span>
+          )}
+          <button onClick={() => load(filter, true)} disabled={refreshing} data-testid="refresh-donations-btn"
+            title="Refresh now"
+            className="px-4 py-2 rounded-full text-[13.5px] font-semibold flex items-center gap-2 bg-white text-[#3B0A2E] disabled:opacity-60" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>
+            <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} /> Refresh
+          </button>
           <button onClick={exportCsv} disabled={exporting}
             className="px-4 py-2 rounded-full text-[13.5px] font-semibold flex items-center gap-2 bg-white text-[#3B0A2E] disabled:opacity-60" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>
             {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Export CSV
