@@ -1087,9 +1087,9 @@ def _is_lapsed(last_monthly_iso: str) -> bool:
         last = datetime.fromisoformat(last_monthly_iso.replace("Z", "+00:00"))
         if last.tzinfo is None:
             last = last.replace(tzinfo=timezone.utc)
-    except ValueError:
+        return (datetime.now(timezone.utc) - last).days > LAPSED_GRACE_DAYS
+    except (ValueError, TypeError):
         return False
-    return (datetime.now(timezone.utc) - last).days > LAPSED_GRACE_DAYS
 
 
 @api_router.get("/admin/donors")
