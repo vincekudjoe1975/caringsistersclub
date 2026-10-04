@@ -19,6 +19,7 @@ import Legal from './pages/Legal';
 import Login from './pages/Login';
 import Admin from './pages/Admin';
 import AuthCallback from './pages/AuthCallback';
+import PaymentSuccess from './pages/PaymentSuccess';
 import { Loader2 } from 'lucide-react';
 
 function ScrollToTop() {
@@ -66,6 +67,7 @@ function Shell() {
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/transparency" element={<Transparency />} />
           <Route path="/donate" element={<Donate />} />
+          <Route path="/payment/success" element={<PaymentSuccess />} />
           <Route path="/volunteer" element={<Volunteer />} />
           <Route path="/contact" element={<Contact />} />
           <Route path="/privacy-policy" element={<Legal type="privacy" />} />

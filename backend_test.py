@@ -23,6 +23,7 @@ test_email = None
 uploaded_image_id = None
 uploaded_pdf_id = None
 submission_ids = {}  # Store submission IDs by type
+stripe_session_ids = []  # Store Stripe session IDs for cleanup
 
 def print_section(title):
     """Print a formatted section header"""
@@ -100,6 +101,15 @@ def cleanup_test_data():
     # Delete test submissions
     result = db.submissions.delete_many({"data.email": {"$regex": "test\\.submission\\."}})
     print(f"✓ Deleted {result.deleted_count} test submission(s)")
+    
+    # Delete test payment transactions
+    if stripe_session_ids:
+        result = db.payment_transactions.delete_many({"session_id": {"$in": stripe_session_ids}})
+        print(f"✓ Deleted {result.deleted_count} test payment transaction(s)")
+    
+    # Also delete by test donor email
+    result = db.payment_transactions.delete_many({"donor_email": "test@example.com"})
+    print(f"✓ Deleted {result.deleted_count} additional test payment transaction(s)")
     
     client.close()
 
@@ -999,6 +1009,224 @@ def test_submission_delete():
     return passed
 
 # ============================================================================
+# TEST 4: Stripe Payments
+# ============================================================================
+
+def test_stripe_checkout_one_time():
+    """Test creating a one-time donation checkout session"""
+    print_section("TEST 4.1: Stripe - One-Time Donation Checkout")
+    
+    global stripe_session_ids
+    
+    payload = {
+        "amount": 50,
+        "frequency": "one-time",
+        "donor_name": "Test Donor",
+        "donor_email": "test@example.com",
+        "origin_url": "https://example.com"
+    }
+    
+    response = requests.post(f"{API_BASE}/payments/checkout", json=payload)
+    
+    passed = False
+    if response.status_code == 200:
+        data = response.json()
+        checkout_url = data.get('checkout_url', '')
+        session_id = data.get('session_id', '')
+        
+        # Verify checkout_url is non-empty and contains stripe.com
+        url_valid = checkout_url and ('stripe.com' in checkout_url or 'checkout.stripe.com' in checkout_url)
+        # Verify session_id starts with 'cs_'
+        session_valid = session_id.startswith('cs_')
+        
+        if url_valid and session_valid:
+            stripe_session_ids.append(session_id)
+            
+            # Verify payment_transactions doc was inserted
+            client = MongoClient(MONGO_URL)
+            db = client[DB_NAME]
+            txn = db.payment_transactions.find_one({"session_id": session_id})
+            client.close()
+            
+            if txn and txn.get('status') == 'initiated' and txn.get('payment_status') == 'pending':
+                passed = True
+                print_test(
+                    "POST /api/payments/checkout (one-time) returns valid checkout_url and session_id",
+                    True,
+                    f"Session ID: {session_id}, URL contains stripe.com, DB status: initiated/pending"
+                )
+            else:
+                print_test(
+                    "POST /api/payments/checkout (one-time) returns valid checkout_url and session_id",
+                    False,
+                    f"Payment transaction not found or incorrect status: {txn}"
+                )
+        else:
+            print_test(
+                "POST /api/payments/checkout (one-time) returns valid checkout_url and session_id",
+                False,
+                f"Invalid URL or session_id. URL: {checkout_url}, Session: {session_id}"
+            )
+    else:
+        print_test(
+            "POST /api/payments/checkout (one-time) returns valid checkout_url and session_id",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+def test_stripe_checkout_monthly():
+    """Test creating a monthly subscription checkout session"""
+    print_section("TEST 4.2: Stripe - Monthly Subscription Checkout")
+    
+    global stripe_session_ids
+    
+    payload = {
+        "amount": 25,
+        "frequency": "monthly",
+        "origin_url": "https://example.com"
+    }
+    
+    response = requests.post(f"{API_BASE}/payments/checkout", json=payload)
+    
+    passed = False
+    if response.status_code == 200:
+        data = response.json()
+        checkout_url = data.get('checkout_url', '')
+        session_id = data.get('session_id', '')
+        
+        # Verify checkout_url is non-empty and contains stripe.com
+        url_valid = checkout_url and ('stripe.com' in checkout_url or 'checkout.stripe.com' in checkout_url)
+        # Verify session_id starts with 'cs_'
+        session_valid = session_id.startswith('cs_')
+        
+        if url_valid and session_valid:
+            stripe_session_ids.append(session_id)
+            passed = True
+            print_test(
+                "POST /api/payments/checkout (monthly) returns valid checkout_url and session_id",
+                True,
+                f"Session ID: {session_id}, URL contains stripe.com (subscription mode)"
+            )
+        else:
+            print_test(
+                "POST /api/payments/checkout (monthly) returns valid checkout_url and session_id",
+                False,
+                f"Invalid URL or session_id. URL: {checkout_url}, Session: {session_id}"
+            )
+    else:
+        print_test(
+            "POST /api/payments/checkout (monthly) returns valid checkout_url and session_id",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+def test_stripe_checkout_below_minimum():
+    """Test that amount below minimum returns 400"""
+    print_section("TEST 4.3: Stripe - Amount Below Minimum")
+    
+    payload = {
+        "amount": 0.5,
+        "frequency": "one-time",
+        "origin_url": "https://example.com"
+    }
+    
+    response = requests.post(f"{API_BASE}/payments/checkout", json=payload)
+    
+    passed = response.status_code == 400
+    print_test(
+        "POST /api/payments/checkout with amount below minimum returns 400",
+        passed,
+        f"Status: {response.status_code}, Detail: {response.json().get('detail', '') if response.status_code == 400 else response.text}"
+    )
+    
+    return passed
+
+def test_stripe_checkout_above_maximum():
+    """Test that amount above maximum returns 400"""
+    print_section("TEST 4.4: Stripe - Amount Above Maximum")
+    
+    payload = {
+        "amount": 200000,
+        "frequency": "one-time",
+        "origin_url": "https://example.com"
+    }
+    
+    response = requests.post(f"{API_BASE}/payments/checkout", json=payload)
+    
+    passed = response.status_code == 400
+    print_test(
+        "POST /api/payments/checkout with amount above maximum returns 400",
+        passed,
+        f"Status: {response.status_code}, Detail: {response.json().get('detail', '') if response.status_code == 400 else response.text}"
+    )
+    
+    return passed
+
+def test_stripe_status_valid_session():
+    """Test getting payment status for a valid session"""
+    print_section("TEST 4.5: Stripe - Get Status for Valid Session")
+    
+    # Use the first session_id we created
+    if not stripe_session_ids:
+        print_test(
+            "GET /api/payments/status/{session_id} returns payment status",
+            False,
+            "No session_id available from previous tests"
+        )
+        return False
+    
+    session_id = stripe_session_ids[0]
+    response = requests.get(f"{API_BASE}/payments/status/{session_id}")
+    
+    passed = False
+    if response.status_code == 200:
+        data = response.json()
+        payment_status = data.get('payment_status')
+        status = data.get('status')
+        
+        # Should be 'pending' since we didn't complete the payment
+        if payment_status == 'pending':
+            passed = True
+            print_test(
+                "GET /api/payments/status/{session_id} returns payment_status 'pending'",
+                True,
+                f"Status: {status}, Payment Status: {payment_status}, Amount: {data.get('amount')}"
+            )
+        else:
+            print_test(
+                "GET /api/payments/status/{session_id} returns payment_status 'pending'",
+                False,
+                f"Expected 'pending', got '{payment_status}'. Full response: {data}"
+            )
+    else:
+        print_test(
+            "GET /api/payments/status/{session_id} returns payment_status 'pending'",
+            False,
+            f"Status: {response.status_code}, Body: {response.text}"
+        )
+    
+    return passed
+
+def test_stripe_status_nonexistent_session():
+    """Test that getting status for nonexistent session returns 404"""
+    print_section("TEST 4.6: Stripe - Get Status for Nonexistent Session")
+    
+    response = requests.get(f"{API_BASE}/payments/status/nonexistent_session")
+    
+    passed = response.status_code == 404
+    print_test(
+        "GET /api/payments/status/nonexistent_session returns 404",
+        passed,
+        f"Status: {response.status_code}"
+    )
+    
+    return passed
+
+# ============================================================================
 # MAIN TEST RUNNER
 # ============================================================================
 
@@ -1048,6 +1276,14 @@ def main():
         results['submission_counts'] = test_submission_counts()
         results['submission_mark_read'] = test_submission_mark_read()
         results['submission_delete'] = test_submission_delete()
+        
+        # Test 4: Stripe Payments
+        results['stripe_checkout_one_time'] = test_stripe_checkout_one_time()
+        results['stripe_checkout_monthly'] = test_stripe_checkout_monthly()
+        results['stripe_checkout_below_min'] = test_stripe_checkout_below_minimum()
+        results['stripe_checkout_above_max'] = test_stripe_checkout_above_maximum()
+        results['stripe_status_valid'] = test_stripe_status_valid_session()
+        results['stripe_status_nonexistent'] = test_stripe_status_nonexistent_session()
         
     finally:
         # Cleanup

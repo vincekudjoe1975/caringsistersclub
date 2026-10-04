@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { donationTiers, org } from '../mock/mock';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
-import { Heart, ShieldCheck, Repeat, CreditCard, CheckCircle2 } from 'lucide-react';
+import { Heart, ShieldCheck, Repeat, CreditCard, CheckCircle2, Loader2 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 import { api } from '../lib/api';
 
@@ -10,38 +10,38 @@ export default function Donate() {
   const [amount, setAmount] = useState(50);
   const [custom, setCustom] = useState('');
   const [freq, setFreq] = useState('one-time');
-  const [done, setDone] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
   const finalAmount = custom ? Number(custom) : amount;
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     if (!finalAmount || finalAmount <= 0) {
       toast({ title: 'Please choose an amount', variant: 'destructive' });
       return;
     }
-    setDone(true);
-    api.post('/submissions', { type: 'donation', amount: finalAmount, frequency: freq }).catch(() => {});
-    toast({ title: 'Thank you for your generosity! (demo)', description: `Your ${freq} gift of $${finalAmount} would be processed securely. No real payment was taken.` });
+    setLoading(true);
+    try {
+      const { data } = await api.post('/payments/checkout', {
+        amount: finalAmount,
+        frequency: freq,
+        donor_name: name,
+        donor_email: email,
+        origin_url: window.location.origin,
+      });
+      if (data.checkout_url) {
+        window.location.href = data.checkout_url;
+      } else {
+        throw new Error('No checkout URL');
+      }
+    } catch (err) {
+      setLoading(false);
+      toast({ title: 'Could not start checkout', description: err?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
+    }
   };
-
-  if (done) {
-    return (
-      <div>
-        <PageHero kicker="Donation" title="Thank you, Sister!" align="center" />
-        <section className="py-24">
-          <div className="max-w-lg mx-auto px-5 text-center">
-            <CheckCircle2 size={64} className="text-[#B4247E] mx-auto mb-6" />
-            <h2 className="font-serif text-[30px] text-[#3B0A2E] font-semibold mb-4">Your gift makes a difference</h2>
-            <p className="text-[#241019]/70 mb-3">Your {freq} contribution of <strong>${finalAmount}</strong> has been recorded.</p>
-            <p className="text-[#241019]/50 text-[13px] italic mb-8">This is a demonstration — no real payment was processed. A tax-deductible receipt would be emailed automatically.</p>
-            <button onClick={() => { setDone(false); setCustom(''); }} className="btn-magenta rounded-full px-8 py-3 font-semibold">Make Another Gift</button>
-          </div>
-        </section>
-      </div>
-    );
-  }
 
   return (
     <div>
@@ -91,13 +91,26 @@ export default function Donate() {
               </p>
             )}
 
-            <div className="rounded-xl p-4 mb-6 flex items-center gap-3" style={{ background: '#F7EFE9' }}>
-              <CreditCard size={20} className="text-[#B4247E]" />
-              <p className="text-[12.5px] text-[#3B0A2E]/70">Demo checkout — secure Stripe/PayPal integration can be enabled. No real charge is made.</p>
+            <div className="grid sm:grid-cols-2 gap-4 mb-5">
+              <div>
+                <label className="text-[13px] font-semibold text-[#3B0A2E]">Name <span className="text-[#241019]/40 font-normal">(optional)</span></label>
+                <input value={name} onChange={(e) => setName(e.target.value)}
+                  className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+              </div>
+              <div>
+                <label className="text-[13px] font-semibold text-[#3B0A2E]">Email <span className="text-[#241019]/40 font-normal">(optional)</span></label>
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                  className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+              </div>
             </div>
 
-            <button type="submit" className="btn-magenta rounded-full w-full py-4 font-semibold text-[16px] flex items-center justify-center gap-2">
-              <Heart size={18} className="fill-white" /> Give ${finalAmount || 0} {freq === 'monthly' ? '/ month' : ''}
+            <div className="rounded-xl p-4 mb-6 flex items-center gap-3" style={{ background: '#F7EFE9' }}>
+              <CreditCard size={20} className="text-[#B4247E]" />
+              <p className="text-[12.5px] text-[#3B0A2E]/70">Secure checkout by Stripe. Test mode: use card <strong>4242 4242 4242 4242</strong>, any future expiry & CVC.</p>
+            </div>
+
+            <button type="submit" disabled={loading} className="btn-magenta rounded-full w-full py-4 font-semibold text-[16px] flex items-center justify-center gap-2 disabled:opacity-60">
+              {loading ? <><Loader2 className="animate-spin" size={18} /> Redirecting…</> : <><Heart size={18} className="fill-white" /> Give ${finalAmount || 0} {freq === 'monthly' ? '/ month' : ''}</>}
             </button>
           </form>
 

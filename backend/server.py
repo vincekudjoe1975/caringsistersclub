@@ -294,6 +294,152 @@ async def delete_media(item_id: str, user=Depends(get_current_user)):
     return {"message": "Deleted"}
 
 
+# ---------- Stripe Donations (Flow A - claimable sandbox) ----------
+import stripe
+
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY") or "sk_test_emergent"
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+DONATION_MIN = 1.0
+DONATION_MAX = 100000.0
+
+
+class DonationCheckout(BaseModel):
+    amount: float
+    frequency: str = "one-time"  # or "monthly"
+    donor_name: Optional[str] = None
+    donor_email: Optional[str] = None
+    origin_url: str
+
+
+@api_router.post("/payments/checkout")
+async def create_donation_checkout(req: DonationCheckout):
+    amount = float(req.amount)
+    if amount < DONATION_MIN or amount > DONATION_MAX:
+        raise HTTPException(status_code=400, detail="Invalid donation amount")
+    monthly = req.frequency == "monthly"
+    price_data = {
+        "currency": "usd",
+        "product_data": {"name": "Monthly Donation" if monthly else "One-Time Donation"},
+        "unit_amount": int(round(amount * 100)),
+    }
+    if monthly:
+        price_data["recurring"] = {"interval": "month"}
+    try:
+        session = stripe.checkout.Session.create(
+            line_items=[{"price_data": price_data, "quantity": 1}],
+            mode="subscription" if monthly else "payment",
+            success_url=f"{req.origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{req.origin_url}/donate",
+            metadata={
+                "amount": str(amount),
+                "frequency": req.frequency,
+                "donor_name": req.donor_name or "",
+                "donor_email": req.donor_email or "",
+                "kind": "donation",
+            },
+        )
+    except Exception as e:
+        logging.error(f"Stripe checkout error: {e}")
+        raise HTTPException(status_code=502, detail="Could not create checkout session")
+    await db.payment_transactions.insert_one({
+        "session_id": session.id,
+        "amount": amount,
+        "currency": "usd",
+        "frequency": req.frequency,
+        "donor_name": req.donor_name or "",
+        "donor_email": req.donor_email or "",
+        "status": "initiated",
+        "payment_status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"checkout_url": session.url, "session_id": session.id}
+
+
+async def _record_paid_donation(session_id: str, txn: dict):
+    """Insert a donation submission once, so staff see it in the admin inbox."""
+    existing = await db.submissions.find_one({"data.session_id": session_id})
+    if existing:
+        return
+    await db.submissions.insert_one({
+        "id": str(uuid.uuid4()),
+        "type": "donation",
+        "data": {
+            "name": txn.get("donor_name") or "Anonymous",
+            "email": txn.get("donor_email") or "",
+            "amount": f"${txn.get('amount')}",
+            "frequency": txn.get("frequency"),
+            "status": "Paid",
+            "session_id": session_id,
+        },
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+@api_router.get("/payments/status/{session_id}")
+async def donation_status(session_id: str):
+    record = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not record:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if record.get("payment_status") != "paid":
+        try:
+            s = stripe.checkout.Session.retrieve(session_id)
+            if s.payment_status == "paid" or s.status == "complete":
+                await db.payment_transactions.update_one(
+                    {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                    {"$set": {
+                        "status": "completed",
+                        "payment_status": "paid",
+                        "stripe_subscription_id": s.get("subscription"),
+                        "stripe_payment_intent_id": s.get("payment_intent"),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }},
+                )
+                record = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+                await _record_paid_donation(session_id, record)
+        except Exception as e:
+            logging.warning(f"Stripe status check failed: {e}")
+    return {
+        "session_id": record["session_id"],
+        "status": record["status"],
+        "payment_status": record["payment_status"],
+        "amount": record.get("amount"),
+        "frequency": record.get("frequency"),
+    }
+
+
+@api_router.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    obj, t = event["data"]["object"], event["type"]
+    if t == "checkout.session.completed":
+        await db.payment_transactions.update_one(
+            {"session_id": obj["id"], "payment_status": {"$ne": "paid"}},
+            {"$set": {
+                "status": "completed",
+                "payment_status": obj.get("payment_status", "paid"),
+                "stripe_subscription_id": obj.get("subscription"),
+                "stripe_payment_intent_id": obj.get("payment_intent"),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+        txn = await db.payment_transactions.find_one({"session_id": obj["id"]}, {"_id": 0})
+        if txn:
+            await _record_paid_donation(obj["id"], txn)
+    elif t == "checkout.session.expired":
+        await db.payment_transactions.update_one(
+            {"session_id": obj["id"]},
+            {"$set": {"status": "expired", "payment_status": "expired", "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    return {"status": "ok"}
+
+
 # ---------- Form Submissions (public create, admin manage) ----------
 ALLOWED_SUB_TYPES = {"volunteer", "member", "contact", "rsvp", "donation"}
 
