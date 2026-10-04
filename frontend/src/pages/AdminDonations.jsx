@@ -10,6 +10,7 @@ export default function AdminDonations() {
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [sending, setSending] = useState(false);
+  const [reminding, setReminding] = useState(false);
   const thisYear = new Date().getFullYear();
 
   const exportCsv = async () => {
@@ -41,6 +42,19 @@ export default function AdminDonations() {
       toast({ title: 'Send failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
     } finally {
       setSending(false);
+    }
+  };
+
+  const sendReminders = async () => {
+    if (!window.confirm('Send renewal reminders now to monthly donors whose gift renews in ~3 days?')) return;
+    setReminding(true);
+    try {
+      const { data: r } = await api.post('/admin/recurring/send-reminders');
+      toast({ title: 'Reminders processed', description: `${r.sent} reminder(s) sent across ${r.subscriptions_checked} subscription(s).` });
+    } catch (e) {
+      toast({ title: 'Failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
+    } finally {
+      setReminding(false);
     }
   };
 
@@ -103,8 +117,12 @@ export default function AdminDonations() {
             {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Export CSV
           </button>
           <button onClick={sendStatements} disabled={sending}
-            className="px-4 py-2 rounded-full text-[13.5px] font-semibold flex items-center gap-2 btn-magenta disabled:opacity-60">
+            className="px-4 py-2 rounded-full text-[13.5px] font-semibold flex items-center gap-2 bg-white text-[#3B0A2E] disabled:opacity-60" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>
             {sending ? <Loader2 size={15} className="animate-spin" /> : <Mail size={15} />} Email {thisYear} Statements
+          </button>
+          <button onClick={sendReminders} disabled={reminding}
+            className="px-4 py-2 rounded-full text-[13.5px] font-semibold flex items-center gap-2 btn-magenta disabled:opacity-60">
+            {reminding ? <Loader2 size={15} className="animate-spin" /> : <Repeat size={15} />} Send Renewal Reminders
           </button>
         </div>
       </div>

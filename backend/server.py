@@ -917,9 +917,7 @@ def _year_statement_html(name: str, year: int, total: float, gifts: list) -> str
     )
 
 
-@api_router.post("/admin/donations/send-statements")
-async def send_year_statements(year: Optional[int] = None, user=Depends(require_admin)):
-    yr = year or datetime.now(timezone.utc).year
+async def _run_year_statements(yr: int) -> dict:
     rows = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(5000)
     rows = [r for r in rows if (r.get("updated_at") or "").startswith(str(yr)) and (r.get("donor_email") or "").strip()]
     by_email = {}
@@ -935,6 +933,12 @@ async def send_year_statements(year: Optional[int] = None, user=Depends(require_
         if result is not None:
             sent += 1
     return {"year": yr, "recipients": len(by_email), "sent": sent}
+
+
+@api_router.post("/admin/donations/send-statements")
+async def send_year_statements(year: Optional[int] = None, user=Depends(require_admin)):
+    yr = year or datetime.now(timezone.utc).year
+    return await _run_year_statements(yr)
 
 
 class ProgressEmail(BaseModel):
@@ -979,8 +983,153 @@ async def send_progress_email(payload: ProgressEmail, user=Depends(require_admin
     return {"percent": pct, "recipients": len(emails), "sent": sent}
 
 
+# ---------- Admin: Donor Profiles ----------
+@api_router.get("/admin/donors")
+async def admin_donors(user=Depends(require_admin)):
+    paid = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(5000)
+    profiles = {}
+    for t in paid:
+        email = (t.get("donor_email") or "").strip().lower()
+        key = email or f"anon:{t.get('session_id')}"
+        p = profiles.setdefault(key, {
+            "email": email,
+            "name": "",
+            "lifetime": 0.0,
+            "gifts": 0,
+            "last_gift": "",
+            "has_monthly": False,
+            "anonymous_only": True,
+        })
+        p["lifetime"] += float(t.get("amount", 0))
+        p["gifts"] += 1
+        if t.get("frequency") == "monthly":
+            p["has_monthly"] = True
+        if not t.get("anonymous") and (t.get("donor_name") or "").strip():
+            p["name"] = t["donor_name"].strip()
+            p["anonymous_only"] = False
+        upd = t.get("updated_at") or ""
+        if upd > p["last_gift"]:
+            p["last_gift"] = upd
+    out = []
+    for p in profiles.values():
+        p["lifetime"] = round(p["lifetime"], 2)
+        if not p["name"]:
+            p["name"] = "Anonymous" if p["anonymous_only"] else (p["email"] or "Anonymous")
+        out.append(p)
+    out.sort(key=lambda x: x["lifetime"], reverse=True)
+    return {"donors": out, "count": len(out)}
+
+
+@api_router.get("/admin/donors/{email}")
+async def admin_donor_detail(email: str, user=Depends(require_admin)):
+    em = email.strip().lower()
+    gifts = await db.payment_transactions.find(
+        {"payment_status": "paid", "donor_email": {"$regex": f"^{re.escape(em)}$", "$options": "i"}},
+        {"_id": 0},
+    ).sort("updated_at", -1).to_list(2000)
+    lifetime = round(sum(float(g.get("amount", 0)) for g in gifts), 2)
+    name = next((g.get("donor_name") for g in gifts if (g.get("donor_name") or "").strip() and not g.get("anonymous")), None) or em
+    return {"email": em, "name": name, "lifetime": lifetime, "gift_count": len(gifts), "gifts": gifts}
+
+
+# ---------- Recurring Reminders (pre-renewal heads-up) ----------
+def _reminder_email_html(name: str, amount, next_date: str) -> str:
+    when = f" around <strong>{_esc(next_date)}</strong>" if next_date else " soon"
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9;padding:0;margin:0"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        '<tr><td style="background:#3B0A2E;padding:26px 32px;color:#F7EFE9;font-family:Georgia,serif">'
+        '<div style="font-size:19px;font-weight:bold">The Caring Sisters Club</div>'
+        '<div style="font-size:11px;color:#CBA24B;letter-spacing:3px;text-transform:uppercase;margin-top:4px">Monthly Gift Reminder</div></td></tr>'
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:22px;margin:0 0 12px">Hello {_esc(name)},</h1>'
+        f'<p style="font-size:14px;line-height:1.6;color:#4a3340;margin:0 0 16px">This is a friendly heads-up that your recurring monthly gift of <strong>${_esc(str(amount))}</strong> to The Caring Sisters Club will renew{when}. There is nothing you need to do &mdash; we just like to keep you informed.</p>'
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:0 0 8px">Thank you for your continued generosity. If you would like to update or pause your gift, simply reply to this email and our team will help.</p>'
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:16px 0 0">With gratitude,<br/>The Caring Sisters Club</p>'
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _send_renewal_reminders() -> dict:
+    """Email active monthly donors a heads-up ~3 days before their next charge."""
+    sub_ids = await db.payment_transactions.distinct(
+        "stripe_subscription_id", {"frequency": "monthly", "payment_status": "paid"}
+    )
+    sent = 0
+    today = datetime.now(timezone.utc).date()
+    for sub_id in sub_ids:
+        if not sub_id:
+            continue
+        try:
+            sub = stripe.Subscription.retrieve(sub_id)
+            if sub.get("status") not in ("active", "trialing"):
+                continue
+            period_end = sub.get("current_period_end")
+            if not period_end:
+                continue
+            renew_date = datetime.fromtimestamp(period_end, tz=timezone.utc).date()
+            days = (renew_date - today).days
+            if days != 3:  # only 3 days before renewal
+                continue
+            key = f"{sub_id}:{renew_date.isoformat()}"
+            if await db.reminders_sent.find_one({"key": key}):
+                continue
+            orig = await db.payment_transactions.find_one({"stripe_subscription_id": sub_id}, {"_id": 0})
+            email = (orig.get("donor_email") if orig else "") or ""
+            if not email:
+                continue
+            name = (orig.get("donor_name") or "").strip() or "Friend"
+            amount = orig.get("amount")
+            html = _reminder_email_html(name, amount, renew_date.strftime("%B %d, %Y"))
+            if await send_email(to=email, subject="Your monthly gift renews soon — The Caring Sisters Club", html=html) is not None:
+                sent += 1
+            await db.reminders_sent.insert_one({"key": key, "sent_at": datetime.now(timezone.utc).isoformat()})
+        except Exception as e:
+            logging.warning(f"Renewal reminder failed for {sub_id}: {e}")
+    return {"sent": sent, "subscriptions_checked": len(sub_ids)}
+
+
+@api_router.post("/admin/recurring/send-reminders")
+async def trigger_renewal_reminders(user=Depends(require_admin)):
+    return await _send_renewal_reminders()
+
+
+# ---------- Background scheduler (daily tasks) ----------
+import asyncio
+
+
+async def _daily_scheduler():
+    """Runs daily: Jan 1 -> send prior-year statements; every day -> renewal reminders."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            # Year-end statements: run once on Jan 1 for the previous year
+            if now.month == 1 and now.day == 1:
+                prev_year = now.year - 1
+                marker = f"statements:{prev_year}"
+                if not await db.scheduled_runs.find_one({"key": marker}):
+                    result = await _run_year_statements(prev_year)
+                    await db.scheduled_runs.insert_one({"key": marker, "ran_at": now.isoformat(), "result": result})
+                    logging.info(f"Auto year-end statements sent for {prev_year}: {result}")
+            # Daily renewal reminders
+            await _send_renewal_reminders()
+        except Exception as e:
+            logging.error(f"Daily scheduler error: {e}")
+        await asyncio.sleep(24 * 60 * 60)  # once per day
+
+
+@app.on_event("startup")
+async def _start_scheduler():
+    asyncio.create_task(_daily_scheduler())
+
+
+
+
 
 MILESTONES = [25, 50, 100]
+
 
 
 def _milestone_email_html(pct: int, raised: float, goal: float, title: str) -> str:
