@@ -70,6 +70,15 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - **Rate limiting**: gentle in-memory per-IP sliding-window limiter (`_rate_limit`) on public
   `POST /api/submissions` (5/60s) and `POST /api/payments/checkout` (6/300s); returns 429 with
   Retry-After. Verified (400×5 then 429).
+- **Live test receipt** sent to caringsistersclub@gmail.com (202 delivered) to confirm
+  donor-facing email in a real inbox.
+- **Reactivation log**: `admin_donor_detail` now returns `reactivation_last_sent` (from the
+  `reactivation_sent` collection); AdminDonors shows "Last 'we miss you' email sent <date>" in
+  the lapsed block and the confirm dialog warns before a duplicate send. Verified.
+- **Upload hardening** (P3 audit): `POST /api/media` enforces a 10 MB cap (413), an extension
+  allowlist (images for gallery/board/event, PDF for document → 400 otherwise), and derives a
+  safe content-type from the extension (never trusts client). `GET /api/media/file/{id}` now
+  serves with `X-Content-Type-Options: nosniff` + `Content-Disposition: inline`. Verified.
 
 ## Known issues / notes
 - **Email delivery works** via the Emergent platform-verified domain (202 + id for real

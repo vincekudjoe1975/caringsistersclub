@@ -237,6 +237,11 @@ def _media_url(item_id: str) -> str:
     return f"/api/media/file/{item_id}"
 
 
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+_IMAGE_EXT = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
+_DOC_EXT = {"pdf": "application/pdf"}
+
+
 @api_router.post("/media")
 async def upload_media(
     file: UploadFile = File(...),
@@ -248,10 +253,25 @@ async def upload_media(
     if category not in ALLOWED_CATEGORIES:
         raise HTTPException(status_code=400, detail="Invalid category")
     item_id = str(uuid.uuid4())
-    ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else ""
+    allowed = _DOC_EXT if category == "document" else _IMAGE_EXT
+    if ext not in allowed:
+        kinds = "PDF" if category == "document" else "PNG, JPG, WEBP or GIF image"
+        raise HTTPException(status_code=400, detail=f"Unsupported file type. Please upload a {kinds}.")
+    # Derive content type from the validated extension (never trust client-supplied type).
+    content_type = allowed[ext]
+    # Read with a hard size cap so an oversized upload can't exhaust memory.
+    data = b""
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        data += chunk
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="File too large. Maximum size is 10 MB.")
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
     storage_path = f"{APP_NAME}/{category}/{item_id}.{ext}"
-    data = await file.read()
-    content_type = file.content_type or "application/octet-stream"
     try:
         result = put_object(storage_path, data, content_type)
     except Exception as e:
@@ -298,7 +318,16 @@ async def get_media_file(item_id: str):
     except Exception as e:
         logging.error(f"Storage fetch failed: {e}")
         raise HTTPException(status_code=404, detail="File missing")
-    return Response(content=data, media_type=item.get("content_type", content_type))
+    safe_type = item.get("content_type") or content_type or "application/octet-stream"
+    return Response(
+        content=data,
+        media_type=safe_type,
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline",
+            "Cache-Control": "public, max-age=86400",
+        },
+    )
 
 
 @api_router.delete("/media/{item_id}")
@@ -1204,6 +1233,7 @@ async def admin_donor_detail(email: str, user=Depends(require_admin)):
     last_monthly = next((g.get("updated_at") for g in gifts if g.get("frequency") == "monthly"), "")
     has_monthly = any(g.get("frequency") == "monthly" for g in gifts)
     nd = await db.donor_notes.find_one({"email": em}, {"_id": 0}) or {}
+    react = await db.reactivation_sent.find_one({"email": em}, {"_id": 0}, sort=[("sent_at", -1)])
     return {
         "email": em,
         "name": name,
@@ -1214,6 +1244,7 @@ async def admin_donor_detail(email: str, user=Depends(require_admin)):
         "tags": nd.get("tags", []),
         "lapsed": bool(has_monthly and _is_lapsed(last_monthly)),
         "has_monthly": has_monthly,
+        "reactivation_last_sent": react.get("sent_at") if react else None,
     }
 
 

@@ -70,12 +70,20 @@ export default function AdminDonors() {
 
   const sendReactivation = async () => {
     if (!selected?.email) return;
-    if (!window.confirm(`Send a warm "we miss you" email to ${selected.email}?`)) return;
+    const lastSent = detail?.reactivation_last_sent;
+    const warn = lastSent
+      ? `A "we miss you" email was already sent to this donor on ${dateStr(lastSent)}. Send another one to ${selected.email}?`
+      : `Send a warm "we miss you" email to ${selected.email}?`;
+    if (!window.confirm(warn)) return;
     setSendingReactivation(true);
     try {
       const { data } = await api.post(`/admin/donors/${encodeURIComponent(selected.email)}/reactivation`);
       if (data.sent) {
         toast({ title: 'Email sent', description: `"We miss you" note sent to ${data.email}.` });
+        try {
+          const { data: fresh } = await api.get(`/admin/donors/${encodeURIComponent(selected.email)}`);
+          setDetail(fresh);
+        } catch (e) { /* non-fatal: log refresh only */ }
       } else {
         toast({ title: 'Not delivered', description: data.detail || 'The provider could not deliver to that address.', variant: 'destructive' });
       }
@@ -233,6 +241,11 @@ export default function AdminDonors() {
                         className="rounded-full px-5 py-2.5 font-semibold text-[13px] flex items-center gap-2 text-white disabled:opacity-60" style={{ background: '#c1431f' }}>
                         {sendingReactivation ? <><Loader2 size={14} className="animate-spin" /> Sending…</> : <><HeartHandshake size={15} /> Send "We Miss You" Email</>}
                       </button>
+                      {detail.reactivation_last_sent && (
+                        <p className="text-[11.5px] text-[#7a2f18]/75 mt-2.5 flex items-center gap-1.5" data-testid="reactivation-last-sent">
+                          <HeartHandshake size={12} /> Last "we miss you" email sent {dateStr(detail.reactivation_last_sent)}
+                        </p>
+                      )}
                     </div>
                   )}
 
