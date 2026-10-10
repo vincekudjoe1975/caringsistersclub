@@ -2738,6 +2738,9 @@ class ProgramIn(BaseModel):
     published: bool = True
     capacity: int = 0
     waitlist_mode: str = "claim"
+    start_date: str = ""
+    end_date: str = ""
+    schedule: str = ""
 
 
 class CategoriesIn(BaseModel):
@@ -2781,7 +2784,19 @@ def _clean_program(p: ProgramIn) -> dict:
     link = p.cta_link.strip() or "/volunteer"
     if not (re.match(r"^/[A-Za-z0-9/_\-?=&#.]*$", link) or link.startswith("https://")) or link.startswith("//"):
         raise HTTPException(status_code=400, detail="Button link must be a site path like /donate or an https:// URL")
+    sd, ed = p.start_date.strip(), p.end_date.strip()
+    for d in (sd, ed):
+        if d:
+            try:
+                datetime.strptime(d, "%Y-%m-%d")
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD")
+    if ed and not sd:
+        raise HTTPException(status_code=400, detail="Add a start date before an end date")
+    if sd and ed and ed < sd:
+        raise HTTPException(status_code=400, detail="End date can't be before the start date")
     return {
+        "start_date": sd, "end_date": ed, "schedule": p.schedule.strip()[:80],
         "title": title[:150], "category": p.category.strip()[:50], "image_url": img, "summary": p.summary.strip()[:600],
         "body": p.body.strip()[:10000], "goals": [g.strip()[:200] for g in p.goals if g.strip()][:12],
         "impact": [{"value": i.value.strip()[:20], "label": i.label.strip()[:60]} for i in p.impact if i.value.strip() and i.label.strip()][:6],
@@ -3237,6 +3252,12 @@ async def program_signup(slug: str, payload: ProgramSignupIn, request: Request, 
         data["list"] = "Waitlist"
     doc = {"id": str(uuid.uuid4()), "type": "program_signup", "program_id": prog["id"], "waitlist": full,
            "data": data, "read": False, "created_at": _now_iso()}
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=LAUNCH_WINDOW_DAYS)).isoformat()
+    le = await db.session_launch_emails.find_one_and_update(
+        {"program_id": prog["id"], "email": email.lower(), "at": {"$gte": cutoff}, "converted_at": {"$exists": False}},
+        {"$set": {"converted_at": doc["created_at"], "submission_id": doc["id"]}})
+    if le:
+        doc["from_launch"] = True
     if full:
         doc["status_token"] = secrets.token_urlsafe(24)
     await db.submissions.insert_one(dict(doc))
@@ -3845,7 +3866,7 @@ def _milestone_html(name: str, b: dict, year_total: float, all_total: float) -> 
 CERT_MIN = 50
 
 
-def _cert_pdf(name: str, label: str, threshold: int, date: str) -> bytes:
+def _cert_pdf(name: str, label: str, threshold: int, date: str, lines: tuple = None, seal: str = None) -> bytes:
     from PIL import Image, ImageDraw, ImageFont
     W, H = 1650, 1275
     img = Image.new("RGB", (W, H), "#FFFDF9")
@@ -3868,11 +3889,12 @@ def _cert_pdf(name: str, label: str, threshold: int, date: str) -> bytes:
     center(500, "This certificate is proudly presented to", f("LiberationSans-Regular.ttf", 32), "#6b5560")
     center(560, name, f("LiberationSerif-Bold.ttf", 92), "#B4247E")
     dr.line(((W - 900) / 2, 680, (W + 900) / 2, 680), fill="#CBA24B", width=3)
-    center(715, f"in recognition of earning the {label} badge", f("LiberationSans-Regular.ttf", 34), "#3B0A2E")
-    center(765, f"for giving {threshold}+ hours of service to our sisterhood.", f("LiberationSans-Regular.ttf", 34), "#3B0A2E")
+    l1, l2 = lines or (f"in recognition of earning the {label} badge", f"for giving {threshold}+ hours of service to our sisterhood.")
+    center(715, l1, f("LiberationSans-Regular.ttf", 34), "#3B0A2E")
+    center(765, l2, f("LiberationSans-Regular.ttf", 34), "#3B0A2E")
     cx, cy, r = W // 2, 945, 85
     dr.ellipse((cx - r, cy - r, cx + r, cy + r), fill="#3B0A2E", outline="#CBA24B", width=8)
-    center(cy - 32, f"{threshold}h", f("LiberationSerif-Bold.ttf", 58), "#CBA24B")
+    center(cy - 32, seal or f"{threshold}h", f("LiberationSerif-Bold.ttf", 58 if len(seal or f"{threshold}h") <= 4 else 44), "#CBA24B")
     for x0, top, bottom in ((230, "Fem Mansaray", "Founder & President"), (W - 630, date, "Date Awarded")):
         dr.line((x0, 1080, x0 + 400, 1080), fill="#3B0A2E", width=2)
         tw = dr.textlength(top, font=f("LiberationSerif-Bold.ttf", 34))
@@ -4886,6 +4908,109 @@ async def admin_appeal_comparison(user=Depends(require_admin)):
     return {"items": rows}
 
 
+# ---------- Launch email results ----------
+LAUNCH_WINDOW_DAYS = 30
+
+
+@api_router.get("/admin/reports/launch-results")
+async def admin_launch_results(user=Depends(require_admin)):
+    out = []
+    pids = await db.session_launch_emails.distinct("program_id")
+    for p in await db.programs.find({"id": {"$in": pids}}, {"_id": 0, "id": 1, "title": 1, "launch_sent_at": 1}).to_list(200):
+        emailed = await db.session_launch_emails.count_documents({"program_id": p["id"]})
+        conv = await db.session_launch_emails.count_documents({"program_id": p["id"], "converted_at": {"$exists": True}})
+        out.append({"id": p["id"], "title": p["title"], "sent_at": p.get("launch_sent_at"), "emailed": emailed, "signed_up": conv,
+                    "conversion": round(100 * conv / emailed, 1) if emailed else None})
+    return {"items": sorted(out, key=lambda r: r.get("sent_at") or "", reverse=True), "window_days": LAUNCH_WINDOW_DAYS}
+
+
+# ---------- Volunteer anniversaries ----------
+def _anniv_html(first: str, years: int, total: float, past_year: float, badges: list, cert_url: str) -> str:
+    chips = "".join(f'<span style="display:inline-block;margin:3px;padding:5px 11px;border-radius:999px;background:#3B0A2E;color:#CBA24B;font-size:12px;font-weight:bold">{_esc(b)}</span>' for b in badges) or '<span style="font-size:13px;color:#6b5560">Your first badge is waiting at 10 hours!</span>'
+    stat = lambda v, l: f'<td width="33%" style="padding:14px;text-align:center"><p style="font-family:Georgia,serif;font-size:26px;color:#B4247E;font-weight:bold;margin:0">{v}</p><p style="font-size:12px;color:#6b5560;margin:4px 0 0">{l}</p></td>'  # noqa: E731
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Happy Volunteer Anniversary") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019;text-align:center">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:26px;margin:0 0 10px">Happy {years}-year anniversary, {_esc(first)}!</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">{years} year{"s" if years != 1 else ""} ago today you logged your first volunteer hours with us. Thank you for every hour you have given our sisterhood.</p>'
+        '<table role="presentation" width="100%" style="border:1px solid #eadfe6;border-radius:12px;margin:0 0 18px"><tr>'
+        f'{stat(years, "years volunteering")}{stat(f"{total:g}", "total hours")}{stat(f"{past_year:g}", "hours this past year")}</tr></table>'
+        f'<p style="font-size:13px;font-weight:bold;color:#3B0A2E;margin:0 0 6px">Badges earned</p><p style="margin:0 0 22px">{chips}</p>'
+        + _btn(cert_url, "Download Anniversary Certificate", primary=True) + "&nbsp; "
+        + _btn(f"{PUBLIC_APP_URL}/volunteer#log-hours", "Log More Hours") +
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you logged volunteer hours on our website. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+def _is_anniversary(first: str, today) -> bool:
+    m, d = int(first[5:7]), int(first[8:10])
+    if m == 2 and d == 29 and not (today.year % 4 == 0 and (today.year % 100 != 0 or today.year % 400 == 0)):
+        d = 28
+    return (today.month, today.day) == (m, d)
+
+
+async def _send_anniversaries(today=None) -> int:
+    today = today or datetime.now(timezone.utc).date()
+    sent = 0
+    async for r in db.volunteer_hours.aggregate([{"$match": {"status": "approved"}}, {"$group": {"_id": "$email", "first": {"$min": "$date"}}}]):
+        first, email = r["first"], r["_id"]
+        if not first or len(first) < 10 or not _is_anniversary(first, today):
+            continue
+        years = today.year - int(first[:4])
+        if years < 1:
+            continue
+        tok = secrets.token_urlsafe(24)
+        res = await db.volunteer_anniversaries.update_one({"email": email, "year": today.year},
+                                                          {"$setOnInsert": {"years": years, "first_date": first, "cert_token": tok, "at": _now_iso()}}, upsert=True)
+        if res.upserted_id is None:
+            continue
+        last = await db.volunteer_hours.find_one({"email": email, "status": "approved"}, {"_id": 0, "name": 1}, sort=[("created_at", -1)])
+        since = (today - timedelta(days=365)).isoformat()
+        badges = [m.get("label") or f"{m['threshold']}h" async for m in db.volunteer_milestones.find({"email": email, "scope": "all"}, {"_id": 0}).sort("threshold", 1)]
+        try:
+            await send_email(to=email, subject=f"Happy {years}-year volunteer anniversary!",
+                             html=_anniv_html(((last or {}).get("name") or "friend").split(" ")[0], years, await _hours_total(email), await _hours_total(email, since),
+                                              badges, f"{PUBLIC_APP_URL}/api/certificates/anniversary/{tok}.pdf"))
+            sent += 1
+        except Exception as ex:
+            logging.error(f"Anniversary email failed: {ex}")
+    return sent
+
+
+@api_router.get("/certificates/anniversary/{token}.pdf")
+async def anniversary_certificate(token: str, request: Request):
+    _rate_limit(request, "cert", max_hits=30, window_s=60)
+    a = await db.volunteer_anniversaries.find_one({"cert_token": token[:64]}, {"_id": 0}) if token else None
+    if not a:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    last = await db.volunteer_hours.find_one({"email": a["email"], "status": "approved"}, {"_id": 0, "name": 1}, sort=[("created_at", -1)])
+    total = await _hours_total(a["email"])
+    y = a["years"]
+    date = datetime.fromisoformat(a["at"]).strftime("%B %-d, %Y")
+    pdf = await asyncio.to_thread(_cert_pdf, ((last or {}).get("name") or "Volunteer").strip()[:60], "", 0, date,
+                                  (f"in celebration of {y} year{'s' if y != 1 else ''} of volunteer service", f"and {total:g} hours given to our sisterhood since {datetime.strptime(a['first_date'], '%Y-%m-%d').strftime('%B %Y')}."),
+                                  f"{y} yr{'s' if y != 1 else ''}")
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="caring-sisters-{y}-year-anniversary.pdf"', "Cache-Control": "private, max-age=300"})
+
+
+# ---------- Public session calendar ----------
+@api_router.get("/sessions")
+async def public_sessions():
+    today = datetime.now(timezone.utc).date().isoformat()
+    items = await db.programs.find({"published": True, "start_date": {"$nin": [None, ""]}}, {"_id": 0, "body": 0, "gallery": 0, "testimonials": 0}).sort("start_date", 1).to_list(200)
+    out = []
+    for p in items:
+        if (p.get("end_date") or p["start_date"]) < today:
+            continue
+        p = await _with_seats(p)
+        out.append({k: p.get(k) for k in ("id", "slug", "title", "category", "image_url", "summary", "start_date", "end_date", "schedule", "capacity", "seats_left", "full")})
+    return {"items": out}
+
+
 @api_router.get("/volunteer-hours/leaderboard")
 async def hours_leaderboard():
     year = datetime.now(timezone.utc).strftime("%Y")
@@ -5080,6 +5205,7 @@ async def _daily_scheduler():
             await _send_waitlist_digest()
             await _send_forecast()
             await _monthly_snapshots()
+            await _send_anniversaries()
             await db.donor_manage_tokens.delete_many({"expires_at": {"$lt": datetime.now(timezone.utc).isoformat()}})
         except Exception as e:
             logging.error(f"Daily scheduler error: {e}")

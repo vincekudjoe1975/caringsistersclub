@@ -9,7 +9,7 @@ import { WaitlistPanel } from '../components/WaitlistPanel';
 import { CloneProgramDialog } from '../components/CloneProgram';
 import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, X, UploadCloud, Tags, ExternalLink, ListOrdered, Copy, Megaphone } from 'lucide-react';
 
-const EMPTY = { title: '', category: '', image_url: '', summary: '', body: '', goals: [], impact: [], cta_text: 'Get Involved', cta_link: '/volunteer', published: true, gallery: [], testimonials: [], home_testimonial_ids: [], capacity: 0, waitlist_mode: 'claim' };
+const EMPTY = { title: '', category: '', image_url: '', summary: '', body: '', goals: [], impact: [], cta_text: 'Get Involved', cta_link: '/volunteer', published: true, gallery: [], testimonials: [], home_testimonial_ids: [], capacity: 0, waitlist_mode: 'claim', start_date: '', end_date: '', schedule: '' };
 const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E] bg-white';
 const Field = ({ label, children }) => <div><label className="text-[13px] font-semibold text-[#3B0A2E]">{label}</label>{children}</div>;
 
@@ -105,6 +105,15 @@ function ProgramForm({ initial, categories, onClose, onSaved }) {
         <div className="grid sm:grid-cols-2 gap-4">
           <Field label="Seat limit (0 = unlimited). When full, new sign-ups join a waitlist.">
             <input type="number" min="0" value={form.capacity || 0} onChange={(e) => setForm({ ...form, capacity: Math.max(0, parseInt(e.target.value || '0', 10)) })} data-testid="program-capacity-input" className={input} />
+          </Field>
+          <Field label="Session start date (optional, shows on the public calendar)">
+            <input type="date" value={form.start_date || ''} onChange={set('start_date')} data-testid="program-start-date-input" className={input} />
+          </Field>
+          <Field label="Session end date (optional)">
+            <input type="date" value={form.end_date || ''} onChange={set('end_date')} data-testid="program-end-date-input" className={input} />
+          </Field>
+          <Field label='Meeting schedule (e.g. "Tuesdays 6–8pm")'>
+            <input value={form.schedule || ''} onChange={set('schedule')} maxLength={80} data-testid="program-schedule-input" className={input} />
           </Field>
           <Field label="When a seat opens up">
             <select value={form.waitlist_mode || 'claim'} onChange={set('waitlist_mode')} data-testid="program-waitlist-mode-select" className={input}>

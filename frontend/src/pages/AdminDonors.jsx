@@ -80,8 +80,9 @@ export default function AdminDonors() {
 
   const loadTemplates = useCallback(async () => {
     try {
-      const { data } = await api.get('/admin/appeal-templates');
-      setTemplates(data.items || []);
+      const [{ data }, ins] = await Promise.all([api.get('/admin/appeal-templates'), api.get('/admin/reports/template-insights').catch(() => ({ data: { items: [] } }))]);
+      const perf = Object.fromEntries((ins.data.items || []).map((r) => [r.id, r]));
+      setTemplates((data.items || []).map((t) => ({ ...t, perf: perf[t.id] })).sort((a, b) => (b.perf?.per_recipient ?? -1) - (a.perf?.per_recipient ?? -1)));
     } catch (e) { console.error('AdminDonors: failed to load templates', e); }
   }, []);
 
@@ -609,13 +610,19 @@ export default function AdminDonors() {
             <div className="p-6">
               <p className="text-[13px] text-[#241019]/60 mb-4">This appeal will be sent to <strong className="text-[#B4247E]">{segmentCount}</strong> {currentFilterLabel.toLowerCase()} donor{segmentCount === 1 ? '' : 's'} with an email on file, wrapped in your branded template with a "Make a Gift" button.</p>
 
+              {(() => { const top = templates.find((t) => t.perf?.top); return top && segTemplateId !== top.id && (
+                <div className="rounded-xl px-4 py-3 mb-4 flex flex-wrap items-center gap-3 text-[13px]" style={{ background: '#fdf3e1' }} data-testid="top-template-banner">
+                  <span className="flex-1 text-[#5c4a1f]"><strong>Top performer:</strong> {top.name} <span className="text-[#8a6a2c]">(${top.perf.per_recipient} per recipient)</span></span>
+                  <button onClick={() => applyTemplate(top.id)} data-testid="use-top-template-btn" className="font-semibold text-white bg-[#3B0A2E] rounded-full px-4 py-1.5 text-[12.5px]">Use this template</button>
+                </div>
+              ); })()}
               {templates.length > 0 && (
                 <div className="mb-4">
                   <label className="text-[13px] font-semibold text-[#3B0A2E]">Load a saved template</label>
                   <div className="flex flex-wrap gap-2 mt-2">
                     {templates.map((t) => (
                       <span key={t.id} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full" style={{ background: '#f2e6ee', color: '#B4247E' }}>
-                        <button onClick={() => applyTemplate(t.id)} data-testid="apply-template" title="Use this template">{t.name}</button>
+                        <button onClick={() => applyTemplate(t.id)} data-testid="apply-template" title="Use this template">{t.name}{t.perf?.per_recipient ? <span className="font-normal opacity-75" data-testid="template-chip-perf"> · ${t.perf.per_recipient}/recipient</span> : ''}</button>
                         <button onClick={() => deleteTemplate(t.id)} data-testid="delete-template" title="Delete template" className="hover:text-[#c1431f]"><X size={11} /></button>
                       </span>
                     ))}
