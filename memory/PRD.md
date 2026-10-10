@@ -175,3 +175,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Home content: settings key 'home' (mission heading/title/body/quote/image, pillars ≤6 with icon allowlist, testimonials ≤12 with photo). GET /api/home-content, PUT /api/admin/home-content; Admin → Home Page tab (AdminHome.jsx, reusable ImageUpload/TestimonialsEditor); Home.jsx reads via lib/useHomeContent.js.
 - Win-backs: GET /api/admin/winbacks — returned = paid txn created after thanked_at not from the cancelled sub; WinBacks card on Admin → Donors.
 - Save Live Address is a user action on production (Admin banner button).
+
+## 2026 — About editor, member stories, program sign-ups, monthly impact email (iteration_8)
+- About: settings key 'about' (hero_subtitle, mission title/body/image, values ≤8, story milestones ≤12 with photo). GET /api/about-content, PUT /api/admin/about-content; Admin → About Page (AdminAbout.jsx); About.jsx reads via useAboutContent.
+- Stories: public POST /api/stories (+ POST /api/stories/photo public upload, category 'story', hidden from /api/media list), admin GET /api/admin/stories, POST /{id}/approve {target:'home'|program_id, quote} → appended testimonial (added_at), /{id}/reject. ShareStory dialog on Home + program pages. Admin → Stories & Updates.
+- Program sign-ups: POST /api/programs/{slug}/signup → submissions type program_signup + staff notify + confirmation email. ProgramSignup form on program pages.
+- Monthly impact email: gallery items/testimonials carry added_at; _impact_content(last 31 days); recipients = paid monthly donors not cancelled; auto days 1–3 once/month (impact_emails log); admin preview/test/send at /api/admin/impact-email/*.

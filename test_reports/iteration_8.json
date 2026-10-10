@@ -1,0 +1,79 @@
+{
+  "summary": "Tested About editor, Story submissions (Home + Program), Program Sign-Ups and Monthly Impact Email across API + UI. Backend: 16/17 PASS + 1 skipped (rate limit) + 1 ASSERTIVE FAIL that documents a counts bug. Frontend UI: Public Home share-story (short→story-error 'at least 20 characters', valid→story-success), Program /initiatives/wellness-workshops share-story + program-signup (invalid email HTML5-blocked; valid→program-signup-success with confirmation line). Admin cookie-session: About editor publish (empty mission→validation toast; valid→'Last published …' timestamp). Public /about reflects QA mission title & hero. Admin Stories page: impact-email-panel shows '1 monthly donor, 0 photos, 2 stories', impact-preview-frame renders the branded 'Your Impact · October 2026' HTML with both approved stories, impact-test-btn enabled (not clicked per instruction), impact-send-btn also enabled (NOT clicked). Reviewed tab shows statuses 'approved · Home page' and 'approved · Business Elevation Lab'. Admin → Form Submissions → Program Sign-Ups filter DOES list the entries incl. program name, name, phone, message BUT the sidebar badge shows '0' despite 3 items. Backend bug confirmed: ALLOWED_SUB_TYPES at server.py:633 omits 'program_signup', so GET /api/submissions/counts never reports it. All QA artefacts cleaned (story_submissions, submissions with @example.com, program QA testimonials pulled, settings {about,home} removed, QA admin session removed).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/submissions/counts", "issue": "ALLOWED_SUB_TYPES is missing 'program_signup' so the counts endpoint always returns 0 for program sign-ups. Admin sidebar badge for 'Program Sign-Ups' therefore always reads 0/no 'new' indicator even when unread entries exist. Fix: add 'program_signup' to ALLOWED_SUB_TYPES in /app/backend/server.py line 633 (and ensure list_submissions type whitelist stays consistent)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminSubmissions sidebar", "issue": "'Program Sign-Ups' tab badge always shows 0 (consequence of /submissions/counts backend omission).", "selector": "[data-testid=admin-view-inbox] + button 'Program Sign-Ups'", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Program signup invalid email", "issue": "Browser HTML5 required+type=email blocks submission entirely so the server-side 'signup-error' element never surfaces. Fine for UX but you cannot visually test the backend 422 path. Consider surfacing a client-side validation message or using novalidate for test hooks.", "affected_selectors": ["[data-testid=signup-email-input]", "[data-testid=signup-error]"]}
+    ],
+    "design_issues": [
+      {"screen": "ShareStory dialog", "issues": ["Radix Dialog console warning: 'Missing `Description` or `aria-describedby` for {DialogContent}'. Add DialogDescription inside DialogHeader to resolve a11y warning."]}
+    ]
+  },
+  "test_results": [
+    {"case": "GET /api/about-content default returns mission/values/story", "status": "PASS"},
+    {"case": "PUT /api/admin/about-content empty mission → 400", "status": "PASS"},
+    {"case": "PUT /api/admin/about-content invalid photo URL → 400", "status": "PASS"},
+    {"case": "PUT /api/admin/about-content unauth → 401/403", "status": "PASS"},
+    {"case": "PUT /api/admin/about-content success + GET public reflects", "status": "PASS"},
+    {"case": "POST /api/stories length<20 → 400", "status": "PASS"},
+    {"case": "POST /api/stories home + program slug → 200", "status": "PASS"},
+    {"case": "GET /api/admin/stories lists submission as pending", "status": "PASS"},
+    {"case": "POST /api/admin/stories/{id}/approve target=home → home-content testimonial appended", "status": "PASS"},
+    {"case": "POST /api/admin/stories/{id}/approve target=programId → program testimonials appended", "status": "PASS"},
+    {"case": "POST /api/admin/stories/{id}/reject sets status=rejected", "status": "SKIPPED (rate-limit)"},
+    {"case": "GET /api/admin/stories unauth → 401/403", "status": "PASS"},
+    {"case": "POST /api/programs/{slug}/signup invalid email → 400/422", "status": "PASS"},
+    {"case": "POST /api/programs/{slug}/signup non-existent slug → 404", "status": "PASS"},
+    {"case": "POST /api/programs/{slug}/signup valid → appears in /api/submissions?type=program_signup", "status": "PASS (list) / FAIL on counts (bug)"},
+    {"case": "GET /api/admin/impact-email/preview unauth → 401/403", "status": "PASS"},
+    {"case": "GET /api/admin/impact-email/preview shape (html/recipients/photos/stories)", "status": "PASS"},
+    {"case": "UI Home share-story: short→story-error, valid→story-success", "status": "PASS"},
+    {"case": "UI Program share-story-btn present on /initiatives/<slug>", "status": "PASS"},
+    {"case": "UI Program signup valid → program-signup-success + confirmation email line", "status": "PASS"},
+    {"case": "UI Admin About empty mission → validation surfaced; valid publish → about-status 'Last published …'", "status": "PASS"},
+    {"case": "UI Public /about reflects published QA mission title & hero", "status": "PASS"},
+    {"case": "UI Admin Stories impact-email-panel + impact-preview-frame renders HTML; test/send buttons enabled with ≥1 story", "status": "PASS"},
+    {"case": "UI Admin Stories reviewed tab shows status 'approved · <target>' for Home and Program approvals", "status": "PASS"},
+    {"case": "UI Admin Form Submissions → Program Sign-Ups filter shows entries incl. program/name/email/phone/message", "status": "PASS"},
+    {"case": "UI Admin sidebar badge for Program Sign-Ups shows '0' despite 3 entries", "status": "FAIL (bug)"},
+    {"case": "Regression: /initiatives /events /transparency load without errors", "status": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_about_stories_signup_impact.py",
+    "/app/test_reports/pytest/about_stories.xml"
+  ],
+  "action_items": [
+    "server.py:633 — add 'program_signup' to ALLOWED_SUB_TYPES so /api/submissions/counts returns totals/unread for program sign-ups and the Admin sidebar badge reflects pending items.",
+    "ShareStory dialog — add <DialogDescription> inside DialogHeader to silence Radix a11y console warning (frontend/src/components/ShareStory.jsx)."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 3630 lines — file-size guideline still violated. About (~55 lines), Stories (~75 lines), Signups (~45 lines) and Impact Email (~120 lines) were all appended to the monolith. Should be split into about.py, stories.py, programs.py, impact.py routers.",
+    "ALLOWED_SUB_TYPES={volunteer,member,contact,rsvp,donation} is referenced by /submissions/counts but 'program_signup' was never added when the new sign-up endpoint was introduced — a clear coupling bug. Define submission types in one place (enum/dict) that both the frontend sidebar (TYPES in AdminSubmissions.jsx) and backend derive from. The frontend TYPES hard-codes 'program_signup' independently; they can drift.",
+    "/api/submissions GET currently has NO whitelist on the `type` query param — any arbitrary string reaches Mongo (e.g. ?type=foo returns []). Not a security hole but inconsistent with counts and allows typos.",
+    "_rate_limit for 'story' is 3 per 10 min / IP which caused a flaky skip in automated testing. Consider admin-session bypass or per-email throttling in addition to IP.",
+    "ShareStory DialogContent is missing DialogDescription — Radix prints a11y warnings on every open. Same issue was flagged for ProgramDetail lightbox previously.",
+    "AdminStories ImpactEmail.load() silently .catch(()=>{}) swallowing all errors. On an API failure the panel just doesn't render — add a visible error state.",
+    "AdminAbout: hero_subtitle/mission_title/mission_body share one simple `set` closure; typing in one field re-renders the entire tree on each key stroke (fine for now, note for perf).",
+    "ProgramSignup: the client-side HTML5 email validation prevents the backend error message from surfacing — surface `signup-error` via a client validator too so users see meaningful feedback.",
+    "Impact preview endpoint always re-builds the HTML string even when it has no new content. Low cost but worth caching per-month.",
+    "_abs_img uses PUBLIC_APP_URL; verified in the preview iframe but if PUBLIC_APP_URL differs from REACT_APP_BACKEND_URL in prod, email images could 404."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_about_stories_signup_impact.py"
+  ],
+  "success_rate": {"backend": "94% (16/17 effective, 1 skipped due to rate limit, 1 asserted-bug)", "frontend": "100% of flows exercised; 1 UI bug observed (badge=0)"},
+  "test_credentials": "Temp admin via /app/backend/tests/qa_session.py up/down (cookie session_token=qa_tok_123). Deleted at end.",
+  "seed_data_creation": "Created and cleaned: 5 story_submissions (@example.com), 3 program_signup submissions (@example.com), approved testimonials pushed to Home (settings key:'home') and Business Elevation Lab program, settings key:'about' doc. Post-test: 0 QA artefacts remaining (verified).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Endpoints: GET /api/about-content (public) and PUT /api/admin/about-content (AboutIn: hero_subtitle/mission_title/mission_body/mission_image/values[icon,title,text]/story_title/story[year,title,text,image]; mission_body required; values 1-8; story <=12; _ok_img check on photos). POST /api/stories (rate-limited 3/10min/IP, quote>=20 chars, photo must match /api/media/file/<uuid>). GET /api/admin/stories (admin) returns {items:[{id,name,email,role,quote,photo_url,program_id,program_title,status,created_at,featured_on?,reviewed_at?}]}. POST /api/admin/stories/{sid}/approve {target:'home'|<program_id>, quote?} caps home testimonials at 12 and program at 6. POST /api/admin/stories/{sid}/reject. POST /api/programs/{slug}/signup (rate-limited 'submission' 5/min; writes submissions type='program_signup'). GET /api/admin/impact-email/preview returns {html,recipients,photos,stories,last_sent?}; POST .../test (sends to admin) and .../send (broadcasts) — do NOT click send during QA. KNOWN BUG: ALLOWED_SUB_TYPES at /app/backend/server.py line 633 omits 'program_signup' so /api/submissions/counts never reports it; UI badge in AdminSubmissions reads 0 for Program Sign-Ups. CSRF middleware (server.py:3611) requires X-Requested-With: XMLHttpRequest header on any mutating request that carries session_token cookie; test fixtures already set it. Public share-story is also present on each /initiatives/<slug> and records program_title with the submission. Admin nav test-ids: admin-view-{inbox,home,about,stories,programs,events,transparency,donations,donors,campaign,team,media} (Form Submissions is 'inbox', NOT 'submissions').",
+  "rca of the issue": "Program Sign-Ups badge always 0: when the new /programs/{slug}/signup endpoint was added it inserted submissions with type='program_signup', but the pre-existing allow-list ALLOWED_SUB_TYPES (used only in /submissions/counts to iterate counts) wasn't updated. Front-end TYPES array in AdminSubmissions.jsx was updated independently, so the type appears as a tab but the badge aggregator skips it. Fix: add 'program_signup' to the set at server.py:633 (or better, derive it from a shared enum). No data integrity issue — list endpoint and persistence are correct."
+}

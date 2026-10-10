@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Loader2, PenLine, CheckCircle2, UploadCloud, Send } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { api, mediaSrc } from '../lib/api';
 import { errMsg } from '../pages/Events';
 
@@ -64,7 +64,10 @@ export const ShareStory = ({ programSlug, className = '' }) => {
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle className="font-serif text-[22px] text-[#3B0A2E]">Share your story</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="font-serif text-[22px] text-[#3B0A2E]">Share your story</DialogTitle>
+            <DialogDescription className="text-[13px] text-[#241019]/60">Tell us how the sisterhood has made a difference for you.</DialogDescription>
+          </DialogHeader>
           {done ? (
             <div className="text-center py-4" data-testid="story-success">
               <CheckCircle2 size={44} className="text-[#B4247E] mx-auto mb-3" />

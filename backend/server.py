@@ -630,7 +630,7 @@ async def _handle_recurring_renewal(invoice: dict):
 
 
 # ---------- Form Submissions (public create, admin manage) ----------
-ALLOWED_SUB_TYPES = {"volunteer", "member", "contact", "rsvp", "donation"}
+ALLOWED_SUB_TYPES = {"volunteer", "member", "contact", "rsvp", "donation", "program_signup"}
 
 
 class SubmissionCreate(BaseModel):
