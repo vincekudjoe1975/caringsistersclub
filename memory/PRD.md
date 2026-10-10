@@ -139,3 +139,8 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
   `X-Content-Type-Options: nosniff` on served media.
 - User still to confirm a fresh monthly donation lands in the DB after full Stripe completion
   (on the SAME environment they view the admin — preview vs deployed use separate DBs).
+
+## 2026 — Recurring Appeals + Appeal Analytics (iteration_3: 100% pass)
+- Scheduled appeals accept `repeat` (none|monthly|quarterly); daily scheduler sends, then advances `send_on` (month-end clamped) and increments `runs`; Cancel stops the series. UI: Repeat select in composer, "Repeats" column in Scheduled Appeals.
+- Each segment appeal gets an `id`; email "Make a Gift" links to `/api/t/appeal/{id}` (counts click, per-IP throttled, 302 → `/donate?appeal={id}`). Donate page keeps it in sessionStorage and sends `appeal_id` with checkout; stored on transaction + Stripe metadata.
+- Appeal History shows Clicks, Gifts, Raised (paid transactions attributed by appeal_id). Test copies are untracked.

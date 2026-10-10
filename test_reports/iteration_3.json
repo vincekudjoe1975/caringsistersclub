@@ -1,0 +1,42 @@
+{
+  "summary": "End-to-end verification of Recurring Appeals + Appeal Analytics (click tracking) for Caring Sisters Club. All backend pytest cases (6) and all frontend UI assertions PASSED. Seeded a temp admin+session; injected session_token cookie on the preview host; drove the Admin > Donors view in a real browser. Seeded one segment_emails + paid payment_transactions (appeal_id linked) and verified the Appeal History row rendered Clicks=3, Gifts=1, Raised=$40 via data-testid cells. Opened the Email composer, picked a future date, saw the schedule-repeat-select appear with options 'Does not repeat / Monthly / Quarterly', selected Monthly, clicked segment-schedule-btn (did NOT click segment-send-btn). Verified via API and UI that the scheduled appeal persisted with repeat='monthly' and showed in the Scheduled Appeals table with testid scheduled-repeat='Monthly'. Clicked cancel-scheduled-btn and confirmed the row was removed via API. Also verified /donate?appeal=<uuid> writes sessionStorage key 'csc_appeal' on the public Donate page. Backend tests additionally covered: GET /api/t/appeal/{id} 302->/donate?appeal={id} with clicks increment, unknown id redirect to /donate, POST /api/admin/scheduled-appeals with repeat='weekly' => 400, POST /api/payments/checkout stores appeal_id on pending transaction, and /api/admin/appeals aggregates clicks/gifts/raised. All seed docs and the temp admin user/session were cleaned up afterwards; the 2 real paid donations are intact.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": [
+    {"case": "Backend /api/t/appeal/{id} known id 302 + increments clicks", "status": "PASS"},
+    {"case": "Backend /api/t/appeal/{id} unknown id redirects to /donate", "status": "PASS"},
+    {"case": "Backend POST /api/admin/scheduled-appeals repeat=weekly -> 400", "status": "PASS"},
+    {"case": "Backend POST /api/admin/scheduled-appeals monthly + GET list + DELETE cancel", "status": "PASS"},
+    {"case": "Backend /api/admin/appeals aggregates clicks=3, donations=1, raised=40", "status": "PASS"},
+    {"case": "Backend /api/payments/checkout stores appeal_id on pending transaction", "status": "PASS"},
+    {"case": "UI /donate?appeal=<uuid> sets sessionStorage.csc_appeal", "status": "PASS"},
+    {"case": "UI Admin Donors > Appeal History shows Clicks/Gifts/Raised columns and data-testid cells render 3 / 1 / $40 for seeded row", "status": "PASS"},
+    {"case": "UI Composer: future date reveals schedule-repeat-select with 3 options (Does not repeat / Monthly / Quarterly)", "status": "PASS"},
+    {"case": "UI segment-schedule-btn creates scheduled appeal (NOT segment-send-btn)", "status": "PASS"},
+    {"case": "UI Scheduled Appeals table shows 'Next Send' and scheduled-repeat='Monthly'", "status": "PASS"},
+    {"case": "UI cancel-scheduled-btn removes the scheduled appeal", "status": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_appeals.py",
+    "/app/test_reports/pytest/appeals_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AdminDonors.jsx: scheduled-repeat cell renders raw lowercase value ('monthly') capitalized by CSS; works but the data-testid='scheduled-repeat' text content for recurring rows will include trailing ' · N sent' when runs>0. Downstream consumers that assert exact text should trim/startsWith.",
+    "backend/server.py:_run_scheduled_appeals - 'repeat weekly' is correctly rejected at POST, but ensure the scheduler ignores any legacy docs with unknown repeat values gracefully (currently _add_months lookup returns None for unknown => treated as one-off, which is OK).",
+    "/api/t/appeal/{id} rate-limits clicks per appeal to 3/10min per client; test used a single click so this is fine, but repeated UI clicks from the same IP won't increment -- acceptable but worth documenting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_appeals.py"
+  ],
+  "success_rate": { "backend": "100% (6/6)", "frontend": "100% (12/12 assertions)" },
+  "test_credentials": "Temp admin session (user_id=qa_appeal_user_1791605910187, session_token=qa_appeal_tok_1791605910187) was seeded and deleted after testing. Only real admins remain in /app/memory/test_credentials.md.",
+  "seed_data_creation": "Seeded then DELETED: 1 segment_emails doc (id=1b3521b7-ac6b-4348-af94-81e092454a2d, subject='QA Seed'), 1 payment_transactions doc (session_id='qa_ui_x', amount=40, paid, appeal_id linked), 1 scheduled_appeals doc (subject='QA Monthly UI', repeat='monthly') [cancelled via UI], temp admin user + session_token. Verified post-test: 2 real paid donations preserved.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Admin donors view lives at /admin (not /admin/donors) - click the 'Donors' top-level view button after loading /admin. The Appeal History and Scheduled Appeals sections are collapsed by default; use toggle-appeal-history and toggle-scheduled-appeals to expand. The Email composer modal is opened via a 'Email All (N)' button on the donors view (no dedicated open-composer testid). schedule-repeat-select only renders after a future date is set in schedule-date-input. Rate limiter on /api/t/appeal/{id} is 3 clicks per 10-minute window per IP+appeal."
+}
