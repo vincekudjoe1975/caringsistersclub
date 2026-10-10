@@ -3,6 +3,9 @@ import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 import { Check, X, Mail, Trash2, Megaphone, UploadCloud, Loader2, PauseCircle, PlayCircle } from 'lucide-react';
 import { fmtDate } from '../components/members/fmt';
+import { AdminDues } from '../components/members/admin/AdminDues';
+import { AdminMeetings } from '../components/members/admin/AdminMeetings';
+import { AdminBallots } from '../components/members/admin/AdminBallots';
 
 const inputCls = 'w-full rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
 const Box = ({ title, children, testid }) => (
@@ -29,6 +32,11 @@ function Applications({ rows, act }) {
   ));
 }
 
+function OfficeInput({ m }) {
+  const [v, setV] = useState(m.office || '');
+  return <input data-testid={`office-${m.user_id}`} value={v} placeholder="Office (optional)" onChange={(e) => setV(e.target.value)} onBlur={() => v !== (m.office || '') && api.put(`/admin/members/${m.user_id}/office`, { office: v })} className="w-36 rounded-lg border border-[#3B0A2E]/10 px-2 py-1 text-[12px] focus:outline-none focus:border-[#B4247E]" />;
+}
+
 function Roster({ rows, act }) {
   if (!rows.length) return <p className="text-[13.5px] text-[#241019]/50">No members yet.</p>;
   return (
@@ -36,6 +44,7 @@ function Roster({ rows, act }) {
       {rows.map((m) => (
         <div key={m.user_id} className="py-2.5 flex items-center justify-between gap-3">
           <div className="min-w-0"><p className="text-[14px] font-semibold text-[#3B0A2E] truncate">{m.name} {m.status !== 'active' && <span className="text-[11px] uppercase text-[#B4247E] ml-1">{m.status}</span>}</p><p className="text-[12px] text-[#241019]/50 truncate">{m.email}</p></div>
+          <OfficeInput m={m} />
           {m.status === 'active'
             ? <button data-testid={`suspend-${m.user_id}`} onClick={() => act(m.user_id, 'suspend')} className="text-[12.5px] text-[#241019]/55 hover:text-red-600 flex items-center gap-1"><PauseCircle size={14} /> Pause</button>
             : <button data-testid={`reinstate-${m.user_id}`} onClick={() => act(m.user_id, 'reinstate')} className="text-[12.5px] text-[#B4247E] flex items-center gap-1"><PlayCircle size={14} /> Activate</button>}
@@ -136,14 +145,21 @@ export default function AdminMembers() {
     try { await api.post(`/admin/members/${uid}/status`, { action }); toast({ title: 'Updated' }); load(); }
     catch (ex) { toast({ title: 'Failed', description: ex?.response?.data?.detail, variant: 'destructive' }); }
   };
+  const [sub, setSub] = useState('people');
   const apps = d.members.filter((m) => m.status === 'applied');
+  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections']];
   return (
+    <div>
+    <div className="flex flex-wrap gap-1 mb-6">{tabs.map(([k, l]) => <button key={k} data-testid={`members-sub-${k}`} onClick={() => setSub(k)} className={`rounded-full px-4 py-2 text-[13px] font-semibold transition-colors ${sub === k ? 'bg-[#3B0A2E] text-white' : 'bg-white border border-[#3B0A2E]/15 text-[#3B0A2E]'}`}>{l}</button>)}</div>
+    {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : (
     <div className="grid lg:grid-cols-2 gap-6" data-testid="admin-members">
       <Box title={`Applications (${apps.length})`} testid="admin-applications"><Applications rows={apps} act={act} /></Box>
       <Box title="Invite members" testid="admin-invites"><Invites invites={d.invites} reload={load} toast={toast} /></Box>
       <Box title="Announcements" testid="admin-announcements"><AnnouncementForm toast={toast} /></Box>
       <Box title={`Members (${d.members.filter((m) => m.status === 'active').length} active)`} testid="admin-roster"><Roster rows={d.members.filter((m) => m.status !== 'applied')} act={act} /></Box>
       <Box title="Bylaws" testid="admin-bylaws"><BylawsUpload toast={toast} /></Box>
+    </div>
+    )}
     </div>
   );
 }

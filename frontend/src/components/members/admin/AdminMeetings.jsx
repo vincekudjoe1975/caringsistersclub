@@ -1,0 +1,79 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { api } from '../../../lib/api';
+import { useToast } from '../../../hooks/use-toast';
+import { Plus, Trash2, AlertTriangle, Save } from 'lucide-react';
+import { fmtDate } from '../fmt';
+
+const FLAG = { warning: 'Warning letter (2 in a row)', fine: '$10 fine (3 in a row)', officer_removal: 'Officer: 3 missed, remove from office', termination: '4+ missed: ends in December' };
+const inputCls = 'rounded-lg border border-[#3B0A2E]/15 px-3 py-2 text-[13.5px] focus:outline-none focus:border-[#B4247E]';
+const STATES = ['present', 'absent', 'excused'];
+const BTN = { present: 'bg-green-600 text-white', absent: 'bg-red-600 text-white', excused: 'bg-[#241019]/50 text-white' };
+
+function AttendanceSheet({ m, members, onSaved }) {
+  const { toast } = useToast();
+  const [att, setAtt] = useState(m.attendance || {});
+  const save = async () => { await api.put(`/admin/members/meetings/${m.id}/attendance`, { attendance: att }); toast({ title: 'Attendance saved', description: 'Warnings and fines were updated automatically.' }); onSaved(); };
+  return (
+    <div data-testid={`sheet-${m.id}`} className="bg-[#faf2f7] rounded-xl p-4 mt-3">
+      <div className="flex gap-2 mb-3">
+        <button data-testid={`all-present-${m.id}`} onClick={() => setAtt(Object.fromEntries(members.map((x) => [x.user_id, 'present'])))} className="text-[12.5px] font-semibold text-[#B4247E]">Mark everyone present</button>
+      </div>
+      {members.map((x) => (
+        <div key={x.user_id} className="flex items-center justify-between py-1.5 text-[13.5px]">
+          <span>{x.name}{x.office && <span className="text-[11px] text-[#B4247E] ml-1.5">{x.office}</span>}</span>
+          <span className="flex gap-1">
+            {STATES.map((s) => <button key={s} data-testid={`att-${m.id}-${x.user_id}-${s}`} onClick={() => setAtt({ ...att, [x.user_id]: s })} className={`rounded-full px-3 py-1 text-[12px] font-semibold capitalize transition-colors ${att[x.user_id] === s ? BTN[s] : 'bg-white text-[#241019]/60 border border-[#3B0A2E]/10'}`}>{s}</button>)}
+          </span>
+        </div>
+      ))}
+      <button data-testid={`att-save-${m.id}`} onClick={save} className="btn-magenta rounded-full px-5 py-2 text-[13px] font-semibold mt-3 flex items-center gap-1.5"><Save size={14} /> Save attendance</button>
+    </div>
+  );
+}
+
+export function AdminMeetings() {
+  const [d, setD] = useState(null);
+  const [f, setF] = useState({ title: 'General meeting', date: '', kind: 'general' });
+  const [open, setOpen] = useState(null);
+  const load = useCallback(() => api.get('/admin/members/meetings').then(({ data }) => setD(data)), []);
+  useEffect(() => { load(); }, [load]);
+  const create = async (e) => { e.preventDefault(); const { data } = await api.post('/admin/members/meetings', f); setOpen(data.id); load(); };
+  if (!d) return <p className="text-[#241019]/50">Loading…</p>;
+  return (
+    <div className="grid lg:grid-cols-[1.4fr_1fr] gap-6" data-testid="admin-meetings">
+      <div>
+        <form onSubmit={create} className="bg-white rounded-2xl p-5 border border-[#3B0A2E]/8 flex flex-wrap gap-2 mb-5">
+          <input data-testid="meeting-title" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={`${inputCls} flex-1 min-w-[160px]`} />
+          <input data-testid="meeting-date" type="date" required value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} className={inputCls} />
+          <select data-testid="meeting-kind" value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })} className={inputCls}><option value="general">General</option><option value="in-person">In-person</option><option value="executive">Executive</option></select>
+          <button data-testid="meeting-create-btn" className="btn-magenta rounded-full px-4 py-2 text-[13px] font-semibold flex items-center gap-1"><Plus size={14} /> Add meeting</button>
+        </form>
+        <div className="space-y-3">
+          {d.meetings.map((m) => (
+            <div key={m.id} data-testid={`meeting-${m.id}`} className="bg-white rounded-2xl p-4 border border-[#3B0A2E]/8">
+              <div className="flex items-center justify-between gap-3">
+                <div><p className="font-semibold text-[#3B0A2E] text-[14.5px]">{m.title}</p><p className="text-[12px] text-[#241019]/50">{fmtDate(m.date + 'T12:00:00')} · {m.kind} · {Object.values(m.attendance || {}).filter((v) => v === 'present').length} present</p></div>
+                <span className="flex gap-3">
+                  <button data-testid={`meeting-open-${m.id}`} onClick={() => setOpen(open === m.id ? null : m.id)} className="text-[12.5px] font-semibold text-[#B4247E]">{open === m.id ? 'Close' : 'Take attendance'}</button>
+                  <button data-testid={`meeting-del-${m.id}`} onClick={async () => { if (window.confirm('Delete this meeting and its attendance?')) { await api.delete(`/admin/members/meetings/${m.id}`); load(); } }} className="text-[#241019]/35 hover:text-red-600"><Trash2 size={14} /></button>
+                </span>
+              </div>
+              {open === m.id && <AttendanceSheet m={m} members={d.members} onSaved={load} />}
+            </div>
+          ))}
+          {!d.meetings.length && <p className="text-[13.5px] text-[#241019]/50">No meetings recorded this year.</p>}
+        </div>
+      </div>
+      <div data-testid="attendance-flags" className="bg-white rounded-2xl p-5 border border-[#3B0A2E]/8 self-start">
+        <p className="font-serif text-[19px] text-[#3B0A2E] font-semibold mb-1 flex items-center gap-2"><AlertTriangle size={17} className="text-[#B4247E]" /> Attendance flags</p>
+        <p className="text-[12.5px] text-[#241019]/55 mb-4">Article V rules. Warning letters are emailed and $10 fines are added to the member's balance automatically.</p>
+        {!d.flagged.length ? <p className="text-[13.5px] text-[#241019]/50">No members flagged.</p> : d.flagged.map((x) => (
+          <div key={x.user_id} data-testid={`flagged-${x.user_id}`} className="py-2 border-b border-[#3B0A2E]/8 last:border-0">
+            <p className="font-semibold text-[14px] text-[#3B0A2E]">{x.name} <span className="text-[12px] text-[#241019]/50 font-normal">· {x.consecutive_absences} in a row · {x.total_absences} this year</span></p>
+            <div className="flex flex-wrap gap-1 mt-1">{x.flags.map((fl) => <span key={fl} className="text-[11.5px] bg-red-50 text-red-700 rounded-full px-2.5 py-0.5">{FLAG[fl]}</span>)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

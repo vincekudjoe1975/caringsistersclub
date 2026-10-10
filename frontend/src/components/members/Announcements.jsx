@@ -2,19 +2,24 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { Pin, Megaphone } from 'lucide-react';
 import { fmtDate } from './fmt';
+import { BirthdaysCard } from './BirthdaysCard';
 
-export function Announcements() {
+export function Announcements({ me }) {
   const [items, setItems] = useState(null);
   useEffect(() => { api.get('/members/announcements').then(({ data }) => setItems(data)).catch(() => setItems([])); }, []);
   if (items === null) return <p className="text-[#241019]/50">Loading…</p>;
   if (!items.length) return (
+    <div>
+    <BirthdaysCard me={me} />
     <div data-testid="announcements-empty" className="text-center py-14">
       <Megaphone className="mx-auto text-[#B4247E] mb-3" size={30} />
       <p className="text-[#241019]/60">No announcements yet. Check back soon.</p>
     </div>
+    </div>
   );
   return (
     <div className="space-y-4" data-testid="announcements-list">
+      <BirthdaysCard me={me} />
       {items.map((a) => (
         <article key={a.id} data-testid={`announcement-${a.id}`} className="bg-white rounded-2xl p-6 border border-[#3B0A2E]/8">
           <div className="flex items-center gap-2 text-[12px] text-[#241019]/50 mb-2">

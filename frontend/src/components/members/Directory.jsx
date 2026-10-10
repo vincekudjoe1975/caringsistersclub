@@ -26,6 +26,7 @@ export function Directory() {
                 <Avatar name={m.name} src={m.picture} size={48} />
                 <div className="min-w-0">
                   <p className="font-semibold text-[#3B0A2E] truncate">{m.name}</p>
+                  {m.office && <p className="text-[12px] text-[#B4247E] font-semibold">{m.office}</p>}
                   {m.member_since && <p className="text-[12px] text-[#241019]/45">Member since {fmtDate(m.member_since)}</p>}
                 </div>
               </div>

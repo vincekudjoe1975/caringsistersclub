@@ -13,6 +13,17 @@ for uid, email, name, tok in USERS:
 db.member_invites.delete_many({"email": {"$regex": "example.com$"}})
 db.member_announcements.delete_many({"title": {"$regex": "^QA"}})
 db.member_threads.delete_many({"title": {"$regex": "^QA"}})
+db.member_threads.delete_many({"key": {"$regex": "^birthday:qa_mem"}})
+uids = [u[0] for u in USERS]
+db.member_ledger.delete_many({"user_id": {"$in": uids}})
+db.member_checkouts.delete_many({"user_id": {"$in": uids}})
+db.member_birthday_collections.delete_many({"user_id": {"$in": uids}})
+db.member_notices.delete_many({"key": {"$regex": "qa_mem"}})
+db.member_meetings.delete_many({"title": {"$regex": "^QA"}})
+bids = [b["id"] for b in db.member_ballots.find({"title": {"$regex": "^QA"}}, {"id": 1})]
+db.member_votes.delete_many({"ballot_id": {"$in": bids}})
+db.member_voters.delete_many({"ballot_id": {"$in": bids}})
+db.member_ballots.delete_many({"id": {"$in": bids}})
 if sys.argv[1] == "up":
     for uid, email, name, tok in USERS:
         db.users.insert_one({"user_id": uid, "email": email, "name": name, "role": "pending", "created_at": "2026-01-01T00:00:00+00:00"})

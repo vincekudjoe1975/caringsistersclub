@@ -2,17 +2,21 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
-import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck } from 'lucide-react';
+import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet } from 'lucide-react';
 import { MemberApply } from '../components/members/MemberApply';
 import { Announcements } from '../components/members/Announcements';
 import { Discussion } from '../components/members/Discussion';
 import { Directory } from '../components/members/Directory';
 import { Bylaws } from '../components/members/Bylaws';
 import { MyProfile } from '../components/members/MyProfile';
+import { Ballots } from '../components/members/Ballots';
+import { Standing } from '../components/members/Standing';
 
 const TABS = [
   { k: 'news', l: 'Announcements', icon: Megaphone, C: Announcements },
   { k: 'talk', l: 'Discussion', icon: MessagesSquare, C: Discussion },
+  { k: 'votes', l: 'Votes', icon: Vote, C: Ballots },
+  { k: 'dues', l: 'My Dues', icon: Wallet, C: Standing },
   { k: 'people', l: 'Directory', icon: Users, C: Directory },
   { k: 'bylaws', l: 'Bylaws', icon: ScrollText, C: Bylaws },
   { k: 'me', l: 'My Profile', icon: UserCircle, C: MyProfile },
@@ -49,7 +53,7 @@ function MemberLogin() {
 }
 
 function Portal({ me, onChange }) {
-  const [tab, setTab] = useState(() => sessionStorage.getItem('csc_member_tab') || 'news');
+  const [tab, setTab] = useState(() => (window.location.search.includes('dues_session') ? 'dues' : sessionStorage.getItem('csc_member_tab') || 'news'));
   const pick = (k) => { sessionStorage.setItem('csc_member_tab', k); setTab(k); };
   const { logout } = useAuth();
   const Current = (TABS.find((t) => t.k === tab) || TABS[0]).C;

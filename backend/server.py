@@ -72,6 +72,7 @@ async def get_status_checks():
 import requests as _requests
 from fastapi import Request, Response, HTTPException, UploadFile, File, Form, Depends, Header, Query, BackgroundTasks
 from typing import Optional
+from pymongo.errors import DuplicateKeyError
 from datetime import timedelta
 
 # ---- Emergent Object Storage config ----
@@ -595,6 +596,8 @@ async def stripe_webhook(request: Request):
         if txn:
             cust_email = (obj.get("customer_details") or {}).get("email")
             await _record_paid_donation(obj["id"], txn, recipient_email=cust_email)
+        if (obj.get("metadata") or {}).get("kind") == "member_dues" and obj.get("payment_status") == "paid":
+            await _record_member_payment(obj["id"])
     elif t == "checkout.session.expired":
         await db.payment_transactions.update_one(
             {"session_id": obj["id"]},
@@ -6281,7 +6284,7 @@ def _member_public(u: dict, viewer_admin: bool = False) -> dict:
     p = u.get("member_profile") or {}
     show = p.get("show_contact") or viewer_admin
     return {"user_id": u["user_id"], "name": u.get("name") or "", "picture": u.get("picture") or "",
-            "city": p.get("city", ""), "bio": p.get("bio", ""), "member_since": u.get("member_since", ""),
+            "city": p.get("city", ""), "bio": p.get("bio", ""), "member_since": u.get("member_since", ""), "office": u.get("member_office", ""),
             "email": u.get("email", "") if show else "", "phone": p.get("phone", "") if show else ""}
 
 
@@ -6328,11 +6331,20 @@ class MemberProfile(BaseModel):
     phone: str = ""
     bio: str = ""
     show_contact: bool = False
+    birthday_month: Optional[int] = None
+    birthday_day: Optional[int] = None
 
 
 @api_router.put("/members/profile")
 async def members_profile(payload: MemberProfile, user=Depends(require_member)):
-    prof = {"city": payload.city.strip()[:80], "phone": payload.phone.strip()[:30], "bio": payload.bio.strip()[:600], "show_contact": payload.show_contact}
+    bm, bd = payload.birthday_month, payload.birthday_day
+    if bm or bd:
+        try:
+            datetime(2000, int(bm), int(bd))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Please choose a valid birthday month and day.")
+    prof = {"city": payload.city.strip()[:80], "phone": payload.phone.strip()[:30], "bio": payload.bio.strip()[:600], "show_contact": payload.show_contact,
+            "birthday_month": int(bm) if bm else None, "birthday_day": int(bd) if bd else None}
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_profile": prof}})
     return prof
 
@@ -6459,6 +6471,8 @@ async def admin_member_status(uid: str, payload: MemberAction, background: Backg
     upd = {"member_status": new}
     if new == "active" and not target.get("member_since"):
         upd["member_since"] = _now_iso()
+        if target.get("member_application"):
+            await _ledger_add(uid, _today_et().year, "charge", "registration", REGISTRATION_FEE, "One-time registration fee", key=f"reg:{uid}")
     await db.users.update_one({"user_id": uid}, {"$set": upd})
     if payload.action == "approve" and target.get("email"):
         first = (target.get("name") or "Sister").split(" ")[0]
@@ -6552,6 +6566,557 @@ async def admin_bylaws_upload(file: UploadFile = File(...), user=Depends(require
 @api_router.get("/admin/members/bylaws")
 async def admin_bylaws_info(user=Depends(require_admin)):
     return await db.member_docs.find_one({"key": "bylaws"}, {"_id": 0, "filename": 1, "updated_at": 1, "updated_by": 1}) or {}
+
+
+# ---------- Member Portal phase 2: dues, attendance, voting, birthdays ----------
+DUES_MONTHLY = 10.0
+REGISTRATION_FEE = 10.0
+ABSENCE_FINE = 10.0
+BIRTHDAY_CONTRIBUTION = 25.0
+_ALLOWED_ORIGINS = [o.strip().rstrip("/") for o in os.environ["CORS_ORIGINS"].split(",") if o.strip() and o.strip() != "*"]
+
+
+def _today_et():
+    return datetime.now(EVENT_TZ).date()
+
+
+def _since_date(u: dict):
+    try:
+        return datetime.fromisoformat(u.get("member_since")).astimezone(EVENT_TZ).date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _dues_expected(u: dict, year: int) -> tuple:
+    since = _since_date(u)
+    if since and since.year > year:
+        return 0.0, None
+    start = since.month if since and since.year == year else 1
+    due = max(datetime(year, 1, 31).date(), (since + timedelta(days=30)) if since and since.year == year else datetime(year, 1, 31).date())
+    return DUES_MONTHLY * (13 - start), due
+
+
+def _attendance_summary(u: dict, meetings: list) -> dict:
+    since = _since_date(u)
+    streak, total, history, fine_ids, warn_ids = 0, 0, [], [], []
+    for m in meetings:
+        st = (m.get("attendance") or {}).get(u["user_id"])
+        if not st or (since and m["date"] < since.isoformat()):
+            continue
+        history.append({"meeting_id": m["id"], "title": m["title"], "date": m["date"], "status": st})
+        if st == "absent":
+            streak += 1
+            total += 1
+            if streak == 2:
+                warn_ids.append(m["id"])
+            if streak == 3:
+                fine_ids.append(m["id"])
+        elif st == "present":
+            streak = 0
+    flags = []
+    if streak >= 2:
+        flags.append("warning")
+    if fine_ids:
+        flags.append("fine")
+    if u.get("member_office") and total >= 3:
+        flags.append("officer_removal")
+    if total >= 4:
+        flags.append("termination")
+    return {"history": history, "consecutive_absences": streak, "total_absences": total, "flags": flags, "fine_ids": fine_ids, "warn_ids": warn_ids}
+
+
+async def _year_meetings(year: int) -> list:
+    return await db.member_meetings.find({"date": {"$gte": f"{year}-01-01", "$lte": f"{year}-12-31"}}, {"_id": 0}).sort("date", 1).to_list(500)
+
+
+def _standing_from(u: dict, year: int, ledger: list, meetings: list) -> dict:
+    dues, due_date = _dues_expected(u, year)
+    charges = sum(e["amount"] for e in ledger if e["direction"] == "charge")
+    paid = sum(e["amount"] for e in ledger if e["direction"] == "payment")
+    balance = round(dues + charges - paid, 2)
+    overdue = balance > 0 and due_date is not None and _today_et() > due_date
+    att = _attendance_summary(u, meetings)
+    status = "paid" if balance <= 0 else ("overdue" if overdue else "due")
+    good = u.get("member_status") == "active" and not overdue and "termination" not in att["flags"]
+    return {"year": year, "dues_expected": dues, "due_date": due_date.isoformat() if due_date else None, "charges": charges, "paid": paid,
+            "balance": max(balance, 0.0), "credit": max(-balance, 0.0), "dues_status": status, "good_standing": good,
+            "attendance": {k: v for k, v in att.items() if k not in ("fine_ids", "warn_ids")}}
+
+
+async def _standing_all(year: int) -> dict:
+    users = await db.users.find({"member_status": "active"}, {"_id": 0}).to_list(2000)
+    ledger = await db.member_ledger.find({"year": year}, {"_id": 0}).to_list(20000)
+    meetings = await _year_meetings(year)
+    by = defaultdict(list)
+    for e in ledger:
+        by[e["user_id"]].append(e)
+    return {u["user_id"]: (u, _standing_from(u, year, by[u["user_id"]], meetings)) for u in users}
+
+
+async def _member_standing(u: dict, year: int) -> dict:
+    ledger = await db.member_ledger.find({"user_id": u["user_id"], "year": year}, {"_id": 0}).sort("created_at", 1).to_list(1000)
+    return {**_standing_from(u, year, ledger, await _year_meetings(year)), "ledger": ledger}
+
+
+async def _ledger_add(uid: str, year: int, direction: str, kind: str, amount: float, note: str = "", key: str = None, **extra) -> bool:
+    e = {"id": str(uuid.uuid4()), "user_id": uid, "year": year, "direction": direction, "kind": kind, "amount": round(float(amount), 2),
+         "note": note[:200], "created_at": _now_iso(), **extra}
+    if key:
+        e["key"] = key
+        res = await db.member_ledger.update_one({"key": key}, {"$setOnInsert": e}, upsert=True)
+        return bool(res.upserted_id)
+    await db.member_ledger.insert_one(dict(e))
+    return True
+
+
+def _year_param(year: Optional[int]) -> int:
+    y = year or _today_et().year
+    if y < 2020 or y > 2100:
+        raise HTTPException(status_code=400, detail="Invalid year")
+    return y
+
+
+# --- Member: standing & dues payment ---
+@api_router.get("/members/standing")
+async def members_standing(year: Optional[int] = None, user=Depends(require_member)):
+    return await _member_standing(user, _year_param(year))
+
+
+class DuesCheckout(BaseModel):
+    amount: float
+
+
+@api_router.post("/members/dues/checkout")
+async def members_dues_checkout(payload: DuesCheckout, request: Request, user=Depends(require_member)):
+    _rate_limit(request, "dues-checkout", max_hits=6, window_s=300)
+    year = _today_et().year
+    st = await _member_standing(user, year)
+    amount = round(float(payload.amount), 2)
+    if amount < 1 or amount > max(st["balance"], 0):
+        raise HTTPException(status_code=400, detail="Please choose an amount between $1 and your balance due.")
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    base = origin if origin in _ALLOWED_ORIGINS else PUBLIC_APP_URL
+    try:
+        s = stripe.checkout.Session.create(
+            line_items=[{"price_data": {"currency": "usd", "product_data": {"name": f"Caring Sisters Club member dues {year}"},
+                                        "unit_amount": int(round(amount * 100))}, "quantity": 1}],
+            mode="payment", customer_email=user.get("email") or None,
+            success_url=f"{base}/members?dues_session={{CHECKOUT_SESSION_ID}}", cancel_url=f"{base}/members",
+            metadata={"kind": "member_dues", "user_id": user["user_id"], "year": str(year), "amount": str(amount)})
+    except Exception as e:
+        logging.error(f"Dues checkout error: {e}")
+        raise HTTPException(status_code=424, detail="Could not start card payment. Please try again.")
+    await db.member_checkouts.insert_one({"session_id": s.id, "user_id": user["user_id"], "year": year, "amount": amount, "status": "pending", "created_at": _now_iso()})
+    return {"url": s.url}
+
+
+async def _record_member_payment(session_id: str):
+    co = await db.member_checkouts.find_one_and_update({"session_id": session_id, "status": "pending"}, {"$set": {"status": "paid", "paid_at": _now_iso()}})
+    if co:
+        await _ledger_add(co["user_id"], co["year"], "payment", "dues", co["amount"], "Card payment (Stripe)", key=f"stripe:{session_id}", method="card")
+
+
+@api_router.get("/members/dues/checkout/{session_id}")
+async def members_dues_status(session_id: str, user=Depends(require_member)):
+    co = await db.member_checkouts.find_one({"session_id": session_id, "user_id": user["user_id"]}, {"_id": 0})
+    if co is None:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if co["status"] != "paid":
+        try:
+            s = stripe.checkout.Session.retrieve(session_id)
+            if s.payment_status == "paid":
+                await _record_member_payment(session_id)
+                co["status"] = "paid"
+        except Exception as e:
+            logging.warning(f"Dues status check failed: {e}")
+    return {"status": co["status"], "amount": co["amount"]}
+
+
+# --- Member: ballots ---
+def _ballot_state(b: dict) -> str:
+    now = _now_iso()
+    if b.get("closed_at") or b["closes_at"] <= now:
+        return "closed"
+    return "open" if b["opens_at"] <= now else "scheduled"
+
+
+async def _ballot_results(b: dict) -> dict:
+    counts = {}
+    async for r in db.member_votes.aggregate([{"$match": {"ballot_id": b["id"]}}, {"$group": {"_id": "$choice", "n": {"$sum": 1}}}]):
+        counts[r["_id"]] = r["n"]
+    voters = sum(counts.values())
+    eligible = b.get("eligible_count")
+    if eligible is None:
+        eligible = sum(1 for _, s in (await _standing_all(_today_et().year)).values() if s["good_standing"])
+        if _ballot_state(b) == "closed":
+            await db.member_ballots.update_one({"id": b["id"], "eligible_count": {"$exists": False}}, {"$set": {"eligible_count": eligible}})
+    quorum = voters * 2 > eligible
+    yes, no, abst = counts.get("yes", 0), counts.get("no", 0), counts.get("abstain", 0)
+    out = {"counts": counts, "voters": voters, "eligible": eligible, "quorum_met": quorum}
+    if b["kind"] == "election":
+        ranked = sorted(((counts.get(c["user_id"], 0), c["name"]) for c in b["candidates"]), reverse=True)
+        out["winner"] = ranked[0][1] if ranked and ranked[0][0] and (len(ranked) == 1 or ranked[0][0] > ranked[1][0]) and quorum else None
+        out["tie"] = len(ranked) > 1 and ranked[0][0] == ranked[1][0] and ranked[0][0] > 0
+    else:
+        need = (yes * 3 >= (yes + no) * 2) if b["kind"] == "amendment" else yes > no
+        out.update({"yes": yes, "no": no, "abstain": abst, "passed": bool(quorum and yes and need),
+                    "rule": "Two-thirds of yes + no votes, with quorum" if b["kind"] == "amendment" else "Simple majority, with quorum"})
+    return out
+
+
+@api_router.get("/members/ballots")
+async def members_ballots(user=Depends(require_member)):
+    rows = await db.member_ballots.find({}, {"_id": 0}).sort("opens_at", -1).to_list(200)
+    voted = {v["ballot_id"] for v in await db.member_voters.find({"user_id": user["user_id"]}, {"_id": 0, "ballot_id": 1}).to_list(500)}
+    st = await _member_standing(user, _today_et().year) if user.get("member_status") == "active" else {"good_standing": False}
+    out = []
+    for b in rows:
+        b["state"] = _ballot_state(b)
+        b["has_voted"] = b["id"] in voted
+        b["can_vote"] = b["state"] == "open" and not b["has_voted"] and st["good_standing"]
+        if b["state"] == "closed":
+            b["results"] = await _ballot_results(b)
+        out.append(b)
+    return {"ballots": out, "good_standing": st["good_standing"]}
+
+
+class VoteIn(BaseModel):
+    choice: str
+
+
+@api_router.post("/members/ballots/{bid}/vote")
+async def members_vote(bid: str, payload: VoteIn, request: Request, user=Depends(require_member)):
+    _rate_limit(request, "member-vote", max_hits=20, window_s=300)
+    b = await db.member_ballots.find_one({"id": bid}, {"_id": 0})
+    if b is None:
+        raise HTTPException(status_code=404, detail="Ballot not found")
+    if _ballot_state(b) != "open":
+        raise HTTPException(status_code=400, detail="This ballot is not open for voting.")
+    valid = [c["user_id"] for c in b["candidates"]] + ["abstain"] if b["kind"] == "election" else ["yes", "no", "abstain"]
+    if payload.choice not in valid:
+        raise HTTPException(status_code=400, detail="Invalid choice")
+    if user.get("member_status") != "active" or not (await _member_standing(user, _today_et().year))["good_standing"]:
+        raise HTTPException(status_code=403, detail="Only members in good standing may vote.")
+    try:
+        await db.member_voters.insert_one({"_id": str(uuid.uuid4()), "ballot_id": bid, "user_id": user["user_id"], "voted_on": _today_et().isoformat()})
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="You have already voted on this ballot.")
+    # Secret ballot: vote rows carry no voter link and a random _id (no ObjectId timestamp).
+    await db.member_votes.insert_one({"_id": str(uuid.uuid4()), "ballot_id": bid, "choice": payload.choice})
+    return {"ok": True}
+
+
+# --- Member: birthdays ---
+@api_router.get("/members/birthdays")
+async def members_birthdays(month: Optional[int] = None, user=Depends(require_member)):
+    m = month or _today_et().month
+    rows = await db.users.find({"member_status": "active", "member_profile.birthday_month": m}, {"_id": 0}).to_list(500)
+    out = [{"user_id": u["user_id"], "name": u.get("name") or "", "picture": u.get("picture") or "", "day": u["member_profile"].get("birthday_day")} for u in rows]
+    return sorted(out, key=lambda r: r["day"] or 0)
+
+
+class WishIn(BaseModel):
+    message: str
+
+
+@api_router.post("/members/birthdays/{uid}/wish")
+async def members_birthday_wish(uid: str, payload: WishIn, request: Request, user=Depends(require_member)):
+    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    msg = payload.message.strip()[:1000]
+    if not msg:
+        raise HTTPException(status_code=400, detail="Please write a birthday message.")
+    target = await db.users.find_one({"user_id": uid, "member_status": "active"}, {"_id": 0, "name": 1})
+    if target is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+    year, now = _today_et().year, _now_iso()
+    key = f"birthday:{uid}:{year}"
+    first = (target.get("name") or "Sister").split(" ")[0]
+    await db.member_threads.update_one({"key": key}, {"$setOnInsert": {
+        "id": str(uuid.uuid4()), "key": key, "title": f"Happy Birthday, {first}!", "body": f"Let's celebrate {target.get('name')} this month. Share your wishes below.",
+        "author_id": "system", "author_name": "Caring Sisters Club", "author_picture": "", "created_at": now, "reply_count": 0, "replies": []}}, upsert=True)
+    r = {"id": str(uuid.uuid4()), "body": msg, **_author(user), "created_at": now}
+    await db.member_threads.update_one({"key": key}, {"$push": {"replies": r}, "$inc": {"reply_count": 1}, "$set": {"last_activity": now}})
+    t = await db.member_threads.find_one({"key": key}, {"_id": 0, "id": 1})
+    return {"thread_id": t["id"]}
+
+
+# --- Admin: dues ---
+@api_router.get("/admin/members/dues")
+async def admin_dues(year: Optional[int] = None, user=Depends(require_admin)):
+    y = _year_param(year)
+    rows = [{"user_id": uid, "name": u.get("name"), "email": u.get("email"), "office": u.get("member_office", ""), **s}
+            for uid, (u, s) in (await _standing_all(y)).items()]
+    rows.sort(key=lambda r: (r["dues_status"] != "overdue", r["dues_status"] != "due", (r["name"] or "").lower()))
+    return {"year": y, "rows": rows, "totals": {"outstanding": round(sum(r["balance"] for r in rows), 2), "collected": round(sum(r["paid"] for r in rows), 2),
+            "overdue": sum(1 for r in rows if r["dues_status"] == "overdue"), "paid_in_full": sum(1 for r in rows if r["dues_status"] == "paid")}}
+
+
+@api_router.get("/admin/members/{uid}/ledger")
+async def admin_member_ledger(uid: str, year: Optional[int] = None, user=Depends(require_admin)):
+    u = await db.users.find_one({"user_id": uid, "member_status": {"$exists": True}}, {"_id": 0})
+    if u is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return await _member_standing(u, _year_param(year))
+
+
+class LedgerIn(BaseModel):
+    amount: float
+    kind: str = "dues"
+    method: str = "cash"
+    note: str = ""
+    year: Optional[int] = None
+
+
+@api_router.post("/admin/members/{uid}/payments")
+async def admin_member_payment(uid: str, payload: LedgerIn, user=Depends(require_admin)):
+    if payload.method not in ("cash", "zelle", "check", "card", "other") or not (0 < payload.amount <= 10000):
+        raise HTTPException(status_code=400, detail="Enter an amount and a payment method.")
+    if not await db.users.find_one({"user_id": uid, "member_status": {"$exists": True}}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Member not found")
+    await _ledger_add(uid, _year_param(payload.year), "payment", payload.kind if payload.kind in ("dues", "registration", "fine", "birthday") else "dues",
+                      payload.amount, payload.note or f"{payload.method.title()} payment", method=payload.method, recorded_by=user.get("email"))
+    return {"ok": True}
+
+
+@api_router.post("/admin/members/{uid}/charges")
+async def admin_member_charge(uid: str, payload: LedgerIn, user=Depends(require_admin)):
+    if payload.kind not in ("registration", "fine", "birthday", "other") or not (0 < payload.amount <= 10000):
+        raise HTTPException(status_code=400, detail="Enter an amount and a charge type.")
+    if not await db.users.find_one({"user_id": uid, "member_status": {"$exists": True}}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Member not found")
+    await _ledger_add(uid, _year_param(payload.year), "charge", payload.kind, payload.amount, payload.note or payload.kind.title(), recorded_by=user.get("email"))
+    return {"ok": True}
+
+
+@api_router.delete("/admin/members/ledger/{eid}")
+async def admin_ledger_delete(eid: str, user=Depends(require_admin)):
+    if not (await db.member_ledger.delete_one({"id": eid, "method": {"$ne": "card"}})).deleted_count:
+        raise HTTPException(status_code=400, detail="Card payments can't be removed here.")
+    return {"ok": True}
+
+
+class OfficeIn(BaseModel):
+    office: str = ""
+
+
+@api_router.put("/admin/members/{uid}/office")
+async def admin_member_office(uid: str, payload: OfficeIn, user=Depends(require_admin)):
+    await db.users.update_one({"user_id": uid, "member_status": {"$exists": True}}, {"$set": {"member_office": payload.office.strip()[:60]}})
+    return {"ok": True}
+
+
+class BirthdayCollectionIn(BaseModel):
+    user_id: str
+    amount: float = BIRTHDAY_CONTRIBUTION
+
+
+@api_router.post("/admin/members/birthday-collection")
+async def admin_birthday_collection(payload: BirthdayCollectionIn, user=Depends(require_admin)):
+    target = await db.users.find_one({"user_id": payload.user_id, "member_status": "active"}, {"_id": 0, "name": 1})
+    if target is None or not (0 < payload.amount <= 500):
+        raise HTTPException(status_code=400, detail="Choose an active member and a valid amount.")
+    year = _today_et().year
+    created = 0
+    for u in await db.users.find({"member_status": "active", "user_id": {"$ne": payload.user_id}}, {"_id": 0, "user_id": 1}).to_list(2000):
+        created += await _ledger_add(u["user_id"], year, "charge", "birthday", payload.amount, f"Birthday — {target.get('name')}",
+                                     key=f"bday:{payload.user_id}:{year}:{u['user_id']}", celebrant_id=payload.user_id)
+    await db.member_birthday_collections.update_one({"user_id": payload.user_id, "year": year},
+                                                    {"$set": {"user_id": payload.user_id, "year": year, "amount": payload.amount, "started_at": _now_iso()}}, upsert=True)
+    return {"charged": created}
+
+
+@api_router.get("/admin/members/birthday-collections")
+async def admin_birthday_collections(user=Depends(require_admin)):
+    return await db.member_birthday_collections.find({"year": _today_et().year}, {"_id": 0}).to_list(500)
+
+
+# --- Admin: meetings & attendance ---
+class MeetingIn(BaseModel):
+    title: str
+    date: str
+    kind: str = "general"
+
+
+@api_router.get("/admin/members/meetings")
+async def admin_meetings(year: Optional[int] = None, user=Depends(require_admin)):
+    y = _year_param(year)
+    all_st = await _standing_all(y)
+    flagged = [{"user_id": uid, "name": u.get("name"), "office": u.get("member_office", ""), **s["attendance"]}
+               for uid, (u, s) in all_st.items() if s["attendance"]["flags"]]
+    members = [{"user_id": uid, "name": u.get("name"), "office": u.get("member_office", "")} for uid, (u, _) in all_st.items()]
+    return {"meetings": list(reversed(await _year_meetings(y))), "members": sorted(members, key=lambda m: (m["name"] or "").lower()), "flagged": flagged}
+
+
+@api_router.post("/admin/members/meetings")
+async def admin_meeting_create(payload: MeetingIn, user=Depends(require_admin)):
+    if not payload.title.strip() or not re.match(r"^\d{4}-\d{2}-\d{2}$", payload.date):
+        raise HTTPException(status_code=400, detail="Add a title and date.")
+    m = {"id": str(uuid.uuid4()), "title": payload.title.strip()[:120], "date": payload.date, "kind": payload.kind if payload.kind in ("general", "in-person", "executive") else "general",
+         "attendance": {}, "created_at": _now_iso()}
+    await db.member_meetings.insert_one(dict(m))
+    return m
+
+
+class AttendanceIn(BaseModel):
+    attendance: dict
+
+
+def _warning_html(first: str, n: int) -> str:
+    return _member_email_html("Attendance Notice", f"Dear {first},",
+                              f"Our records show you have missed {n} consecutive general meetings. Under Article V of our bylaws, two consecutive absences result in this warning letter, "
+                              "and a third consecutive absence results in a $10 fine. We miss you and hope to see you at the next meeting.\n\nWith love,\nThe Executive Board",
+                              "View my standing", "/members")
+
+
+def _fine_html(first: str) -> str:
+    return _member_email_html("Attendance Fine", f"Dear {first},",
+                              "You have now missed three consecutive general meetings. As set out in Article V of our bylaws, a $10 fine has been added to your dues balance. "
+                              "You can view and pay your balance in the member portal.\n\nWith love,\nThe Executive Board", "View my balance", "/members")
+
+
+async def _apply_attendance_rules(meeting_id: str, year: int, background: BackgroundTasks):
+    meetings = await _year_meetings(year)
+    users = await db.users.find({"member_status": "active"}, {"_id": 0}).to_list(2000)
+    for u in users:
+        att = _attendance_summary(u, meetings)
+        for e in await db.member_ledger.find({"user_id": u["user_id"], "year": year, "kind": "fine", "auto": True}, {"_id": 0}).to_list(100):
+            if e["meeting_id"] not in att["fine_ids"]:
+                await db.member_ledger.delete_one({"id": e["id"]})
+        first = (u.get("name") or "Sister").split(" ")[0]
+        for mid in att["fine_ids"]:
+            added = await _ledger_add(u["user_id"], year, "charge", "fine", ABSENCE_FINE, "Fine — 3 consecutive missed meetings",
+                                      key=f"fine:{mid}:{u['user_id']}", auto=True, meeting_id=mid)
+            if added and mid == meeting_id and u.get("email"):
+                background.add_task(send_email, to=u["email"], subject="Attendance fine — Caring Sisters Club", html=_fine_html(first))
+        if meeting_id in att["warn_ids"] and u.get("email"):
+            res = await db.member_notices.update_one({"key": f"warn:{meeting_id}:{u['user_id']}"}, {"$setOnInsert": {"key": f"warn:{meeting_id}:{u['user_id']}", "sent_at": _now_iso()}}, upsert=True)
+            if res.upserted_id:
+                background.add_task(send_email, to=u["email"], subject="Attendance warning — Caring Sisters Club", html=_warning_html(first, 2))
+
+
+@api_router.put("/admin/members/meetings/{mid}/attendance")
+async def admin_meeting_attendance(mid: str, payload: AttendanceIn, background: BackgroundTasks, user=Depends(require_admin)):
+    m = await db.member_meetings.find_one({"id": mid}, {"_id": 0})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    clean = {k: v for k, v in payload.attendance.items() if isinstance(k, str) and v in ("present", "absent", "excused")}
+    await db.member_meetings.update_one({"id": mid}, {"$set": {"attendance": clean, "updated_at": _now_iso()}})
+    await _apply_attendance_rules(mid, int(m["date"][:4]), background)
+    return {"ok": True}
+
+
+@api_router.delete("/admin/members/meetings/{mid}")
+async def admin_meeting_delete(mid: str, background: BackgroundTasks, user=Depends(require_admin)):
+    m = await db.member_meetings.find_one_and_delete({"id": mid})
+    if m:
+        await _apply_attendance_rules(mid, int(m["date"][:4]), background)
+    return {"ok": True}
+
+
+# --- Admin: ballots ---
+class BallotIn(BaseModel):
+    kind: str
+    title: str
+    description: str = ""
+    opens_at: str
+    closes_at: str
+    position: str = ""
+    candidate_ids: List[str] = []
+
+
+@api_router.get("/admin/members/ballots")
+async def admin_ballots(user=Depends(require_admin)):
+    rows = await db.member_ballots.find({}, {"_id": 0}).sort("opens_at", -1).to_list(200)
+    for b in rows:
+        b["state"] = _ballot_state(b)
+        b["results"] = await _ballot_results(b)
+    return rows
+
+
+@api_router.get("/admin/members/candidates")
+async def admin_candidates(user=Depends(require_admin)):
+    out = []
+    cutoff = _today_et() - timedelta(days=365)
+    for uid, (u, s) in (await _standing_all(_today_et().year)).items():
+        since = _since_date(u)
+        out.append({"user_id": uid, "name": u.get("name"), "eligible": bool(s["good_standing"] and since and since <= cutoff),
+                    "reason": "" if s["good_standing"] else "Not in good standing" if since and since <= cutoff else "Less than 1 year of membership"})
+    return sorted(out, key=lambda c: (not c["eligible"], (c["name"] or "").lower()))
+
+
+def _parse_dt(v: str) -> str:
+    try:
+        d = datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date")
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=EVENT_TZ)
+    return d.astimezone(timezone.utc).isoformat()
+
+
+@api_router.post("/admin/members/ballots")
+async def admin_ballot_create(payload: BallotIn, background: BackgroundTasks, user=Depends(require_admin)):
+    if payload.kind not in ("resolution", "amendment", "election") or not payload.title.strip():
+        raise HTTPException(status_code=400, detail="Choose a ballot type and add a title.")
+    opens, closes = _parse_dt(payload.opens_at), _parse_dt(payload.closes_at)
+    if closes <= opens:
+        raise HTTPException(status_code=400, detail="Voting must close after it opens.")
+    if payload.kind == "amendment" and datetime.fromisoformat(opens) < datetime.now(timezone.utc) + timedelta(days=10) - timedelta(minutes=5):
+        raise HTTPException(status_code=400, detail="Bylaw amendments need at least 10 days' written notice. Set voting to open 10+ days from today.")
+    candidates = []
+    if payload.kind == "election":
+        elig = {c["user_id"]: c for c in await admin_candidates(user)}
+        for cid in dict.fromkeys(payload.candidate_ids):
+            c = elig.get(cid)
+            if not c or not c["eligible"]:
+                raise HTTPException(status_code=400, detail=f"{(c or {}).get('name') or 'A candidate'} isn't eligible: candidates need 1+ year of membership in good standing.")
+            candidates.append({"user_id": cid, "name": c["name"]})
+        if not payload.position.strip() or not candidates:
+            raise HTTPException(status_code=400, detail="Add the position and at least one eligible candidate.")
+    b = {"id": str(uuid.uuid4()), "kind": payload.kind, "title": payload.title.strip()[:160], "description": payload.description.strip()[:6000],
+         "position": payload.position.strip()[:80], "candidates": candidates, "opens_at": opens, "closes_at": closes,
+         "created_by": user.get("email"), "created_at": _now_iso()}
+    await db.member_ballots.insert_one(dict(b))
+    background.add_task(_email_ballot_notice, b)
+    return b
+
+
+async def _email_ballot_notice(b: dict):
+    opens = datetime.fromisoformat(b["opens_at"]).astimezone(EVENT_TZ).strftime("%B %-d, %Y at %-I:%M %p")
+    closes = datetime.fromisoformat(b["closes_at"]).astimezone(EVENT_TZ).strftime("%B %-d, %Y at %-I:%M %p")
+    label = {"amendment": "Notice of proposed bylaw amendment", "election": f"Election: {b['position']}", "resolution": "Member vote"}[b["kind"]]
+    body = f"{b['title']}\n\n{b['description'][:1200]}\n\nVoting opens {opens} and closes {closes} (Eastern). Each member in good standing has one secret vote."
+    html = _member_email_html(label, b["title"], body, "View the ballot", "/members")
+    for r in await db.users.find({"member_status": "active", "email": {"$nin": [None, ""]}}, {"_id": 0, "email": 1}).to_list(2000):
+        await send_email(to=r["email"], subject=f"{label} — Caring Sisters Club"[:150], html=html)
+
+
+@api_router.post("/admin/members/ballots/{bid}/close")
+async def admin_ballot_close(bid: str, user=Depends(require_admin)):
+    b = await db.member_ballots.find_one({"id": bid}, {"_id": 0})
+    if b is None:
+        raise HTTPException(status_code=404, detail="Ballot not found")
+    eligible = sum(1 for _, s in (await _standing_all(_today_et().year)).values() if s["good_standing"])
+    await db.member_ballots.update_one({"id": bid, "eligible_count": {"$exists": False}}, {"$set": {"closed_at": _now_iso(), "eligible_count": eligible}})
+    return {"ok": True}
+
+
+@api_router.delete("/admin/members/ballots/{bid}")
+async def admin_ballot_delete(bid: str, user=Depends(require_admin)):
+    if await db.member_voters.find_one({"ballot_id": bid}, {"_id": 1}):
+        raise HTTPException(status_code=400, detail="Votes have been cast; close this ballot instead.")
+    await db.member_ballots.delete_one({"id": bid})
+    return {"ok": True}
+
+
+@app.on_event("startup")
+async def member_indexes():
+    try:
+        await db.member_voters.create_index([("ballot_id", 1), ("user_id", 1)], unique=True)
+        await db.member_ledger.create_index("key", unique=True, partialFilterExpression={"key": {"$type": "string"}})
+        await db.member_ledger.create_index([("user_id", 1), ("year", 1)])
+    except Exception as e:
+        logging.error(f"Member index setup failed: {e}")
 
 
 # Include the router in the main app
