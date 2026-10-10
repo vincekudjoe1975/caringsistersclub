@@ -7,9 +7,11 @@ import { fmtDate } from './fmt';
 export function Minutes() {
   const [rows, setRows] = useState(null);
   const [votes, setVotes] = useState([]);
+  const [reports, setReports] = useState([]);
   const [open, setOpen] = useState(null);
   useEffect(() => {
     api.get('/members/minutes').then(({ data }) => setRows(data)).catch(() => setRows([]));
+    api.get('/members/treasurer-reports').then(({ data }) => setReports(data)).catch(() => {});
     api.get('/members/ballots').then(({ data }) => setVotes(data.ballots.filter((b) => b.state === 'closed'))).catch(() => {});
   }, []);
   if (rows === null) return <p className="text-[#241019]/50">Loading…</p>;
@@ -30,7 +32,18 @@ export function Minutes() {
           ))}
         </div>
       </div>
-      <div data-testid="vote-records" className="bg-white rounded-2xl p-5 border border-[#3B0A2E]/8 self-start">
+      <div className="space-y-5 self-start">
+      {reports.length > 0 && (
+        <div data-testid="treasurer-reports" className="bg-white rounded-2xl p-5 border border-[#3B0A2E]/8">
+          <h3 className="font-serif text-[19px] text-[#3B0A2E] font-semibold mb-3">Treasurer's reports</h3>
+          {reports.map((r) => (
+            <Link key={r.id} to={`/treasurer-report/${r.id}`} target="_blank" data-testid={`treasurer-link-${r.id}`} className="flex items-center justify-between py-2 text-[13.5px] border-b border-[#3B0A2E]/8 last:border-0 hover:text-[#B4247E] transition-colors">
+              <span>{r.label}</span><Printer size={14} />
+            </Link>
+          ))}
+        </div>
+      )}
+      <div data-testid="vote-records" className="bg-white rounded-2xl p-5 border border-[#3B0A2E]/8">
         <h3 className="font-serif text-[19px] text-[#3B0A2E] font-semibold mb-1">Official vote records</h3>
         <p className="text-[12.5px] text-[#241019]/55 mb-3">Recorded by the Secretary under Section 11.5.</p>
         {!votes.length ? <p className="text-[13px] text-[#241019]/50">No closed votes yet.</p> : votes.map((b) => (
@@ -38,6 +51,7 @@ export function Minutes() {
             <span className="truncate">{b.title}</span><Printer size={14} className="shrink-0" />
           </Link>
         ))}
+      </div>
       </div>
     </div>
   );

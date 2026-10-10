@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../../lib/api';
 import { useToast } from '../../../hooks/use-toast';
-import { Plus, Trash2, AlertTriangle, Save, FileText } from 'lucide-react';
+import { Plus, Trash2, AlertTriangle, Save, FileText, ListChecks } from 'lucide-react';
 import { fmtDate } from '../fmt';
 
 const FLAG = { warning: 'Warning letter (2 in a row)', fine: '$10 fine (3 in a row)', officer_removal: 'Officer: 3 missed, remove from office', termination: '4+ missed: ends in December' };
@@ -49,11 +49,53 @@ function MinutesEditor({ m, onSaved }) {
   );
 }
 
+function AgendaEditor({ m, onSaved }) {
+  const { toast } = useToast();
+  const [f, setF] = useState({ body: m.agenda?.body || '', time: m.time || '', location: m.location || '' });
+  const published = m.agenda?.status === 'published';
+  const save = async (publish) => {
+    try { await api.put(`/admin/members/meetings/${m.id}/agenda`, { ...f, publish }); toast({ title: publish ? 'Agenda published' : 'Agenda saved', description: publish ? 'Members see it as the next meeting; a reminder email goes out the day before.' : undefined }); onSaved(); }
+    catch (ex) { toast({ title: 'Could not save', description: ex?.response?.data?.detail, variant: 'destructive' }); }
+  };
+  const decide = async (sid, action) => { await api.post(`/admin/members/meetings/${m.id}/suggestions/${sid}`, { action }); onSaved(); };
+  const pending = (m.suggestions || []).filter((s) => s.status === 'pending');
+  return (
+    <div data-testid={`agenda-editor-${m.id}`} className="bg-[#faf2f7] rounded-xl p-4 mt-3 space-y-2">
+      <div className="flex gap-2">
+        <input data-testid={`agenda-time-${m.id}`} type="time" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} className={inputCls} />
+        <input data-testid={`agenda-location-${m.id}`} placeholder="Location or video link" value={f.location} onChange={(e) => setF({ ...f, location: e.target.value })} className={`${inputCls} flex-1`} />
+      </div>
+      <textarea data-testid={`agenda-body-${m.id}`} rows={6} value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} placeholder={'One item per line, e.g.\nOpening prayer\nTreasurer\'s report\nOld business'} className={`${inputCls} w-full`} />
+      <div className="flex flex-wrap gap-2 items-center">
+        <button data-testid={`agenda-draft-${m.id}`} onClick={() => save(false)} className="rounded-full px-4 py-2 text-[12.5px] font-semibold border border-[#3B0A2E]/15 text-[#3B0A2E] bg-white">{published ? 'Save changes' : 'Save draft'}</button>
+        {!published && <button data-testid={`agenda-publish-${m.id}`} onClick={() => save(true)} className="btn-magenta rounded-full px-4 py-2 text-[12.5px] font-semibold">Publish to members</button>}
+        {published && <button data-testid={`agenda-unpublish-${m.id}`} onClick={async () => { await api.post(`/admin/members/meetings/${m.id}/agenda/unpublish`); onSaved(); }} className="text-[12.5px] font-semibold text-[#241019]/55">Unpublish</button>}
+        {m.agenda?.reminder_sent_at && <span className="text-[12px] text-green-700">Reminder emailed {fmtDate(m.agenda.reminder_sent_at)}</span>}
+      </div>
+      {(m.suggestions || []).length > 0 && (
+        <div className="pt-2">
+          <p className="text-[12px] font-semibold text-[#3B0A2E] mb-1">Member suggestions ({pending.length} pending)</p>
+          {m.suggestions.map((s) => (
+            <div key={s.id} className="flex items-center justify-between gap-2 text-[13px] py-1">
+              <span className="min-w-0"><b>{s.author_name}:</b> {s.text}</span>
+              {s.status === 'pending' ? <span className="flex gap-2 shrink-0">
+                <button data-testid={`sug-approve-${s.id}`} onClick={() => decide(s.id, 'approve')} className="text-[12px] font-semibold text-green-700">Add to agenda</button>
+                <button data-testid={`sug-decline-${s.id}`} onClick={() => decide(s.id, 'decline')} className="text-[12px] font-semibold text-[#241019]/50">Decline</button>
+              </span> : <span className={`text-[12px] shrink-0 ${s.status === 'approved' ? 'text-green-700' : 'text-[#241019]/45'}`}>{s.status}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AdminMeetings() {
   const [d, setD] = useState(null);
   const [f, setF] = useState({ title: 'General meeting', date: '', kind: 'general' });
   const [open, setOpen] = useState(null);
   const [mins, setMins] = useState(null);
+  const [agenda, setAgenda] = useState(null);
   const load = useCallback(() => api.get('/admin/members/meetings').then(({ data }) => setD(data)), []);
   useEffect(() => { load(); }, [load]);
   const create = async (e) => { e.preventDefault(); const { data } = await api.post('/admin/members/meetings', f); setOpen(data.id); load(); };
@@ -74,6 +116,8 @@ export function AdminMeetings() {
                 <div><p className="font-semibold text-[#3B0A2E] text-[14.5px]">{m.title}</p><p className="text-[12px] text-[#241019]/50">{fmtDate(m.date + 'T12:00:00')} · {m.kind} · {Object.values(m.attendance || {}).filter((v) => v === 'present').length} present</p></div>
                 <span className="flex gap-3 items-center">
                   {m.minutes && <span data-testid={`minutes-status-${m.id}`} className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${m.minutes.status === 'approved' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>Minutes {m.minutes.status}</span>}
+                  {m.agenda && <span data-testid={`agenda-status-${m.id}`} className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${m.agenda.status === 'published' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>Agenda {m.agenda.status}</span>}
+                  <button data-testid={`meeting-agenda-${m.id}`} onClick={() => setAgenda(agenda === m.id ? null : m.id)} className="text-[12.5px] font-semibold text-[#B4247E] flex items-center gap-1"><ListChecks size={13} /> Agenda</button>
                   <button data-testid={`meeting-minutes-${m.id}`} onClick={() => setMins(mins === m.id ? null : m.id)} className="text-[12.5px] font-semibold text-[#B4247E] flex items-center gap-1"><FileText size={13} /> Minutes</button>
                   <button data-testid={`meeting-open-${m.id}`} onClick={() => setOpen(open === m.id ? null : m.id)} className="text-[12.5px] font-semibold text-[#B4247E]">{open === m.id ? 'Close' : 'Take attendance'}</button>
                   <button data-testid={`meeting-del-${m.id}`} onClick={async () => { if (window.confirm('Delete this meeting and its attendance?')) { await api.delete(`/admin/members/meetings/${m.id}`); load(); } }} className="text-[#241019]/35 hover:text-red-600"><Trash2 size={14} /></button>
@@ -81,6 +125,7 @@ export function AdminMeetings() {
               </div>
               {open === m.id && <AttendanceSheet m={m} members={d.members} onSaved={load} />}
               {mins === m.id && <MinutesEditor m={m} onSaved={load} />}
+              {agenda === m.id && <AgendaEditor m={m} onSaved={load} />}
             </div>
           ))}
           {!d.meetings.length && <p className="text-[13.5px] text-[#241019]/50">No meetings recorded this year.</p>}

@@ -7444,6 +7444,364 @@ async def _member_scheduled():
     if (today.month == 12 and today.day == 31) or today.month == 1:
         await _end_memberships(today)
     await db.member_pay_tokens.delete_many({"expires_at": {"$lt": _now_iso()}})
+    if today.month == 1 and today.day >= 2:
+        await _send_referrer_notices(today.year - 1, "jan2")
+    await _send_agenda_reminders(today)
+    await _send_member_anniversaries(today)
+
+
+# ---------- Member Portal phase 4: treasurer report, agendas, anniversaries, referrer notices ----------
+_LEDGER_KINDS = ["dues", "registration", "fine", "birthday", "bereavement", "illness", "other"]
+
+
+def _et_month(iso: str) -> tuple:
+    d = datetime.fromisoformat(iso).astimezone(EVENT_TZ)
+    return d.year, d.month
+
+
+async def _treasurer_data(year: int, month: int) -> dict:
+    pays = await db.member_ledger.find({"direction": "payment", "created_at": {"$gte": f"{year - 1}-12-01", "$lt": f"{year + 1}-01-02"}}, {"_id": 0}).to_list(50000)
+    month_pays = [p for p in pays if _et_month(p["created_at"]) == (year, month)]
+    ytd_pays = [p for p in pays if _et_month(p["created_at"])[0] == year and _et_month(p["created_at"])[1] <= month]
+    by_kind = {k: round(sum(p["amount"] for p in month_pays if p["kind"] == k), 2) for k in _LEDGER_KINDS}
+    by_method = {}
+    for p in month_pays:
+        m = p.get("method") or "other"
+        by_method[m] = round(by_method.get(m, 0) + p["amount"], 2)
+    colls = await db.member_collections.find({}, {"_id": 0}).to_list(500)
+    support, out_month, out_ytd = [], 0.0, 0.0
+    prefix = f"{year}-{month:02d}"
+    for c in colls:
+        c_in = round(sum(p["amount"] for p in month_pays if p.get("collection_id") == c["id"]), 2)
+        c_out = round(sum(x["amount"] for x in c.get("payouts", []) if x["date"].startswith(prefix)), 2)
+        out_month += c_out
+        out_ytd += sum(x["amount"] for x in c.get("payouts", []) if x["date"][:4] == str(year) and x["date"][:7] <= prefix)
+        if c_in or c_out:
+            support.append({"kind": c["kind"], "label": f"{COLLECTION_KINDS[c['kind']]}: {c['beneficiary_name']}" + (f" ({c['relationship']})" if c.get("relationship") else ""),
+                            "collected": c_in, "paid_out": c_out})
+    bday_charges = await db.member_ledger.find({"kind": "birthday", "direction": "charge", "year": year}, {"_id": 0, "amount": 1, "created_at": 1}).to_list(20000)
+    standing = await _standing_all(year)
+    total_in = round(sum(p["amount"] for p in month_pays), 2)
+    return {
+        "year": year, "month": month, "label": datetime(year, month, 1).strftime("%B %Y"),
+        "money_in": {"total": total_in, "by_kind": by_kind, "by_method": by_method, "payments": len(month_pays)},
+        "support": support, "money_out": {"total": round(out_month, 2)},
+        "birthday": {"collected": by_kind["birthday"], "charged": round(sum(c["amount"] for c in bday_charges if _et_month(c["created_at"]) == (year, month)), 2)},
+        "outstanding": {"total": round(sum(s["balance"] for _, s in standing.values()), 2), "members_owing": sum(1 for _, s in standing.values() if s["balance"] > 0),
+                        "overdue": sum(1 for _, s in standing.values() if s["dues_status"] == "overdue")},
+        "ytd": {"money_in": round(sum(p["amount"] for p in ytd_pays), 2), "money_out": round(out_ytd, 2),
+                "net": round(sum(p["amount"] for p in ytd_pays) - out_ytd, 2)},
+        "generated_at": _now_iso(),
+    }
+
+
+def _month_param(year: Optional[int], month: Optional[int]) -> tuple:
+    t = _today_et()
+    y, m = _year_param(year), month or t.month
+    if not 1 <= m <= 12:
+        raise HTTPException(status_code=400, detail="Invalid month")
+    return y, m
+
+
+@api_router.get("/admin/members/treasurer")
+async def admin_treasurer(year: Optional[int] = None, month: Optional[int] = None, user=Depends(require_admin)):
+    y, m = _month_param(year, month)
+    data = await _treasurer_data(y, m)
+    shared = await db.member_reports.find_one({"year": y, "month": m}, {"_id": 0, "id": 1, "shared_at": 1})
+    return {**data, "shared": shared}
+
+
+class ReportShareIn(BaseModel):
+    year: int
+    month: int
+
+
+@api_router.post("/admin/members/treasurer/share")
+async def admin_treasurer_share(payload: ReportShareIn, user=Depends(require_admin)):
+    y, m = _month_param(payload.year, payload.month)
+    data = await _treasurer_data(y, m)
+    rid = str(uuid.uuid4())
+    await db.member_reports.update_one({"year": y, "month": m}, {"$set": {"data": data, "shared_at": _now_iso(), "shared_by": user.get("name") or user.get("email")},
+                                       "$setOnInsert": {"id": rid, "year": y, "month": m}}, upsert=True)
+    return await db.member_reports.find_one({"year": y, "month": m}, {"_id": 0, "id": 1, "shared_at": 1})
+
+
+@api_router.delete("/admin/members/treasurer/share")
+async def admin_treasurer_unshare(year: int, month: int, user=Depends(require_admin)):
+    await db.member_reports.delete_one({"year": year, "month": month})
+    return {"ok": True}
+
+
+@api_router.get("/members/treasurer-reports")
+async def members_treasurer_reports(user=Depends(require_member)):
+    rows = await db.member_reports.find({}, {"_id": 0, "data": 0}).sort([("year", -1), ("month", -1)]).to_list(120)
+    return [{**r, "label": datetime(r["year"], r["month"], 1).strftime("%B %Y")} for r in rows]
+
+
+@api_router.get("/members/treasurer-reports/{rid}")
+async def members_treasurer_report(rid: str, user=Depends(require_member)):
+    r = await db.member_reports.find_one({"id": rid}, {"_id": 0})
+    if r is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return {**r["data"], "shared_at": r["shared_at"], "shared_by": r.get("shared_by", "")}
+
+
+# --- Agendas ---
+class AgendaIn(BaseModel):
+    body: str
+    time: str = ""
+    location: str = ""
+    publish: bool = False
+
+
+@api_router.put("/admin/members/meetings/{mid}/agenda")
+async def admin_meeting_agenda(mid: str, payload: AgendaIn, user=Depends(require_admin)):
+    body = payload.body.strip()[:10000]
+    if not body:
+        raise HTTPException(status_code=400, detail="Please write the agenda first.")
+    if payload.time and not re.match(r"^\d{2}:\d{2}$", payload.time):
+        raise HTTPException(status_code=400, detail="Invalid time")
+    m = await db.member_meetings.find_one({"id": mid}, {"_id": 0, "agenda": 1})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    prev = m.get("agenda") or {}
+    a = {**prev, "body": body, "status": "published" if payload.publish or prev.get("status") == "published" else "draft", "updated_at": _now_iso()}
+    if payload.publish and prev.get("status") != "published":
+        a["published_at"] = _now_iso()
+    await db.member_meetings.update_one({"id": mid}, {"$set": {"agenda": a, "time": payload.time, "location": payload.location.strip()[:160]}})
+    return a
+
+
+@api_router.post("/admin/members/meetings/{mid}/agenda/unpublish")
+async def admin_meeting_agenda_unpublish(mid: str, user=Depends(require_admin)):
+    await db.member_meetings.update_one({"id": mid, "agenda": {"$exists": True}}, {"$set": {"agenda.status": "draft"}})
+    return {"ok": True}
+
+
+class SuggestionIn(BaseModel):
+    text: str
+
+
+@api_router.post("/members/meetings/{mid}/suggestions")
+async def members_agenda_suggest(mid: str, payload: SuggestionIn, request: Request, user=Depends(require_member)):
+    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    text = payload.text.strip()[:500]
+    if not text:
+        raise HTTPException(status_code=400, detail="Please write your suggestion.")
+    s = {"id": str(uuid.uuid4()), "text": text, **_author(user), "status": "pending", "created_at": _now_iso()}
+    res = await db.member_meetings.update_one({"id": mid, "date": {"$gte": _today_et().isoformat()}, "agenda.status": "published"}, {"$push": {"suggestions": s}})
+    if not res.matched_count:
+        raise HTTPException(status_code=400, detail="Suggestions are only open for the upcoming meeting.")
+    return {"ok": True}
+
+
+class SuggestionAction(BaseModel):
+    action: str
+
+
+@api_router.post("/admin/members/meetings/{mid}/suggestions/{sid}")
+async def admin_agenda_suggestion(mid: str, sid: str, payload: SuggestionAction, user=Depends(require_admin)):
+    if payload.action not in ("approve", "decline"):
+        raise HTTPException(status_code=400, detail="Invalid action")
+    await db.member_meetings.update_one({"id": mid, "suggestions.id": sid}, {"$set": {"suggestions.$.status": "approved" if payload.action == "approve" else "declined"}})
+    return {"ok": True}
+
+
+def _agenda_public(m: dict, me_id: str = "") -> dict:
+    sug = m.get("suggestions") or []
+    return {"id": m["id"], "title": m["title"], "date": m["date"], "time": m.get("time", ""), "location": m.get("location", ""), "kind": m.get("kind"),
+            "agenda": (m.get("agenda") or {}).get("body", ""), "approved_items": [s["text"] for s in sug if s["status"] == "approved"],
+            "my_suggestions": [{"text": s["text"], "status": s["status"]} for s in sug if s["author_id"] == me_id]}
+
+
+@api_router.get("/members/next-meeting")
+async def members_next_meeting(user=Depends(require_member)):
+    m = await db.member_meetings.find_one({"date": {"$gte": _today_et().isoformat()}, "agenda.status": "published"}, {"_id": 0, "attendance": 0}, sort=[("date", 1)])
+    return _agenda_public(m, user["user_id"]) if m else None
+
+
+def _agenda_email_html(m: dict) -> str:
+    when = datetime.fromisoformat(m["date"]).strftime("%A, %B %-d")
+    if m.get("time"):
+        when += " at " + datetime.strptime(m["time"], "%H:%M").strftime("%-I:%M %p")
+    items = [ln for ln in (m.get("agenda") or {}).get("body", "").splitlines() if ln.strip()] + [s["text"] for s in (m.get("suggestions") or []) if s["status"] == "approved"]
+    body = f"A reminder that our {m['title']} is tomorrow, {when}" + (f", at {m['location']}" if m.get("location") else "") + ".\n\nAgenda:\n" + "\n".join(f"• {i.lstrip('-•* ')}" for i in items)
+    return _member_email_html("Meeting Tomorrow", m["title"], body + "\n\nWe look forward to seeing you, sister!", "View in the member portal", "/members")
+
+
+async def _send_agenda_reminders(today) -> int:
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    sent = 0
+    for m in await db.member_meetings.find({"date": tomorrow, "agenda.status": "published", "agenda.reminder_sent_at": {"$exists": False}}, {"_id": 0}).to_list(20):
+        if (await db.member_meetings.update_one({"id": m["id"], "agenda.reminder_sent_at": {"$exists": False}}, {"$set": {"agenda.reminder_sent_at": _now_iso()}})).modified_count == 0:
+            continue
+        html = _agenda_email_html(m)
+        for r in await db.users.find({"member_status": "active", "email": {"$nin": [None, ""]}}, {"_id": 0, "email": 1}).to_list(2000):
+            try:
+                await send_email(to=r["email"], subject=f"Tomorrow: {m['title']} — Caring Sisters Club"[:150], html=html)
+                sent += 1
+            except Exception as e:
+                logging.warning(f"Agenda reminder failed: {e}")
+    return sent
+
+
+# --- Anniversaries ---
+def _anniv_date(since, year: int):
+    try:
+        return since.replace(year=year)
+    except ValueError:
+        return since.replace(year=year, day=28)
+
+
+@api_router.get("/members/anniversaries")
+async def members_anniversaries(user=Depends(require_member)):
+    t = _today_et()
+    out = []
+    for u in await db.users.find({"member_status": "active", "member_since": {"$exists": True}}, {"_id": 0}).to_list(2000):
+        since = _since_date(u)
+        if not since or since.year >= t.year:
+            continue
+        d = _anniv_date(since, t.year)
+        if d.month == t.month:
+            out.append({"user_id": u["user_id"], "name": u.get("name") or "", "picture": u.get("picture") or "", "years": t.year - since.year,
+                        "day": d.day, "today": d == t})
+    return sorted(out, key=lambda r: r["day"])
+
+
+def _anniv_email_html(first: str, years: int) -> str:
+    body = (f"Today marks {years} year{'s' if years != 1 else ''} since you joined the Caring Sisters Club. "
+            "Thank you for your love, your loyalty and every way you have shown up for your sisters. "
+            "Our circle is stronger, kinder and more joyful because you are in it.\n\nWith gratitude and love,\nYour Caring Sisters")
+    return _member_email_html("Happy Anniversary", f"Happy {years}-year anniversary, {first}!", body, "Visit the member portal", "/members")
+
+
+async def _send_member_anniversaries(today) -> int:
+    sent = 0
+    for u in await db.users.find({"member_status": "active", "member_since": {"$exists": True}, "email": {"$nin": [None, ""]}}, {"_id": 0}).to_list(2000):
+        since = _since_date(u)
+        if not since or since.year >= today.year or _anniv_date(since, today.year) != today:
+            continue
+        key = f"manniv:{u['user_id']}:{today.year}"
+        if (await db.member_notices.update_one({"key": key}, {"$setOnInsert": {"key": key, "sent_at": _now_iso()}}, upsert=True)).upserted_id is None:
+            continue
+        years = today.year - since.year
+        try:
+            await send_email(to=u["email"], subject=f"Happy {years}-year membership anniversary, sister!", html=_anniv_email_html((u.get("name") or "Sister").split(" ")[0], years))
+            sent += 1
+        except Exception as e:
+            logging.warning(f"Member anniversary email failed: {e}")
+    return sent
+
+
+class JoinedIn(BaseModel):
+    date: str
+
+
+@api_router.put("/admin/members/{uid}/joined")
+async def admin_member_joined(uid: str, payload: JoinedIn, user=Depends(require_admin)):
+    try:
+        d = datetime.strptime(payload.date, "%Y-%m-%d").replace(hour=12, tzinfo=EVENT_TZ)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date")
+    if d.date() > _today_et() or d.year < 1950:
+        raise HTTPException(status_code=400, detail="Join date can't be in the future.")
+    if not (await db.users.update_one({"user_id": uid, "member_status": {"$exists": True}}, {"$set": {"member_since": d.astimezone(timezone.utc).isoformat()}})).matched_count:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return {"ok": True}
+
+
+# --- Referrers ---
+@api_router.get("/admin/members/referrers")
+async def admin_referrers(user=Depends(require_admin)):
+    import difflib
+    rows = await db.users.find({"member_status": {"$in": ["active", "suspended", "ended"]}}, {"_id": 0}).to_list(2000)
+    names = {u["user_id"]: (u.get("name") or "") for u in rows}
+    out = []
+    for u in rows:
+        typed = (u.get("member_application") or {}).get("referred_by", "")
+        sug = None
+        if typed and not u.get("member_referrer_id"):
+            cands = {uid: difflib.SequenceMatcher(None, typed.lower(), n.lower()).ratio() for uid, n in names.items() if uid != u["user_id"] and n}
+            best = max(cands.items(), key=lambda x: x[1], default=None)
+            if best and best[1] >= 0.6:
+                sug = {"user_id": best[0], "name": names[best[0]], "score": round(best[1], 2)}
+        out.append({"user_id": u["user_id"], "name": names[u["user_id"]], "status": u["member_status"], "referred_by": typed,
+                    "referrer_id": u.get("member_referrer_id"), "referrer_name": names.get(u.get("member_referrer_id"), ""), "suggestion": sug})
+    return {"rows": sorted(out, key=lambda r: (bool(r["referrer_id"]), r["name"].lower())), "members": sorted([{"user_id": k, "name": v} for k, v in names.items()], key=lambda x: x["name"].lower())}
+
+
+class ReferrerIn(BaseModel):
+    referrer_id: Optional[str] = None
+
+
+@api_router.put("/admin/members/{uid}/referrer")
+async def admin_member_referrer(uid: str, payload: ReferrerIn, user=Depends(require_admin)):
+    if payload.referrer_id:
+        if payload.referrer_id == uid or not await db.users.find_one({"user_id": payload.referrer_id, "member_status": {"$exists": True}}, {"_id": 1}):
+            raise HTTPException(status_code=400, detail="Choose a different member as referrer.")
+        await db.users.update_one({"user_id": uid}, {"$set": {"member_referrer_id": payload.referrer_id}})
+    else:
+        await db.users.update_one({"user_id": uid}, {"$unset": {"member_referrer_id": ""}})
+    return {"ok": True}
+
+
+async def _referrer_groups(year: int) -> dict:
+    users = await db.users.find({"member_status": {"$in": ["active", "suspended", "ended"]}, "member_referrer_id": {"$exists": True}}, {"_id": 0}).to_list(2000)
+    meetings = await _year_meetings(year)
+    groups = defaultdict(list)
+    for u in users:
+        ledger = await db.member_ledger.find({"user_id": u["user_id"], "year": year}, {"_id": 0}).to_list(1000)
+        st = _standing_from(u, year, ledger, meetings)
+        if st["balance"] > 0:
+            groups[u["member_referrer_id"]].append({"name": u.get("name") or "", "balance": st["balance"], "status": u["member_status"]})
+    return groups
+
+
+def _referrer_html(first: str, year: int, rows: list) -> str:
+    lines = "\n".join(f"• {r['name']}: ${r['balance']:.2f}" + (" (no longer a member)" if r["status"] == "ended" else "") for r in rows)
+    body = (f"As a sponsoring sister, we want to keep you informed. The following sister{'s' if len(rows) != 1 else ''} you referred "
+            f"still {'have' if len(rows) != 1 else 'has'} an unpaid {year} balance:\n\n{lines}\n\n"
+            "A gentle word of encouragement from you can mean a lot. Under Section 5.4 of our bylaws, unpaid liabilities of a member who leaves "
+            "are the responsibility of her referrer, so please reach out to her or to the Financial Secretary with any questions.\n\nWith love,\nThe Executive Board")
+    return _member_email_html("Sponsor Notice", f"Dear {first},", body, "Open the member portal", "/members")
+
+
+async def _send_referrer_notices(year: int, round_key: str) -> int:
+    sent = 0
+    for rid, rows in (await _referrer_groups(year)).items():
+        ref = await db.users.find_one({"user_id": rid}, {"_id": 0, "email": 1, "name": 1})
+        if not ref or not ref.get("email"):
+            continue
+        key = f"refnote:{year}:{round_key}:{rid}"
+        if (await db.member_notices.update_one({"key": key}, {"$setOnInsert": {"key": key, "sent_at": _now_iso()}}, upsert=True)).upserted_id is None:
+            continue
+        try:
+            await send_email(to=ref["email"], subject=f"Your sponsored sisters' {year} balances — Caring Sisters Club",
+                             html=_referrer_html((ref.get("name") or "Sister").split(" ")[0], year, rows))
+            sent += 1
+        except Exception as e:
+            logging.warning(f"Referrer notice failed: {e}")
+    await db.member_runs.insert_one({"kind": "referrer_notices", "round": round_key, "year": year, "sent": sent, "at": _now_iso()})
+    return sent
+
+
+@api_router.get("/admin/members/referrers/preview")
+async def admin_referrers_preview(year: Optional[int] = None, user=Depends(require_admin)):
+    y = _year_param(year or _today_et().year - 1)
+    groups = await _referrer_groups(y)
+    names = {u["user_id"]: u.get("name") for u in await db.users.find({"user_id": {"$in": list(groups)}}, {"_id": 0, "user_id": 1, "name": 1}).to_list(2000)}
+    runs = await db.member_runs.find({"kind": "referrer_notices"}, {"_id": 0}).sort("at", -1).to_list(5)
+    return {"year": y, "groups": [{"referrer_id": k, "referrer_name": names.get(k, ""), "sisters": v} for k, v in groups.items()], "runs": runs}
+
+
+class ReferrerNotifyIn(BaseModel):
+    year: Optional[int] = None
+
+
+@api_router.post("/admin/members/referrers/notify")
+async def admin_referrers_notify(payload: ReferrerNotifyIn, user=Depends(require_admin)):
+    y = _year_param(payload.year or _today_et().year - 1)
+    return {"sent": await _send_referrer_notices(y, f"manual-{_today_et().isoformat()}")}
 
 
 # Include the router in the main app

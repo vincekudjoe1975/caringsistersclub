@@ -8,6 +8,8 @@ import { AdminMeetings } from '../components/members/admin/AdminMeetings';
 import { AdminBallots } from '../components/members/admin/AdminBallots';
 import { AdminCollections } from '../components/members/admin/AdminCollections';
 import { AdminDecember } from '../components/members/admin/AdminDecember';
+import { AdminTreasurer } from '../components/members/admin/AdminTreasurer';
+import { AdminReferrers } from '../components/members/admin/AdminReferrers';
 
 const inputCls = 'w-full rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
 const Box = ({ title, children, testid }) => (
@@ -39,6 +41,11 @@ function OfficeInput({ m }) {
   return <input data-testid={`office-${m.user_id}`} value={v} placeholder="Office (optional)" onChange={(e) => setV(e.target.value)} onBlur={() => v !== (m.office || '') && api.put(`/admin/members/${m.user_id}/office`, { office: v })} className="w-36 rounded-lg border border-[#3B0A2E]/10 px-2 py-1 text-[12px] focus:outline-none focus:border-[#B4247E]" />;
 }
 
+function JoinedInput({ m }) {
+  const [v, setV] = useState(m.member_since ? new Date(m.member_since).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) : '');
+  return <input data-testid={`joined-${m.user_id}`} type="date" title="Date she joined the Club" value={v} onChange={(e) => setV(e.target.value)} onBlur={() => v && api.put(`/admin/members/${m.user_id}/joined`, { date: v })} className="rounded-lg border border-[#3B0A2E]/10 px-2 py-1 text-[12px] focus:outline-none focus:border-[#B4247E]" />;
+}
+
 function Roster({ rows, act }) {
   if (!rows.length) return <p className="text-[13.5px] text-[#241019]/50">No members yet.</p>;
   return (
@@ -47,6 +54,7 @@ function Roster({ rows, act }) {
         <div key={m.user_id} className="py-2.5 flex items-center justify-between gap-3">
           <div className="min-w-0"><p className="text-[14px] font-semibold text-[#3B0A2E] truncate">{m.name} {m.status !== 'active' && <span className="text-[11px] uppercase text-[#B4247E] ml-1">{m.status}</span>}</p><p className="text-[12px] text-[#241019]/50 truncate">{m.email}</p></div>
           <OfficeInput m={m} />
+          <JoinedInput m={m} />
           {m.status === 'active'
             ? <button data-testid={`suspend-${m.user_id}`} onClick={() => act(m.user_id, 'suspend')} className="text-[12.5px] text-[#241019]/55 hover:text-red-600 flex items-center gap-1"><PauseCircle size={14} /> Pause</button>
             : <button data-testid={`reinstate-${m.user_id}`} onClick={() => act(m.user_id, 'reinstate')} className="text-[12.5px] text-[#B4247E] flex items-center gap-1"><PlayCircle size={14} /> Activate</button>}
@@ -149,11 +157,11 @@ export default function AdminMembers() {
   };
   const [sub, setSub] = useState('people');
   const apps = d.members.filter((m) => m.status === 'applied');
-  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['december', 'December renewal']];
+  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['treasurer', 'Treasurer report'], ['referrers', 'Referrers'], ['december', 'December renewal']];
   return (
     <div>
     <div className="flex flex-wrap gap-1 mb-6">{tabs.map(([k, l]) => <button key={k} data-testid={`members-sub-${k}`} onClick={() => setSub(k)} className={`rounded-full px-4 py-2 text-[13px] font-semibold transition-colors ${sub === k ? 'bg-[#3B0A2E] text-white' : 'bg-white border border-[#3B0A2E]/15 text-[#3B0A2E]'}`}>{l}</button>)}</div>
-    {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : (
+    {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : sub === 'treasurer' ? <AdminTreasurer /> : sub === 'referrers' ? <AdminReferrers /> : (
     <div className="grid lg:grid-cols-2 gap-6" data-testid="admin-members">
       <Box title={`Applications (${apps.length})`} testid="admin-applications"><Applications rows={apps} act={act} /></Box>
       <Box title="Invite members" testid="admin-invites"><Invites invites={d.invites} reload={load} toast={toast} /></Box>
