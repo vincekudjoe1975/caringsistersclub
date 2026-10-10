@@ -263,3 +263,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - noshow_emails.email + comeback_at (COMEBACK_DAYS 60, program family via _family_ids); submission.came_back; GET /api/admin/reports/comebacks; ComebackReport.jsx.
 - 5-star comment (>=10 chars) → review request email once (session_feedback.review_requested); /feature-my-words page; GET/POST /api/feature-consent → pending story_submissions (source 'feedback').
 - program.offer_hours (12/24/48/72; default 48) used for all offers; waitlist-speed rows include offer_hours + tip.
+
+## 2026-06 Security audit (Conditional Pass) + fixes
+- SEC-001 fixed: rate-limit client IP now read right-to-left from X-Forwarded-For, skipping edge hops (Cloudflare/private); spoofed left-most values ignored. Verified 429 with spoofed XFF.
+- CORS: removed '*' fallback; CORS_ORIGINS required, '*' filtered out.
+- Feature-consent photo must be an existing public story upload not already used by another story.
+- Not changed: integration keys in backend/.env (platform-injected at deploy).

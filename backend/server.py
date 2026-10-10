@@ -4,6 +4,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import re
+import ipaddress
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
@@ -431,10 +432,30 @@ from collections import deque, defaultdict
 _RATE_BUCKETS: dict = defaultdict(deque)
 
 
+_TRUSTED_PROXY_NETS = [ipaddress.ip_network(n) for n in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
+    "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+    "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22", "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32",
+    "2405:b500::/32", "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32")]
+
+
+def _is_trusted_proxy(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return addr.is_private or addr.is_loopback or any(addr in n for n in _TRUSTED_PROXY_NETS)
+
+
 def _client_ip(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
+    # Walk X-Forwarded-For from the right (proxy-appended) and skip our own edge hops; left-most values are client-controlled.
+    hops = [h.strip() for h in (request.headers.get("x-forwarded-for") or "").split(",") if h.strip()]
+    if len(hops) > 1:
+        hops = hops[:-1]
+    while len(hops) > 1 and _is_trusted_proxy(hops[-1]):
+        hops.pop()
+    if hops:
+        return hops[-1]
     return request.client.host if request.client else "unknown"
 
 
@@ -5792,6 +5813,10 @@ async def feature_consent(payload: ConsentIn, request: Request, background: Back
     photo = payload.photo_url.strip()
     if photo and not re.match(r"^/api/media/file/[A-Za-z0-9-]+$", photo):
         raise HTTPException(status_code=400, detail="Please upload your photo with the button.")
+    if photo and not await db.media.find_one({"id": photo.rsplit("/", 1)[-1], "category": "story", "uploaded_by": "public", "is_deleted": False}, {"_id": 1}):
+        raise HTTPException(status_code=400, detail="Please upload your photo again.")
+    if photo and await db.story_submissions.find_one({"photo_url": photo}, {"_id": 1}):
+        raise HTTPException(status_code=400, detail="Please upload your photo again.")
     f = await db.session_feedback.find_one_and_update({"token": payload.token[:64], "rating": 5, "comment": {"$nin": [None, ""]}, "feature_consent_at": {"$exists": False}},
                                                       {"$set": {"feature_consent_at": _now_iso()}})
     if f is None:
@@ -6171,7 +6196,7 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=[o.strip() for o in os.environ['CORS_ORIGINS'].split(',') if o.strip() and o.strip() != '*'],
     allow_methods=["*"],
     allow_headers=["*"],
 )
