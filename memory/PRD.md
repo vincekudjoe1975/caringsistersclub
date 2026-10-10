@@ -227,3 +227,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Snapshots: db.program_snapshots (monthly auto in daily loop for previous month; season via POST /api/admin/programs/{pid}/close-season which archives enrollments: season_archived:true). GET /api/admin/programs/{pid}/history.
 - Badge wall: GET /api/volunteer-hours/badge-wall (settings.site.badge_wall_mode optin|all), admin GET/PUT /api/admin/badge-wall.
 - GET /api/admin/reports/appeal-comparison (segment_emails.kind segment|scheduled|recurring + YIR emails).
+
+## 2026 — Seat suggestions, badge wall celebration, template insights, session launch emails (iteration_16: 100%)
+- GET /api/admin/programs/{pid}/seat-suggestion (family season snapshots; fallback current season); also in /history.suggestion; Clone dialog prefills.
+- _celebrate_badge_wall hourly → db.badge_wall_notified {email,scope,threshold} once each; first one "You're on our Badge Wall!".
+- segment_emails.template_id (segment-email + scheduled-appeals accept template_id); GET /api/admin/reports/template-insights (subject-line matching for old appeals).
+- Clone launch_email auto|manual; _launch_recipients (program family, excludes current session + already emailed); db.session_launch_emails; GET/POST /api/admin/programs/{pid}/launch; megaphone button on clone rows.

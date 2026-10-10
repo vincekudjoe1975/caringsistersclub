@@ -233,6 +233,7 @@ function CategoryEditor({ categories, onSaved }) {
 function LaunchEmailButton({ p }) {
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
+  const iconBtn = 'p-2 text-[#3B0A2E] hover:text-[#B4247E] disabled:opacity-25';
   const go = async () => {
     setBusy(true);
     try {

@@ -1,0 +1,52 @@
+{
+  "summary": "Iter-16 (Seat suggestions + Session launch emails auto/manual + Badge wall celebration + Appeal template insights). Backend pytest 11/11 PASS after fix. Frontend: CRITICAL runtime bug found and fixed -- Admin > Programs crashed with 'iconBtn is not defined' whenever a cloned row rendered because LaunchEmailButton (AdminPrograms.jsx:233) referenced iconBtn which was only defined inside the sibling ProgramRow component. Added local iconBtn const inside LaunchEmailButton. After fix: program-launch-email-btn renders on cloned row (1 count), clone-program-dialog shows clone-seat-suggestion + clone-launch-auto/clone-launch-manual radios, clone-use-suggestion-btn appears when capacity differs from suggestion. Admin > Reports: template-insights card renders 2 template-row entries with template-top-tag on the best per_recipient row ($10 vs $2); 'matched by subject' label shown on subject-matched row; history-seat-suggestion present inside Forecast history. Backend behaviours confirmed: GET /api/admin/programs/{pid}/seat-suggestion returns suggested=15 with '+20%' explanation for 2 seasons (one fast-fill), 10 for slow-only, null for no history. GET /api/admin/programs/{pid}/history includes 'suggestion'. POST /clone validates launch_email (bogus->400) and returns launch_audience count. Manual launch flow: pre-publish launch POST -> 400; publish without auto-send; GET /launch pending=3; adding a signup in clone drops pending to 2; POST launch queued=2 and after ~4s session_launch_emails has 2 docs; re-POST -> 400. Auto launch on publish creates 2 session_launch_emails docs within ~4s and sets launch_sent=true; re-publish does not resend. _celebrate_badge_wall() upserts 1 badge_wall_notified doc per (email,scope,threshold) and skips existing; adding a second milestone creates exactly 1 more doc. Public /api/volunteer-hours/badge-wall never includes email/first/scope fields. GET /api/admin/reports/template-insights computes uses=1, per_recipient=10.0, top=true for qa-tpl-1 and uses=1, matched=1, per_recipient=2.0 for qa-tpl-2 matched by subject. POST /admin/scheduled-appeals persists template_id when provided.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminPrograms.jsx > LaunchEmailButton", "issue": "'iconBtn is not defined' runtime error crashed the entire Admin > Programs tab whenever a cloned program row was present (LaunchEmailButton used a const declared in sibling ProgramRow). Fixed by defining iconBtn inside LaunchEmailButton.", "selector": "[data-testid='program-launch-email-btn']", "priority": "HIGH (now fixed)"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": [
+    {"case": "GET /admin/programs/{pid}/seat-suggestion 2 seasons (1 fast) -> 15 w/ +20%", "status": "PASS"},
+    {"case": "Seat suggestion slow season only -> 10, no +20%", "status": "PASS"},
+    {"case": "Seat suggestion no history + capacity 0 -> suggested null", "status": "PASS"},
+    {"case": "GET /admin/programs/{pid}/history includes 'suggestion'", "status": "PASS"},
+    {"case": "POST /clone invalid launch_email -> 400", "status": "PASS"},
+    {"case": "POST /clone returns launch_audience=3 for seeded submissions", "status": "PASS"},
+    {"case": "Manual launch full flow (pre-publish 400, publish no-send, pending 3->2 after clone signup, POST queued=2, docs persist, re-POST 400)", "status": "PASS"},
+    {"case": "Auto launch on publish creates session_launch_emails + launch_sent; re-publish idempotent", "status": "PASS"},
+    {"case": "_celebrate_badge_wall upserts once; second call noop; new milestone -> +1; public endpoint hides email/first/scope", "status": "PASS"},
+    {"case": "Template insights uses/matched/per_recipient/top computations", "status": "PASS"},
+    {"case": "POST /admin/scheduled-appeals persists template_id", "status": "PASS"},
+    {"case": "UI Admin>Programs: clone dialog shows clone-seat-suggestion + clone-launch-auto/manual + clone-use-suggestion-btn after capacity change", "status": "PASS"},
+    {"case": "UI Admin>Programs: program-launch-email-btn renders on cloned row (post-fix)", "status": "PASS"},
+    {"case": "UI Admin>Reports: template-insights card with 2 template-row + 1 template-top-tag + 'matched by subject' label; history-seat-suggestion visible", "status": "PASS"}
+  ],
+  "test_report_links": ["/app/backend/tests/test_iter16_seatsug_launch_badgewall_templates.py", "/app/test_reports/pytest/iter16.xml"],
+  "action_items": [
+    "Review the iconBtn scope fix in AdminPrograms.jsx:233 (LaunchEmailButton). Consider hoisting iconBtn to module scope since it's now duplicated across LaunchEmailButton and ProgramRow -- single source of truth avoids future drift.",
+    "Prior iter-15 priority_until signup projection bug should still be verified (not in this iteration's scope)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 5283 lines. Seat suggestion + launch emails + badge wall celebration + template insights all land in the same monolith. Split into routers (programs_lifecycle, launch_emails, badge_wall, reports_appeals) before 6k.",
+    "LaunchEmailButton originally relied on a const from a sibling component -- a lint rule (no-undef) would have caught this at build time. ESLint config appears to not fail the build on no-undef. Consider enabling.",
+    "_celebrate_badge_wall uses db.badge_wall_notified.update_one upsert then counts docs for first_time -- correct, but 'first_time' race if hourly jobs ever overlap. Mark with a dedicated index on (email,scope,threshold) for correctness + perf.",
+    "_send_launch_emails sleeps 0.6s per recipient inside a BackgroundTask; for a 500-person audience that's 5 minutes blocking the worker. Fine for v1 but document the throughput ceiling.",
+    "_launch_recipients fetches all submissions in the family then filters -- for programs with thousands of signups this is O(N) per request. Add program_id + email compound index and query clone's signups via $nin instead.",
+    "_seat_suggestion computes ceil via `int(-(-n // 1))` which is clear but opaque; use math.ceil for readability.",
+    "appeal_templates.subject matching for insights uses .strip().lower() -- two templates with the same subject will silently collide (the later one wins in by_subject dict). Warn/dedup."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/AdminPrograms.jsx",
+    "/app/backend/tests/test_iter16_seatsug_launch_badgewall_templates.py"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (3/3 flows post-fix)"},
+  "test_credentials": "QA temp admin via /app/backend/tests/qa_session.py up/down (cookie session_token=qa_tok_123). Teardown executed.",
+  "seed_data_creation": "Created and cleaned: ~4 clone programs (manual + auto + API tests), ~10 QA program_signup submissions on qa-prog-* programs (qa.l*/qa.m*/qa.a*/qa.ui* emails), 2 program_snapshots (season), 2 volunteer_hours + 2 volunteer_milestones + badge_wall_notified for qa.bw1@example.com, 2 appeal_templates (qa-tpl-1/2 + qa-ui-tpl-1/2 + qa-tpl-sched-1), 4 segment_emails (qa-se-* + qa-ui-se-*), 4 payment_transactions (qa_sess_* + qa_ui_*), 1 scheduled_appeal (future, deleted via API), 1 UI clone (Business Elevation Lab Session 2) deleted. qa_session down executed. Fixture + cleanup script /tmp/seed_ui_iter16.py.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter-16 features all pass. The iconBtn runtime-error fix in AdminPrograms.jsx is minimal (declared iconBtn inside LaunchEmailButton) -- consider main agent hoisting it to module scope. All seeded QA data has been cleaned. The prior iter-15 priority_until signup bug (program_signup projection) was out of scope and may still need verification. Backend test file: test_iter16_seatsug_launch_badgewall_templates.py, run with `pytest -n 0 backend/tests/test_iter16_seatsug_launch_badgewall_templates.py -v`.",
+  "rca of the issue": "AdminPrograms.jsx:248 referenced an identifier `iconBtn` that was only declared inside the ProgramRow component (line 252). In the previous iteration (iter-15) there were no cloned program rows rendered in the smoke test, so LaunchEmailButton was never mounted. In iter-16, after seeding a cloned program, React tried to render <LaunchEmailButton/> and threw 'iconBtn is not defined', unmounting the whole Programs tab. Fix: define `const iconBtn` inside LaunchEmailButton (one-line patch). Prevention: enable ESLint no-undef as an error in CI."
+}
