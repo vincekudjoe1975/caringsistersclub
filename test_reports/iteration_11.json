@@ -1,0 +1,65 @@
+{
+  "summary": "E2E tested iteration-11 features: (1) Program capacity + waitlist on wellness-workshops, (2) Overdue program-signup counts + daily digest, (3) Volunteer milestones awarded via /admin/volunteer-hours/{id}/approve, (4) Year-in-Review admin + public toggle. Backend: 9/10 pytest PASS - the one FAIL is a deliberate detector for a NEW CRITICAL BUG discovered: in server.py `MILESTONES = [25, 50, 100]` on line 3932 (fundraising goal) shadows the volunteer tuple `MILESTONES = (10, 50, 100)` on line 3590, so volunteer badges fire at 25h instead of 10h as spec'd. Frontend: all testids present and functioning: seats-badge '10 spots remaining' on /initiatives, program-full-badge 'Program full · waitlist open' on wellness-workshops card, 'Join the waitlist' heading + 'Join Waitlist' button when full, 'You're on the waitlist!' success text, YIR public page renders all stats + share bar + copy-link, YIR unpublished year shows yir-not-found, Admin > Form Submissions > Program Sign-Ups shows overdue-bar(1), overdue-count=1, overdue-only-checkbox, send-enroll-reminder-btn, signup-overdue-badge, signup-waitlist-badge, overdue-sidebar-badge '1 overdue', Admin > Reports shows yir-admin card with year-select/publish-toggle/view-link, Admin > Programs edit dialog has program-capacity-input and the row shows admin-program-seats '3/3 seats · full'. REGRESSION from iter_10 confirmed STILL PRESENT: leaderboard checkbox NOT reset by log-more-hours-btn (before=true, after=true).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "server.py line 3932 vs 3590", "issue": "`MILESTONES = [25, 50, 100]` (fundraising goal milestones) shadows the earlier `MILESTONES = (10, 50, 100)` tuple used by _award_milestones. Volunteer badges fire at 25h/50h/100h instead of 10h/50h/100h as specified. The 10-hour milestone will never be awarded. Rename one of them (e.g., `GOAL_MILESTONES` for the fundraising constant).", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "/api/programs/caring-sisters-clone/signup", "issue": "The slug 'caring-sisters-clone' referenced in the task does not exist as a seeded program. Tests used 'wellness-workshops'. If the task spec expects a specific demo slug, main agent should seed it or update docs."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "VolunteerHours.LogHours", "issue": "SAME AS ITER-10: again() handler (log-more-hours-btn) does not reset form.leaderboard. User who opts into Top Volunteers once stays opted-in on subsequent entries in the same session. Fix: `setForm((f) => ({ ...f, hours: '', note: '', date: today(), leaderboard: false }))` on line 25.", "selector": "[data-testid=\"log-more-hours-btn\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": [
+    {"case": "PUT /api/admin/programs/{id} accepts capacity integer", "status": "PASS"},
+    {"case": "GET /api/programs & /api/programs/{slug} include seats_left+full when capacity>0 and OMIT them when capacity=0", "status": "PASS"},
+    {"case": "POST /api/programs/{slug}/signup returns waitlist:false then waitlist:true once full; submission stored with waitlist:true and data.list='Waitlist'", "status": "PASS"},
+    {"case": "PUT /api/admin/submissions/{id}/stage not_fit frees a seat; waitlisted->enrolled consumes a seat", "status": "PASS"},
+    {"case": "GET /api/submissions/counts program_signup.overdue counts >=7d-old signups with stage=new/missing", "status": "PASS"},
+    {"case": "POST /api/admin/signups/send-reminders unauth -> 401", "status": "PASS"},
+    {"case": "Milestones recorded once per (email,scope,threshold); re-approve does not duplicate", "status": "PASS (but see critical bug - fires at 25h not 10h)"},
+    {"case": "GET/PUT /api/admin/year-in-review/2026 unauth -> 401; admin returns stats+public flag", "status": "PASS"},
+    {"case": "GET /api/year-in-review/2026 is 404 until published, 200 after, 404 again after unpublish", "status": "PASS"},
+    {"case": "server.py MILESTONES=(10,50,100) assertion", "status": "FAIL - detector for critical shadow bug (MILESTONES is [25,50,100] at runtime)"},
+    {"case": "UI /initiatives: program-seats-badge '10 spots remaining' and program-full-badge 'Program full · waitlist open' both render on cards", "status": "PASS"},
+    {"case": "UI /initiatives/wellness-workshops: SeatsBadge renders; signup heading='Join the waitlist'/button='Join Waitlist' when full; success text 'You're on the waitlist!'", "status": "PASS"},
+    {"case": "UI /year-in-review/2026 (published): yir-donations/donors/hours/volunteers/signups/stories/share-bar + 5 share buttons + yir-copy-link-btn all render", "status": "PASS"},
+    {"case": "UI /year-in-review/2025 (unpublished): yir-not-found renders", "status": "PASS"},
+    {"case": "UI Admin > Form Submissions > Program Sign-Ups: overdue-bar/count=1/checkbox/send-btn/overdue-badge/waitlist-badge/overdue-sidebar-badge all render", "status": "PASS"},
+    {"case": "UI Admin > Reports: yir-admin card with yir-year-select/yir-publish-toggle/yir-view-link", "status": "PASS"},
+    {"case": "UI Admin > Programs: program-capacity-input in edit dialog, admin-program-seats '3/3 seats · full' on list row", "status": "PASS"},
+    {"case": "REGRESSION iter-10: log-more-hours-btn resets leaderboard checkbox", "status": "FAIL - checkbox stays checked after Log more hours"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter11_programs_milestones_yir.py",
+    "/app/test_reports/pytest/iter11.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix MILESTONES symbol shadow in server.py - rename fundraising MILESTONES (line 3932) to e.g. GOAL_MILESTONES; update its usage on line 3971. Volunteer badges currently fire at 25h instead of 10h.",
+    "LOW: In /app/frontend/src/components/VolunteerHours.jsx line 25, reset leaderboard in again(): `setForm((f) => ({ ...f, hours: '', note: '', date: today(), leaderboard: false }))`. Carryover from iteration-10.",
+    "OPTIONAL: Seed a 'caring-sisters-clone' program slug to match task-statement references, or update docs."
+  ],
+  "critical_code_review_comments": [
+    "CRITICAL: Duplicate module-level identifier `MILESTONES` in server.py (line 3590 tuple vs line 3932 list) — Python module evaluation makes the later assignment win, silently breaking the 10-hr volunteer badge. Rename to prevent recurrence.",
+    "server.py is now 4104 lines — way past the 700-line guideline. Approving hours now triggers thanks+milestone+badge emails in one background task; split into volunteer.py / programs.py / year_in_review.py routers before adding more features.",
+    "_award_milestones is called inside _send_volunteer_thanks AFTER inserting the volunteer_thanks doc. If the daily thanks doc already exists (idempotency guard), new badges earned later same day are skipped. For a volunteer who logs 9h in morning then 2h evening same day, the second approval would hit the duplicate guard and never record the 10h badge.",
+    "_seats_taken uses a $or branch on `program_id` + legacy `data.program_slug`. For performance add a compound index on `type + program_id + stage + waitlist`.",
+    "Year-in-Review donor count uses lower-cased emails; if any paid txn is stored with mixed case, it dedupes correctly, but if donor_email is null and a lower-cased variant exists, the `anon` tally may double-count — low risk.",
+    "ProgramSignup success message when waitlist uses hardcoded 'test_wl_...' email echoed from form state; good UX. But the SeatsBadge is NOT rendered inside the success state - once joined, user cannot see confirmation of 'waitlist' vs 'enrolled' seat position (would be a nice-to-have)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter11_programs_milestones_yir.py"
+  ],
+  "success_rate": {"backend": "90% (9/10 pytest — 1 intentional bug detector)", "frontend": "100% of iteration-11 features; 1 regression bug carried over from iter-10"},
+  "test_credentials": "Temp admin via qa_session.py up/down (session_token=qa_tok_123). Session torn down at end.",
+  "seed_data_creation": "Created: 2 submissions seat-fills + overdue signup + UI/waitlist signups + volunteer_hours for milestone test. All cleaned up at end (deleted 5 submissions, 1 volunteer_hours, 0 thanks, 0 milestones remaining with @example.com). Reset wellness-workshops+business-elevation-lab capacity to 0. Unpublished YIR 2026. qa_session.py down completed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "MILESTONES shadow bug will persist until main agent renames one of the two symbols. After fix, re-run test_iter11_programs_milestones_yir.py::TestMilestones::test_bug_milestones_symbol_shadowed - should pass; also need to update test_milestones_recorded_once to use 10/11 hours instead of 26 to verify the correct 10h threshold. Programs test used 'wellness-workshops' slug (not the task's 'caring-sisters-clone' which doesn't exist). YIR 2026 and all program capacities were reset to original state. qa_session is DOWN.",
+  "rca of the issue": "RCA (MILESTONES shadow): server.py defines `MILESTONES = (10, 50, 100)` at line 3590 for volunteer-hour badges, then later at line 3932 redefines `MILESTONES = [25, 50, 100]` for fundraising campaign goal milestones. Python module globals are a single namespace, so the second assignment overwrites the first. _award_milestones (line 3597) iterates MILESTONES → iterates [25,50,100] → never crosses 10h threshold with 10 hours. Repro: approve 10h of volunteer hours for a fresh email → check `db.volunteer_milestones.find({email: ..})`: zero records. Fix: rename volunteer tuple to `VOL_MILESTONES` (preferred, since fundraising MILESTONES is used in more spots via _check_milestones) OR rename fundraising to `GOAL_MILESTONES`. RCA (leaderboard reset): VolunteerHours.jsx again() handler on line 25 spreads previous form state without resetting `leaderboard`. Fix inline: add `leaderboard: false` to the setForm payload."
+}

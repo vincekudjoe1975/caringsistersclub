@@ -22,7 +22,7 @@ export const LogHours = () => {
     catch (err) { setError(errMsg(err)); }
     finally { setBusy(false); }
   };
-  const again = () => { setDone(false); setForm((f) => ({ ...f, hours: '', note: '', date: today() })); };
+  const again = () => { setDone(false); setForm((f) => ({ ...f, hours: '', note: '', date: today(), leaderboard: false })); };
 
   return (
     <section className="py-16 lg:py-20" style={{ background: '#F7EFE9' }} id="log-hours" data-testid="log-hours">

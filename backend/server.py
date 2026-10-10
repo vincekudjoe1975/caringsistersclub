@@ -3587,14 +3587,14 @@ async def _send_volunteer_thanks() -> int:
     return sent
 
 
-MILESTONES = (10, 50, 100)
+VOL_MILESTONES = (10, 50, 100)
 
 
 async def _award_milestones(email: str, year: str, year_total: float, all_total: float) -> list:
     """Records each newly crossed milestone exactly once (all-time and per calendar year)."""
     out = []
     for scope, total, label in (("all", all_total, "{n} Hours All-Time"), (f"year:{year}", year_total, "{n} Hours in " + year)):
-        for n in MILESTONES:
+        for n in VOL_MILESTONES:
             if total >= n:
                 r = await db.volunteer_milestones.update_one({"email": email, "scope": scope, "threshold": n},
                                                              {"$setOnInsert": {"hours": total, "awarded_at": _now_iso()}}, upsert=True)

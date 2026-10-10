@@ -193,4 +193,14 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - _send_volunteer_thanks: one email per volunteer per UTC day (volunteer_thanks unique email+day) combining approved-unthanked entries; runs after approve + hourly.
 - Leaderboard: HoursIn.leaderboard opt-in (latest entry decides); GET /api/volunteer-hours/leaderboard (top 10 this year, "First L."). Shown on /volunteer.
 - GET /api/admin/reports/story-requests (invites, submitted after invite, rate, approved). PUT /api/admin/submissions/{id}/stage (new/contacted/enrolled/not_fit); program-signups report adds contacted_pct/enrolled_pct. StageSelect in Form Submissions.
-- Opt-in checkbox intentionally stays checked on "Log more hours" (same person).
+- "Log more hours" now resets the leaderboard opt-in checkbox (fixed iteration 11).
+
+## 2026 — Volunteer milestones, enrollment reminders, program capacity, Year in Review (iteration_11)
+- Milestones: VOL_MILESTONES=(10,50,100) (do NOT rename to MILESTONES — that name is the fundraising goal list). _award_milestones records db.volunteer_milestones {email,scope:'all'|'year:YYYY',threshold} once (upsert); evaluated inside _send_volunteer_thanks; badges shown in thank-you email + separate badge email per milestone.
+- Enrollment reminders: _overdue_q (program_signup, stage new/missing, >=7 days); daily digest to staff_notify_email via _send_enrollment_reminders (scheduled_runs key enroll-remind:DATE); POST /api/admin/signups/send-reminders; counts.program_signup.overdue; Admin Form Submissions overdue bar/filter/badges.
+- Capacity: ProgramIn.capacity (0=unlimited); _seats_taken counts signups not not_fit, excluding waitlisted unless enrolled; seats_left/full on public/admin program endpoints; full → signup stored waitlist:true + data.list='Waitlist' + waitlist confirmation email. SeatsBadge on Initiatives cards/program page.
+- Year in Review: GET /api/year-in-review/{year} (public only if year in settings.site.yir_public), admin GET/PUT /api/admin/year-in-review/{year}; page /year-in-review/:year with stats, featured approved stories, share bar; admin card in Reports.
+
+## Backlog
+- P1: Open Graph share image/meta for Year in Review; "Promote from waitlist" email to waitlisted sign-ups when a seat frees.
+- P2: Milestone badges shown publicly on leaderboard; scheduler failure dashboard.
