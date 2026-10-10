@@ -3,6 +3,7 @@ import { api } from '../../lib/api';
 import { useToast } from '../../hooks/use-toast';
 import { Loader2, Save } from 'lucide-react';
 import { Avatar } from './Avatar';
+import { LeaveRequest } from './LeaveRequest';
 
 const inputCls = 'w-full mt-1.5 rounded-xl border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] bg-white focus:outline-none focus:border-[#B4247E] transition-colors';
 
@@ -47,6 +48,7 @@ export function MyProfile({ me, onChange }) {
       <button data-testid="profile-save-btn" disabled={busy} className="btn-magenta rounded-full px-7 py-3 font-semibold mt-7 flex items-center gap-2 disabled:opacity-60">
         {busy ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save profile
       </button>
+    <LeaveRequest me={me} onChange={onChange} />
     </form>
   );
 }

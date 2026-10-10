@@ -6,6 +6,8 @@ import { fmtDate } from '../components/members/fmt';
 import { AdminDues } from '../components/members/admin/AdminDues';
 import { AdminMeetings } from '../components/members/admin/AdminMeetings';
 import { AdminBallots } from '../components/members/admin/AdminBallots';
+import { AdminCollections } from '../components/members/admin/AdminCollections';
+import { AdminDecember } from '../components/members/admin/AdminDecember';
 
 const inputCls = 'w-full rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
 const Box = ({ title, children, testid }) => (
@@ -147,11 +149,11 @@ export default function AdminMembers() {
   };
   const [sub, setSub] = useState('people');
   const apps = d.members.filter((m) => m.status === 'applied');
-  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections']];
+  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['december', 'December renewal']];
   return (
     <div>
     <div className="flex flex-wrap gap-1 mb-6">{tabs.map(([k, l]) => <button key={k} data-testid={`members-sub-${k}`} onClick={() => setSub(k)} className={`rounded-full px-4 py-2 text-[13px] font-semibold transition-colors ${sub === k ? 'bg-[#3B0A2E] text-white' : 'bg-white border border-[#3B0A2E]/15 text-[#3B0A2E]'}`}>{l}</button>)}</div>
-    {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : (
+    {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : (
     <div className="grid lg:grid-cols-2 gap-6" data-testid="admin-members">
       <Box title={`Applications (${apps.length})`} testid="admin-applications"><Applications rows={apps} act={act} /></Box>
       <Box title="Invite members" testid="admin-invites"><Invites invites={d.invites} reload={load} toast={toast} /></Box>

@@ -6046,6 +6046,7 @@ async def _hourly_scheduler():
             await _send_session_reminders()
             await _send_session_feedback()
             await _send_noshow_followups()
+            await _member_scheduled()
             for p in await db.programs.find({"capacity": {"$gt": 0}}, {"_id": 0, "id": 1}).to_list(200):
                 await _fill_seats(p["id"])
         except Exception as e:
@@ -6296,7 +6297,7 @@ async def members_me(user=Depends(get_current_user)):
     status = "active" if _is_member(user) else (user.get("member_status") or "none")
     return {"status": status, "user_id": user["user_id"], "is_admin": user.get("role") == "admin", "name": user.get("name"), "email": user.get("email"),
             "picture": user.get("picture"), "profile": user.get("member_profile") or {}, "application": user.get("member_application") or {},
-            "member_since": user.get("member_since", "")}
+            "member_since": user.get("member_since", ""), "leave_request": user.get("member_leave_request"), "ends_at": user.get("member_ends_at")}
 
 
 class MemberApplication(BaseModel):
@@ -6450,7 +6451,7 @@ async def members_delete_reply(tid: str, rid: str, user=Depends(require_member))
 # --- Admin: members ---
 @api_router.get("/admin/members")
 async def admin_members(user=Depends(require_admin)):
-    rows = await db.users.find({"member_status": {"$in": ["applied", "active", "declined", "suspended"]}}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    rows = await db.users.find({"member_status": {"$in": ["applied", "active", "declined", "suspended", "ended"]}}, {"_id": 0}).sort("created_at", -1).to_list(2000)
     invites = await db.member_invites.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     out = [{**_member_public(u, True), "status": u["member_status"], "application": u.get("member_application") or {}} for u in rows]
     return {"members": out, "invites": invites}
@@ -6474,6 +6475,8 @@ async def admin_member_status(uid: str, payload: MemberAction, background: Backg
         if target.get("member_application"):
             await _ledger_add(uid, _today_et().year, "charge", "registration", REGISTRATION_FEE, "One-time registration fee", key=f"reg:{uid}")
     await db.users.update_one({"user_id": uid}, {"$set": upd})
+    if new == "active":
+        await db.users.update_one({"user_id": uid}, {"$unset": {"member_ends_at": "", "member_end_reason": ""}})
     if payload.action == "approve" and target.get("email"):
         first = (target.get("name") or "Sister").split(" ")[0]
         background.add_task(send_email, to=target["email"], subject="Welcome to the Caring Sisters Club member portal",
@@ -6873,7 +6876,7 @@ async def admin_member_payment(uid: str, payload: LedgerIn, user=Depends(require
         raise HTTPException(status_code=400, detail="Enter an amount and a payment method.")
     if not await db.users.find_one({"user_id": uid, "member_status": {"$exists": True}}, {"_id": 1}):
         raise HTTPException(status_code=404, detail="Member not found")
-    await _ledger_add(uid, _year_param(payload.year), "payment", payload.kind if payload.kind in ("dues", "registration", "fine", "birthday") else "dues",
+    await _ledger_add(uid, _year_param(payload.year), "payment", payload.kind if payload.kind in ("dues", "registration", "fine", "birthday", "bereavement", "illness") else "dues",
                       payload.amount, payload.note or f"{payload.method.title()} payment", method=payload.method, recorded_by=user.get("email"))
     return {"ok": True}
 
@@ -7117,6 +7120,330 @@ async def member_indexes():
         await db.member_ledger.create_index([("user_id", 1), ("year", 1)])
     except Exception as e:
         logging.error(f"Member index setup failed: {e}")
+
+
+# ---------- Member Portal phase 3: dues reminders, support collections, minutes, December renewal ----------
+COLLECTION_KINDS = {"bereavement": "Bereavement support", "illness": "Serious illness support"}
+
+
+def _dues_reminder_html(first: str, st: dict, pay_url: str, final: bool) -> str:
+    due = datetime.fromisoformat(st["due_date"]).strftime("%B %-d") if st.get("due_date") else "January 31"
+    lead = "A gentle last reminder" if final else "Happy New Year, sister!"
+    body = (f"{lead} Your {st['year']} membership balance is ${st['balance']:.2f}, due by {due}. "
+            "Paying in full keeps you in good standing, so you can vote and receive member benefits.\n\n"
+            "You can pay by card in one tap below, or give cash or Zelle to the Financial Secretary.")
+    return _member_email_html("Dues Reminder", f"Dear {first},", body, f"Pay ${st['balance']:.2f} now", pay_url)
+
+
+async def _pay_link(uid: str, year: int) -> str:
+    tok = secrets.token_urlsafe(24)
+    await db.member_pay_tokens.insert_one({"token": tok, "user_id": uid, "year": year,
+                                           "expires_at": (datetime.now(timezone.utc) + timedelta(days=45)).isoformat()})
+    return f"/api/members/pay/{tok}"
+
+
+async def _send_dues_reminders(round_key: str, final: bool = False) -> int:
+    year = _today_et().year
+    sent = 0
+    for uid, (u, st) in (await _standing_all(year)).items():
+        if st["balance"] <= 0 or not u.get("email"):
+            continue
+        key = f"duesrem:{year}:{round_key}:{uid}"
+        if (await db.member_notices.update_one({"key": key}, {"$setOnInsert": {"key": key, "sent_at": _now_iso()}}, upsert=True)).upserted_id is None:
+            continue
+        first = (u.get("name") or "Sister").split(" ")[0]
+        try:
+            await send_email(to=u["email"], subject=f"Your {year} Caring Sisters Club dues: ${st['balance']:.2f}",
+                             html=_dues_reminder_html(first, st, await _pay_link(uid, year), final))
+            sent += 1
+        except Exception as e:
+            logging.warning(f"Dues reminder failed for {uid}: {e}")
+    await db.member_runs.insert_one({"kind": "dues_reminders", "round": round_key, "sent": sent, "at": _now_iso()})
+    return sent
+
+
+@api_router.get("/members/pay/{token}")
+async def members_pay_link(token: str, request: Request):
+    _rate_limit(request, "dues-paylink", max_hits=10, window_s=300)
+    t = await db.member_pay_tokens.find_one({"token": token}, {"_id": 0})
+    if t is None or t["expires_at"] < _now_iso():
+        return RedirectResponse(f"{PUBLIC_APP_URL}/members", status_code=303)
+    u = await db.users.find_one({"user_id": t["user_id"], "member_status": "active"}, {"_id": 0})
+    if u is None:
+        return RedirectResponse(f"{PUBLIC_APP_URL}/members", status_code=303)
+    st = await _member_standing(u, t["year"])
+    if st["balance"] < 1:
+        return RedirectResponse(f"{PUBLIC_APP_URL}/members?paid=1", status_code=303)
+    try:
+        s = stripe.checkout.Session.create(
+            line_items=[{"price_data": {"currency": "usd", "product_data": {"name": f"Caring Sisters Club member dues {t['year']}"},
+                                        "unit_amount": int(round(st["balance"] * 100))}, "quantity": 1}],
+            mode="payment", customer_email=u.get("email") or None,
+            success_url=f"{PUBLIC_APP_URL}/members?dues_session={{CHECKOUT_SESSION_ID}}", cancel_url=f"{PUBLIC_APP_URL}/members",
+            metadata={"kind": "member_dues", "user_id": u["user_id"], "year": str(t["year"]), "amount": str(st["balance"])})
+    except Exception as e:
+        logging.error(f"Pay-link checkout error: {e}")
+        return RedirectResponse(f"{PUBLIC_APP_URL}/members", status_code=303)
+    await db.member_checkouts.insert_one({"session_id": s.id, "user_id": u["user_id"], "year": t["year"], "amount": st["balance"], "status": "pending", "created_at": _now_iso()})
+    return RedirectResponse(s.url, status_code=303)
+
+
+@api_router.post("/admin/members/dues/remind")
+async def admin_dues_remind(user=Depends(require_admin)):
+    return {"sent": await _send_dues_reminders(f"manual-{_today_et().isoformat()}")}
+
+
+@api_router.get("/admin/members/dues/reminders")
+async def admin_dues_reminder_runs(user=Depends(require_admin)):
+    return await db.member_runs.find({"kind": "dues_reminders"}, {"_id": 0}).sort("at", -1).to_list(10)
+
+
+# --- Support collections (bereavement 6.4, serious illness 6.5) ---
+class CollectionIn(BaseModel):
+    kind: str
+    beneficiary_id: str
+    relationship: str = ""
+    share: float
+    note: str = ""
+    notify: bool = True
+
+
+def _collection_html(first: str, c: dict) -> str:
+    who = c["beneficiary_name"]
+    if c["kind"] == "bereavement":
+        body = (f"With heavy hearts we share that our sister {who} has lost her {c['relationship'] or 'loved one'}. "
+                f"As set out in Section 6.4 of our bylaws, each active member contributes ${c['share']:.2f} in bereavement support. "
+                "This amount has been added to your member balance.")
+    else:
+        body = (f"Our sister {who} is facing a serious illness. As set out in Section 6.5 of our bylaws, each member contributes "
+                f"${c['share']:.2f} in support. This amount has been added to your member balance.")
+    if c.get("note"):
+        body += f"\n\n{c['note']}"
+    return _member_email_html(COLLECTION_KINDS[c["kind"]], f"Dear {first},", body + "\n\nThank you for standing with your sister.", "View my balance", "/members")
+
+
+async def _collection_view(c: dict, standing: dict) -> dict:
+    paid_marks = {e["user_id"] for e in await db.member_ledger.find({"collection_id": c["id"], "direction": "payment"}, {"_id": 0, "user_id": 1}).to_list(5000)}
+    charges = await db.member_ledger.find({"collection_id": c["id"], "direction": "charge"}, {"_id": 0}).to_list(5000)
+    contributors = []
+    for e in charges:
+        u, st = standing.get(e["user_id"], (None, None))
+        paid = e["user_id"] in paid_marks or (st is not None and st["balance"] <= 0)
+        contributors.append({"user_id": e["user_id"], "name": (u or {}).get("name") or "Former member", "share": e["amount"], "paid": paid,
+                             "marked": e["user_id"] in paid_marks})
+    collected = round(sum(x["share"] for x in contributors if x["paid"]), 2)
+    paid_out = round(sum(p["amount"] for p in c.get("payouts", [])), 2)
+    return {**c, "contributors": sorted(contributors, key=lambda x: (x["paid"], x["name"].lower())), "expected": round(sum(x["share"] for x in contributors), 2),
+            "collected": collected, "paid_out": paid_out, "available": round(collected - paid_out, 2)}
+
+
+@api_router.get("/admin/members/collections")
+async def admin_collections(user=Depends(require_admin)):
+    rows = await db.member_collections.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    standing = await _standing_all(_today_et().year)
+    return [await _collection_view(c, standing) for c in rows]
+
+
+@api_router.post("/admin/members/collections")
+async def admin_collection_create(payload: CollectionIn, background: BackgroundTasks, user=Depends(require_admin)):
+    if payload.kind not in COLLECTION_KINDS or not (0 < payload.share <= 1000):
+        raise HTTPException(status_code=400, detail="Choose a support type and a share between $1 and $1,000.")
+    b = await db.users.find_one({"user_id": payload.beneficiary_id, "member_status": "active"}, {"_id": 0})
+    if b is None:
+        raise HTTPException(status_code=400, detail="Choose the sister receiving support.")
+    year = _today_et().year
+    c = {"id": str(uuid.uuid4()), "kind": payload.kind, "beneficiary_id": b["user_id"], "beneficiary_name": b.get("name") or "",
+         "relationship": payload.relationship.strip()[:80], "share": round(payload.share, 2), "note": payload.note.strip()[:600],
+         "year": year, "status": "open", "payouts": [], "created_by": user.get("email"), "created_at": _now_iso()}
+    await db.member_collections.insert_one(dict(c))
+    label = f"{COLLECTION_KINDS[c['kind']].split(' ')[0]} — {c['beneficiary_name']}" + (f" ({c['relationship']})" if c["relationship"] else "")
+    members = await db.users.find({"member_status": "active", "user_id": {"$ne": b["user_id"]}}, {"_id": 0}).to_list(2000)
+    for u in members:
+        await _ledger_add(u["user_id"], year, "charge", payload.kind, c["share"], label, key=f"coll:{c['id']}:{u['user_id']}", collection_id=c["id"])
+        if payload.notify and u.get("email"):
+            background.add_task(send_email, to=u["email"], subject=f"{COLLECTION_KINDS[c['kind']]} for {c['beneficiary_name']}",
+                                html=_collection_html((u.get("name") or "Sister").split(" ")[0], c))
+    return {"id": c["id"], "charged": len(members)}
+
+
+class PayoutIn(BaseModel):
+    amount: float
+    date: str
+    method: str = "zelle"
+    note: str = ""
+
+
+@api_router.post("/admin/members/collections/{cid}/payouts")
+async def admin_collection_payout(cid: str, payload: PayoutIn, user=Depends(require_admin)):
+    if not (0 < payload.amount <= 100000) or not re.match(r"^\d{4}-\d{2}-\d{2}$", payload.date) or payload.method not in ("cash", "zelle", "check", "other"):
+        raise HTTPException(status_code=400, detail="Enter the payout amount, date and method.")
+    p = {"id": str(uuid.uuid4()), "amount": round(payload.amount, 2), "date": payload.date, "method": payload.method, "note": payload.note.strip()[:200],
+         "recorded_by": user.get("email"), "recorded_at": _now_iso()}
+    if not (await db.member_collections.update_one({"id": cid}, {"$push": {"payouts": p}})).matched_count:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return p
+
+
+@api_router.delete("/admin/members/collections/{cid}/payouts/{pid}")
+async def admin_collection_payout_delete(cid: str, pid: str, user=Depends(require_admin)):
+    await db.member_collections.update_one({"id": cid}, {"$pull": {"payouts": {"id": pid}}})
+    return {"ok": True}
+
+
+class ContributionIn(BaseModel):
+    method: str = "cash"
+
+
+@api_router.post("/admin/members/collections/{cid}/contributors/{uid}/paid")
+async def admin_collection_mark_paid(cid: str, uid: str, payload: ContributionIn, user=Depends(require_admin)):
+    charge = await db.member_ledger.find_one({"collection_id": cid, "user_id": uid, "direction": "charge"}, {"_id": 0})
+    if charge is None or payload.method not in ("cash", "zelle", "check", "other"):
+        raise HTTPException(status_code=400, detail="This sister has no share in this collection.")
+    await _ledger_add(uid, charge["year"], "payment", charge["kind"], charge["amount"], f"{payload.method.title()} — {charge['note']}",
+                      key=f"collpay:{cid}:{uid}", collection_id=cid, method=payload.method, recorded_by=user.get("email"))
+    return {"ok": True}
+
+
+@api_router.post("/admin/members/collections/{cid}/close")
+async def admin_collection_close(cid: str, user=Depends(require_admin)):
+    await db.member_collections.update_one({"id": cid}, {"$set": {"status": "closed", "closed_at": _now_iso()}})
+    return {"ok": True}
+
+
+# --- Minutes & official vote records ---
+class MinutesIn(BaseModel):
+    body: str
+    approve: bool = False
+
+
+@api_router.put("/admin/members/meetings/{mid}/minutes")
+async def admin_meeting_minutes(mid: str, payload: MinutesIn, user=Depends(require_admin)):
+    body = payload.body.strip()[:30000]
+    if not body:
+        raise HTTPException(status_code=400, detail="Please write the minutes first.")
+    m = {"body": body, "status": "approved" if payload.approve else "draft", "updated_at": _now_iso(), "updated_by": user.get("name") or user.get("email")}
+    if payload.approve:
+        m.update({"approved_at": _now_iso(), "approved_by": user.get("name") or user.get("email")})
+    if not (await db.member_meetings.update_one({"id": mid}, {"$set": {"minutes": m}})).matched_count:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return m
+
+
+@api_router.get("/members/minutes")
+async def members_minutes(user=Depends(require_member)):
+    rows = await db.member_meetings.find({"minutes.status": "approved"}, {"_id": 0, "attendance": 0}).sort("date", -1).to_list(300)
+    return [{"id": m["id"], "title": m["title"], "date": m["date"], "kind": m.get("kind"), "minutes": m["minutes"]} for m in rows]
+
+
+async def _secretary_name() -> str:
+    u = await db.users.find_one({"member_status": "active", "member_office": {"$regex": "^secretary$", "$options": "i"}}, {"_id": 0, "name": 1})
+    return (u or {}).get("name") or ""
+
+
+@api_router.get("/members/ballots/{bid}/record")
+async def members_ballot_record(bid: str, user=Depends(require_member)):
+    b = await db.member_ballots.find_one({"id": bid}, {"_id": 0})
+    if b is None or _ballot_state(b) != "closed":
+        raise HTTPException(status_code=404, detail="Official records are available once voting has closed.")
+    return {**b, "state": "closed", "results": await _ballot_results(b), "secretary": await _secretary_name(), "generated_at": _now_iso()}
+
+
+# --- December renewal ---
+class LeaveIn(BaseModel):
+    reason: str = ""
+
+
+@api_router.post("/members/leave-request")
+async def members_leave_request(payload: LeaveIn, user=Depends(require_member)):
+    if user.get("member_status") != "active":
+        raise HTTPException(status_code=400, detail="Only active members can request to leave.")
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_leave_request": {"reason": payload.reason.strip()[:600], "requested_at": _now_iso()}}})
+    return {"ok": True}
+
+
+@api_router.delete("/members/leave-request")
+async def members_leave_cancel(user=Depends(require_member)):
+    await db.users.update_one({"user_id": user["user_id"]}, {"$unset": {"member_leave_request": ""}})
+    return {"ok": True}
+
+
+@api_router.get("/admin/members/december")
+async def admin_december(year: Optional[int] = None, user=Depends(require_admin)):
+    y = _year_param(year)
+    done = {d["key"]: d for d in await db.member_december.find({"year": y}, {"_id": 0}).to_list(5000)}
+    item = lambda lst, u, **kw: {"key": f"{lst}:{u['user_id']}", "user_id": u["user_id"], "name": u.get("name"), "email": u.get("email"),
+                                 "done": done.get(f"{lst}:{u['user_id']}"), "ends_at": u.get("member_ends_at"), **kw}
+    apps = await db.users.find({"member_status": "applied"}, {"_id": 0}).to_list(1000)
+    standing = await _standing_all(y)
+    leaving, ending, unpaid = [], [], []
+    for uid, (u, st) in standing.items():
+        if u.get("member_leave_request"):
+            leaving.append(item("leaving", u, reason=u["member_leave_request"].get("reason", ""), requested_at=u["member_leave_request"].get("requested_at")))
+        if "termination" in st["attendance"]["flags"]:
+            ending.append(item("ending", u, absences=st["attendance"]["total_absences"]))
+        if st["balance"] > 0:
+            unpaid.append(item("unpaid", u, balance=st["balance"], referred_by=(u.get("member_application") or {}).get("referred_by", "")))
+    applications = [item("application", u, city=(u.get("member_application") or {}).get("city", ""),
+                         referred_by=(u.get("member_application") or {}).get("referred_by", ""), applied_at=(u.get("member_application") or {}).get("submitted_at")) for u in apps]
+    lists = {"applications": applications, "leaving": leaving, "ending": ending, "unpaid": unpaid}
+    total = sum(len(v) for v in lists.values())
+    return {"year": y, "lists": lists, "total": total, "completed": sum(1 for v in lists.values() for i in v if i["done"])}
+
+
+class DecemberIn(BaseModel):
+    key: str
+    decision: str
+    year: Optional[int] = None
+
+
+@api_router.post("/admin/members/december")
+async def admin_december_confirm(payload: DecemberIn, background: BackgroundTasks, user=Depends(require_admin)):
+    y = _year_param(payload.year)
+    lst, _, uid = payload.key.partition(":")
+    allowed = {"application": ("approve", "decline"), "leaving": ("end", "keep"), "ending": ("end", "keep"), "unpaid": ("reviewed",)}
+    if payload.decision not in allowed.get(lst, ()):
+        raise HTTPException(status_code=400, detail="Invalid checklist action")
+    if not await db.users.find_one({"user_id": uid, "member_status": {"$exists": True}}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Member not found")
+    if lst == "application":
+        await admin_member_status(uid, MemberAction(action=payload.decision), background, user)
+    elif payload.decision == "end":
+        await db.users.update_one({"user_id": uid}, {"$set": {"member_ends_at": f"{y}-12-31", "member_end_reason": "voluntary" if lst == "leaving" else "attendance"}})
+    elif payload.decision == "keep":
+        await db.users.update_one({"user_id": uid}, {"$unset": {"member_ends_at": "", "member_end_reason": ""}})
+        if lst == "leaving":
+            await db.users.update_one({"user_id": uid}, {"$unset": {"member_leave_request": ""}})
+    await db.member_december.update_one({"key": payload.key, "year": y}, {"$set": {"key": payload.key, "year": y, "decision": payload.decision,
+                                         "by": user.get("name") or user.get("email"), "at": _now_iso()}}, upsert=True)
+    return {"ok": True}
+
+
+@api_router.delete("/admin/members/december")
+async def admin_december_undo(key: str, year: Optional[int] = None, user=Depends(require_admin)):
+    y = _year_param(year)
+    lst, _, uid = key.partition(":")
+    d = await db.member_december.find_one_and_delete({"key": key, "year": y})
+    if d and d.get("decision") == "end":
+        await db.users.update_one({"user_id": uid, "member_status": "active"}, {"$unset": {"member_ends_at": "", "member_end_reason": ""}})
+    return {"ok": True}
+
+
+async def _end_memberships(today) -> int:
+    rows = await db.users.find({"member_status": "active", "member_ends_at": {"$lte": today.isoformat()}}, {"_id": 0, "user_id": 1}).to_list(2000)
+    for u in rows:
+        await db.users.update_one({"user_id": u["user_id"]}, {"$set": {"member_status": "ended", "member_ended_at": _now_iso()}, "$unset": {"member_leave_request": ""}})
+    return len(rows)
+
+
+async def _member_scheduled():
+    today = _today_et()
+    if today.month == 1 and today.day >= 2:
+        await _send_dues_reminders("jan2")
+    if today.month == 1 and today.day >= 25:
+        await _send_dues_reminders("jan25", final=True)
+    if (today.month == 12 and today.day == 31) or today.month == 1:
+        await _end_memberships(today)
+    await db.member_pay_tokens.delete_many({"expires_at": {"$lt": _now_iso()}})
 
 
 # Include the router in the main app

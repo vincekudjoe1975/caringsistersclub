@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
-import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet } from 'lucide-react';
+import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText } from 'lucide-react';
 import { MemberApply } from '../components/members/MemberApply';
 import { Announcements } from '../components/members/Announcements';
 import { Discussion } from '../components/members/Discussion';
@@ -11,6 +11,7 @@ import { Bylaws } from '../components/members/Bylaws';
 import { MyProfile } from '../components/members/MyProfile';
 import { Ballots } from '../components/members/Ballots';
 import { Standing } from '../components/members/Standing';
+import { Minutes } from '../components/members/Minutes';
 
 const TABS = [
   { k: 'news', l: 'Announcements', icon: Megaphone, C: Announcements },
@@ -18,6 +19,7 @@ const TABS = [
   { k: 'votes', l: 'Votes', icon: Vote, C: Ballots },
   { k: 'dues', l: 'My Dues', icon: Wallet, C: Standing },
   { k: 'people', l: 'Directory', icon: Users, C: Directory },
+  { k: 'minutes', l: 'Minutes', icon: FileText, C: Minutes },
   { k: 'bylaws', l: 'Bylaws', icon: ScrollText, C: Bylaws },
   { k: 'me', l: 'My Profile', icon: UserCircle, C: MyProfile },
 ];
@@ -94,6 +96,6 @@ export default function Members() {
   if (!user || me === false) return <Shell><MemberLogin /></Shell>;
   if (me.status === 'active') return <Shell><Portal me={me} onChange={load} /></Shell>;
   if (me.status === 'applied') return <Shell><Card icon={Clock} title="Application received" testid="member-pending-card"><p className="text-[#241019]/65 text-[14.5px]">Thank you, {(me.name || '').split(' ')[0]}. Our membership team will review your application and email you once you're approved.</p></Card></Shell>;
-  if (me.status === 'declined' || me.status === 'suspended') return <Shell><Card icon={Clock} title="Portal access paused" testid="member-paused-card"><p className="text-[#241019]/65 text-[14.5px]">Your member access isn't active right now. Please <Link to="/contact" className="text-[#B4247E] font-semibold">contact us</Link> if you have questions.</p></Card></Shell>;
+  if (me.status === 'declined' || me.status === 'suspended' || me.status === 'ended') return <Shell><Card icon={Clock} title="Portal access paused" testid="member-paused-card"><p className="text-[#241019]/65 text-[14.5px]">Your member access isn't active right now. Please <Link to="/contact" className="text-[#B4247E] font-semibold">contact us</Link> if you have questions.</p></Card></Shell>;
   return <Shell><MemberApply me={me} onDone={load} /></Shell>;
 }

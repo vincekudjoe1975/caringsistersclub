@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../../lib/api';
 import { useToast } from '../../../hooks/use-toast';
-import { Plus, Trash2, AlertTriangle, Save } from 'lucide-react';
+import { Plus, Trash2, AlertTriangle, Save, FileText } from 'lucide-react';
 import { fmtDate } from '../fmt';
 
 const FLAG = { warning: 'Warning letter (2 in a row)', fine: '$10 fine (3 in a row)', officer_removal: 'Officer: 3 missed, remove from office', termination: '4+ missed: ends in December' };
@@ -31,10 +31,29 @@ function AttendanceSheet({ m, members, onSaved }) {
   );
 }
 
+function MinutesEditor({ m, onSaved }) {
+  const { toast } = useToast();
+  const [body, setBody] = useState(m.minutes?.body || '');
+  const save = async (approve) => {
+    try { await api.put(`/admin/members/meetings/${m.id}/minutes`, { body, approve }); toast({ title: approve ? 'Minutes approved and shared with members' : 'Draft saved' }); onSaved(); }
+    catch (ex) { toast({ title: 'Could not save', description: ex?.response?.data?.detail, variant: 'destructive' }); }
+  };
+  return (
+    <div data-testid={`minutes-editor-${m.id}`} className="bg-[#faf2f7] rounded-xl p-4 mt-3">
+      <textarea data-testid={`minutes-body-${m.id}`} rows={8} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Call to order, attendance, reports, motions, votes (yeas/nays/abstentions), adjournment…" className={`${inputCls} w-full`} />
+      <div className="flex gap-2 mt-2">
+        <button data-testid={`minutes-draft-${m.id}`} onClick={() => save(false)} className="rounded-full px-4 py-2 text-[12.5px] font-semibold border border-[#3B0A2E]/15 text-[#3B0A2E] bg-white">Save draft</button>
+        <button data-testid={`minutes-approve-${m.id}`} onClick={() => save(true)} className="btn-magenta rounded-full px-4 py-2 text-[12.5px] font-semibold">Approve & share with members</button>
+      </div>
+    </div>
+  );
+}
+
 export function AdminMeetings() {
   const [d, setD] = useState(null);
   const [f, setF] = useState({ title: 'General meeting', date: '', kind: 'general' });
   const [open, setOpen] = useState(null);
+  const [mins, setMins] = useState(null);
   const load = useCallback(() => api.get('/admin/members/meetings').then(({ data }) => setD(data)), []);
   useEffect(() => { load(); }, [load]);
   const create = async (e) => { e.preventDefault(); const { data } = await api.post('/admin/members/meetings', f); setOpen(data.id); load(); };
@@ -53,12 +72,15 @@ export function AdminMeetings() {
             <div key={m.id} data-testid={`meeting-${m.id}`} className="bg-white rounded-2xl p-4 border border-[#3B0A2E]/8">
               <div className="flex items-center justify-between gap-3">
                 <div><p className="font-semibold text-[#3B0A2E] text-[14.5px]">{m.title}</p><p className="text-[12px] text-[#241019]/50">{fmtDate(m.date + 'T12:00:00')} · {m.kind} · {Object.values(m.attendance || {}).filter((v) => v === 'present').length} present</p></div>
-                <span className="flex gap-3">
+                <span className="flex gap-3 items-center">
+                  {m.minutes && <span data-testid={`minutes-status-${m.id}`} className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${m.minutes.status === 'approved' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>Minutes {m.minutes.status}</span>}
+                  <button data-testid={`meeting-minutes-${m.id}`} onClick={() => setMins(mins === m.id ? null : m.id)} className="text-[12.5px] font-semibold text-[#B4247E] flex items-center gap-1"><FileText size={13} /> Minutes</button>
                   <button data-testid={`meeting-open-${m.id}`} onClick={() => setOpen(open === m.id ? null : m.id)} className="text-[12.5px] font-semibold text-[#B4247E]">{open === m.id ? 'Close' : 'Take attendance'}</button>
                   <button data-testid={`meeting-del-${m.id}`} onClick={async () => { if (window.confirm('Delete this meeting and its attendance?')) { await api.delete(`/admin/members/meetings/${m.id}`); load(); } }} className="text-[#241019]/35 hover:text-red-600"><Trash2 size={14} /></button>
                 </span>
               </div>
               {open === m.id && <AttendanceSheet m={m} members={d.members} onSaved={load} />}
+              {mins === m.id && <MinutesEditor m={m} onSaved={load} />}
             </div>
           ))}
           {!d.meetings.length && <p className="text-[13.5px] text-[#241019]/50">No meetings recorded this year.</p>}

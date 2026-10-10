@@ -35,6 +35,7 @@ import SisterhoodPage from './pages/SisterhoodPage';
 import FeatureMyWords from './pages/FeatureMyWords';
 import Members from './pages/Members';
 import Membership from './pages/Membership';
+import VoteRecord from './pages/VoteRecord';
 import { Loader2 } from 'lucide-react';
 
 function ScrollToTop() {
@@ -66,7 +67,7 @@ function Shell() {
     return <AuthCallback />;
   }
 
-  const bare = location.pathname.startsWith('/admin') || location.pathname === '/login';
+  const bare = location.pathname.startsWith('/admin') || location.pathname.startsWith('/vote-record') || location.pathname === '/login';
 
   return (
     <>
@@ -91,6 +92,7 @@ function Shell() {
           <Route path="/feature-my-words" element={<FeatureMyWords />} />
           <Route path="/members" element={<Members />} />
           <Route path="/membership" element={<Membership />} />
+          <Route path="/vote-record/:id" element={<VoteRecord />} />
           <Route path="/events" element={<Events />} />
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/transparency" element={<Transparency />} />

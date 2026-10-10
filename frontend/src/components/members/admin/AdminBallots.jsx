@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../../lib/api';
 import { useToast } from '../../../hooks/use-toast';
-import { Plus, Trash2, Square } from 'lucide-react';
+import { Plus, Trash2, Square, Printer } from 'lucide-react';
 import { Results } from '../Ballots';
 
 const inputCls = 'w-full rounded-lg border border-[#3B0A2E]/15 px-3 py-2 text-[13.5px] focus:outline-none focus:border-[#B4247E]';
@@ -71,6 +71,7 @@ export function AdminBallots() {
             <div className="flex justify-between gap-3">
               <div><p className="text-[12px] text-[#B4247E] font-semibold">{KIND[b.kind]}{b.position ? `: ${b.position}` : ''} · {b.state}</p><p className="font-semibold text-[#3B0A2E]">{b.title}</p></div>
               <span className="flex gap-3 shrink-0">
+                {b.state === 'closed' && <a href={`/vote-record/${b.id}`} target="_blank" rel="noreferrer" data-testid={`ballot-record-${b.id}`} className="text-[12.5px] font-semibold text-[#B4247E] flex items-center gap-1"><Printer size={12} /> Official record</a>}
                 {b.state === 'open' && <button data-testid={`ballot-close-${b.id}`} onClick={async () => { if (window.confirm('Close voting now?')) { await api.post(`/admin/members/ballots/${b.id}/close`); load(); } }} className="text-[12.5px] font-semibold text-[#B4247E] flex items-center gap-1"><Square size={12} /> Close now</button>}
                 <button data-testid={`ballot-del-${b.id}`} onClick={() => del(b.id)} className="text-[#241019]/35 hover:text-red-600"><Trash2 size={14} /></button>
               </span>

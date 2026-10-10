@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../../lib/api';
-import { Plus, Trash2, Cake, X } from 'lucide-react';
+import { Plus, Trash2, Cake, X, Send, Loader2 } from 'lucide-react';
 import { fmtDate } from '../fmt';
 
 const money = (n) => `$${Number(n || 0).toFixed(2).replace(/\.00$/, '')}`;
@@ -26,7 +26,7 @@ function LedgerPanel({ row, year, onClose, onChanged }) {
         <input data-testid="ledger-amount" type="number" min="1" placeholder="Amount" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} className={`${inputCls} w-28`} required />
         {f.type === 'payment' && <select data-testid="ledger-method" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })} className={inputCls}>{['cash', 'zelle', 'check', 'other'].map((m) => <option key={m} value={m}>{m[0].toUpperCase() + m.slice(1)}</option>)}</select>}
         <select data-testid="ledger-kind" value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })} className={inputCls}>
-          {(f.type === 'payment' ? ['dues', 'registration', 'fine', 'birthday'] : ['registration', 'fine', 'birthday', 'other']).map((k) => <option key={k} value={k}>{k[0].toUpperCase() + k.slice(1)}</option>)}
+          {(f.type === 'payment' ? ['dues', 'registration', 'fine', 'birthday', 'bereavement', 'illness'] : ['registration', 'fine', 'birthday', 'other']).map((k) => <option key={k} value={k}>{k[0].toUpperCase() + k.slice(1)}</option>)}
         </select>
         <input data-testid="ledger-note" placeholder="Note (optional)" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} className={`${inputCls} flex-1 min-w-[140px]`} />
         <button data-testid="ledger-add-btn" className="btn-magenta rounded-full px-4 py-2 text-[13px] font-semibold flex items-center gap-1"><Plus size={14} /> Save</button>
@@ -66,6 +66,30 @@ function BirthdayCollections({ onChanged }) {
   );
 }
 
+function Reminders() {
+  const [runs, setRuns] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const load = useCallback(() => api.get('/admin/members/dues/reminders').then(({ data }) => setRuns(data)), []);
+  useEffect(() => { load(); }, [load]);
+  const send = async () => {
+    if (!window.confirm('Email a dues reminder with a one-tap pay link to every sister with a balance?')) return;
+    setBusy(true);
+    try { const { data } = await api.post('/admin/members/dues/remind'); setMsg(`Sent to ${data.sent} sister${data.sent === 1 ? '' : 's'}.`); load(); } finally { setBusy(false); }
+  };
+  const last = runs[0];
+  return (
+    <div data-testid="dues-reminders" className="bg-white rounded-2xl p-5 border border-[#3B0A2E]/8 mb-5 flex flex-wrap items-center gap-4">
+      <div className="flex-1 min-w-[220px]">
+        <p className="font-semibold text-[#3B0A2E]">Dues reminders</p>
+        <p className="text-[12.5px] text-[#241019]/55">Sent automatically on January 2 and January 25 to sisters with a balance.{last ? ` Last run ${fmtDate(last.at)}: ${last.sent} sent.` : ''}</p>
+        {msg && <p data-testid="dues-remind-result" className="text-[12.5px] text-green-700 mt-1">{msg}</p>}
+      </div>
+      <button data-testid="dues-remind-btn" onClick={send} disabled={busy} className="btn-magenta rounded-full px-5 py-2 text-[13px] font-semibold flex items-center gap-1.5 disabled:opacity-60">{busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Send reminders now</button>
+    </div>
+  );
+}
+
 export function AdminDues() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [d, setD] = useState(null);
@@ -77,6 +101,7 @@ export function AdminDues() {
   const rows = d.rows.filter((r) => filter === 'all' || (filter === 'unpaid' ? r.dues_status !== 'paid' : r.dues_status === filter));
   return (
     <div data-testid="admin-dues">
+      <Reminders />
       <BirthdayCollections onChanged={load} />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
         {[['Collected', money(d.totals.collected)], ['Outstanding', money(d.totals.outstanding)], ['Overdue members', d.totals.overdue], ['Paid in full', d.totals.paid_in_full]].map(([l, v]) => (
