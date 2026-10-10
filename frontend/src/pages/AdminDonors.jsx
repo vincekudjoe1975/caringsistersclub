@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, Search, X, Repeat, Calendar, AlertTriangle, Tag, Save, HeartHandshake, ChevronUp, ChevronDown, ChevronsUpDown, Download, Mail, Send } from 'lucide-react';
+import { Loader2, Search, X, Repeat, Calendar, AlertTriangle, Tag, Save, HeartHandshake, ChevronUp, ChevronDown, ChevronsUpDown, Download, Mail, Send, Clock } from 'lucide-react';
 
 const SortTh = ({ label, k, sort, onSort, align }) => {
   const active = sort.key === k;
@@ -43,6 +43,9 @@ export default function AdminDonors() {
   const [segSubject, setSegSubject] = useState('');
   const [segMessage, setSegMessage] = useState('');
   const [segSending, setSegSending] = useState(false);
+  const [sendingTestCopy, setSendingTestCopy] = useState(false);
+  const [appeals, setAppeals] = useState([]);
+  const [showAppeals, setShowAppeals] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -58,7 +61,16 @@ export default function AdminDonors() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const loadAppeals = useCallback(async () => {
+    try {
+      const { data } = await api.get('/admin/appeals');
+      setAppeals(data.items || []);
+    } catch (e) {
+      console.error('AdminDonors: failed to load appeals', e);
+    }
+  }, []);
+
+  useEffect(() => { load(); loadAppeals(); }, [load, loadAppeals]);
 
   const openDonor = async (d) => {
     if (!d.email) return;
@@ -183,6 +195,26 @@ export default function AdminDonors() {
     URL.revokeObjectURL(url);
   };
 
+  const sendTestCopy = async () => {
+    if (!segSubject.trim() || !segMessage.trim()) {
+      toast({ title: 'Missing fields', description: 'Please add a subject and a message first.', variant: 'destructive' });
+      return;
+    }
+    setSendingTestCopy(true);
+    try {
+      const { data } = await api.post('/admin/donors/segment-email/test', { segment: quickFilter, subject: segSubject, message: segMessage });
+      if (data.sent) {
+        toast({ title: 'Test copy sent', description: `Preview sent to ${data.to}.` });
+      } else {
+        toast({ title: 'Not delivered', description: data.detail || 'The provider could not deliver to your address.', variant: 'destructive' });
+      }
+    } catch (e) {
+      toast({ title: 'Send failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
+    } finally {
+      setSendingTestCopy(false);
+    }
+  };
+
   const sendSegmentEmail = async () => {
     if (!segSubject.trim() || !segMessage.trim()) {
       toast({ title: 'Missing fields', description: 'Please add a subject and a message.', variant: 'destructive' });
@@ -193,6 +225,7 @@ export default function AdminDonors() {
       const { data } = await api.post('/admin/donors/segment-email', { segment: quickFilter, subject: segSubject, message: segMessage });
       toast({ title: 'Appeal sent', description: `Delivered to ${data.sent} of ${data.recipients} ${currentFilterLabel} donor${data.recipients === 1 ? '' : 's'}.` });
       setSegModal(false); setSegSubject(''); setSegMessage('');
+      loadAppeals();
     } catch (e) {
       toast({ title: 'Send failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
     } finally {
@@ -297,6 +330,44 @@ export default function AdminDonors() {
           </table>
         </div>
       )}
+
+      <div className="mt-8">
+        <button onClick={() => setShowAppeals((v) => !v)} data-testid="toggle-appeal-history"
+          className="flex items-center gap-2 text-[13.5px] font-semibold text-[#3B0A2E] hover:text-[#B4247E] transition-colors">
+          <Clock size={15} /> Appeal History {appeals.length > 0 && <span className="opacity-60">({appeals.length})</span>}
+          {showAppeals ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+        </button>
+        {showAppeals && (
+          <div className="mt-3 bg-white rounded-2xl border border-[#3B0A2E]/8 overflow-hidden" data-testid="appeal-history-panel">
+            {appeals.length === 0 ? (
+              <p className="text-[#241019]/50 text-[13px] p-6 text-center">No segment appeals have been sent yet.</p>
+            ) : (
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-[#241019]/55 text-[12px] uppercase tracking-wide" style={{ background: '#faf2f7' }}>
+                    <th className="px-5 py-3 font-semibold">Sent</th>
+                    <th className="px-5 py-3 font-semibold">Segment</th>
+                    <th className="px-5 py-3 font-semibold">Subject</th>
+                    <th className="px-5 py-3 font-semibold">By</th>
+                    <th className="px-5 py-3 font-semibold text-right">Delivered</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {appeals.map((a, i) => (
+                    <tr key={i} className="border-t border-[#3B0A2E]/8 text-[13px]" data-testid="appeal-history-row">
+                      <td className="px-5 py-3 text-[#241019]/70 whitespace-nowrap">{a.sent_at ? new Date(a.sent_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                      <td className="px-5 py-3"><span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full capitalize" style={{ background: '#f2e6ee', color: '#B4247E' }}>{a.segment}</span></td>
+                      <td className="px-5 py-3 text-[#3B0A2E] font-medium max-w-[220px] truncate">{a.subject}</td>
+                      <td className="px-5 py-3 text-[#241019]/60">{a.sent_by_name || '—'}</td>
+                      <td className="px-5 py-3 text-right text-[#3B0A2E] font-semibold">{a.sent} / {a.recipients}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
 
       {selected && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(41,6,31,0.6)' }} onClick={() => setSelected(null)}>
@@ -408,8 +479,12 @@ export default function AdminDonors() {
                 placeholder="Write a warm, personal appeal to this group of supporters…"
                 className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-3 text-[14px] focus:outline-none focus:border-[#B4247E] resize-none" />
               <div className="flex justify-end gap-2 mt-5">
-                <button onClick={() => setSegModal(false)} disabled={segSending} className="px-5 py-2.5 rounded-full text-[13.5px] font-semibold bg-white text-[#3B0A2E]" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>Cancel</button>
-                <button onClick={sendSegmentEmail} disabled={segSending} data-testid="segment-send-btn"
+                <button onClick={() => setSegModal(false)} disabled={segSending || sendingTestCopy} className="px-5 py-2.5 rounded-full text-[13.5px] font-semibold bg-white text-[#3B0A2E]" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>Cancel</button>
+                <button onClick={sendTestCopy} disabled={segSending || sendingTestCopy} data-testid="segment-test-copy-btn"
+                  className="px-5 py-2.5 rounded-full text-[13.5px] font-semibold bg-white text-[#B4247E] flex items-center gap-2 disabled:opacity-60" style={{ border: '1px solid rgba(180,36,126,0.4)' }}>
+                  {sendingTestCopy ? <><Loader2 size={15} className="animate-spin" /> Sending…</> : <><Mail size={15} /> Send me a test copy</>}
+                </button>
+                <button onClick={sendSegmentEmail} disabled={segSending || sendingTestCopy} data-testid="segment-send-btn"
                   className="btn-magenta px-6 py-2.5 rounded-full text-[13.5px] font-semibold flex items-center gap-2 disabled:opacity-60">
                   {segSending ? <><Loader2 size={15} className="animate-spin" /> Sending…</> : <><Send size={15} /> Send to {segmentCount}</>}
                 </button>

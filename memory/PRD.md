@@ -103,6 +103,14 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
   (admin subject+message, escaped) to a server-computed segment (all/monthly/lapsed/major);
   compose modal in AdminDonors with live recipient count. Verified (count, send+deliver,
   400 on empty subject, 403 without CSRF header).
+- **Segment email test copy**: `POST /api/admin/donors/segment-email/test` sends a preview of
+  the appeal to the logged-in admin's own inbox ("[Test] …" subject); button in the compose
+  modal. Verified (sent to own email, 400 on empty subject).
+- **Appeal history**: `GET /api/admin/appeals` lists past segment appeals (segment, subject,
+  sender name, sent/recipients counts, date) from the `segment_emails` collection; collapsible
+  panel on the Donors tab. Note: email *open* tracking is not available via the managed email
+  provider, so history shows delivered/sent counts only. Route placed at `/admin/appeals` to
+  avoid shadowing `/admin/donors/{email}`. Verified.
 
 ## Known issues / notes
 - **Email delivery works** via the Emergent platform-verified domain (202 + id for real

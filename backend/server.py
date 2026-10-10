@@ -1453,9 +1453,34 @@ async def send_segment_email(payload: SegmentEmail, user=Depends(require_admin))
             sent += 1
     await db.segment_emails.insert_one({
         "segment": seg, "subject": subject, "recipients": len(recipients),
-        "sent": sent, "sent_by": user.get("user_id"), "sent_at": datetime.now(timezone.utc).isoformat(),
+        "sent": sent, "sent_by": user.get("user_id"),
+        "sent_by_name": user.get("name") or user.get("email") or "Admin",
+        "sent_at": datetime.now(timezone.utc).isoformat(),
     })
     return {"segment": seg, "recipients": len(recipients), "sent": sent}
+
+
+@api_router.post("/admin/donors/segment-email/test")
+async def send_segment_email_test(payload: SegmentEmail, user=Depends(require_admin)):
+    # Sends a preview of the appeal to the logged-in admin's OWN email only.
+    subject = (payload.subject or "").strip()
+    message = (payload.message or "").strip()
+    if not subject or not message:
+        raise HTTPException(status_code=400, detail="Subject and message are required")
+    to = (user.get("email") or "").strip()
+    if not to:
+        raise HTTPException(status_code=400, detail="Your admin account has no email on file")
+    message_html = _esc(message).replace("\n", "<br/>")
+    result = await send_email(to=to, subject=f"[Test] {subject}", html=_appeal_email_html(user.get("name") or "Friend", subject, message_html))
+    if result is None:
+        return {"sent": False, "to": to, "detail": "The email provider could not deliver to your address."}
+    return {"sent": True, "to": to}
+
+
+@api_router.get("/admin/appeals")
+async def donor_appeal_history(user=Depends(require_admin)):
+    items = await db.segment_emails.find({}, {"_id": 0}).sort("sent_at", -1).to_list(50)
+    return {"items": items}
 
 
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------
