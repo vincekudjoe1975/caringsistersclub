@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, ChevronLeft, ChevronRight, CalendarDays, List } from 'lucide-react';
-import { api, mediaSrc } from '../lib/api';
+import { Loader2, ChevronLeft, ChevronRight, CalendarDays, List, CalendarPlus, Link2, Check } from 'lucide-react';
+import { api, mediaSrc, BACKEND_URL } from '../lib/api';
 import PageHero from '../components/PageHero';
 import { SeatsBadge } from '../components/ProgramSignup';
 
@@ -65,6 +65,22 @@ function MonthGrid({ items, month, setMonth }) {
   );
 }
 
+function SubscribeBar() {
+  const [copied, setCopied] = useState(false);
+  const feed = `${BACKEND_URL}/api/sessions.ics`;
+  const webcal = feed.replace(/^https?:\/\//, 'webcal://');
+  const copy = async () => { try { await navigator.clipboard.writeText(feed); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch (e) { console.error('Copy failed', e); } };
+  const btn = 'px-5 py-2.5 rounded-full text-[13px] font-semibold flex items-center gap-1.5 transition-colors';
+  return (
+    <div className="rounded-2xl p-5 mb-8 flex flex-wrap items-center gap-3 text-white" style={{ background: 'linear-gradient(160deg,#3B0A2E,#4d1240)' }} data-testid="sessions-subscribe">
+      <p className="flex-1 min-w-[220px] text-[14px]"><strong className="font-serif text-[17px]">Never miss a session.</strong> <span className="text-[#F7EFE9]/75">Subscribe once and new sessions appear in your calendar automatically.</span></p>
+      <a href={`https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`} target="_blank" rel="noopener noreferrer" data-testid="sessions-subscribe-google" className={`${btn} btn-gold`}><CalendarPlus size={15} /> Add to Google Calendar</a>
+      <a href={webcal} data-testid="sessions-subscribe-apple" className={`${btn} bg-white text-[#3B0A2E] hover:bg-[#F7EFE9]`}><CalendarPlus size={15} /> Apple / Outlook</a>
+      <button onClick={copy} data-testid="sessions-subscribe-copy" className={`${btn} text-white border border-white/30 hover:bg-white/10`}>{copied ? <Check size={15} /> : <Link2 size={15} />} {copied ? 'Copied' : 'Copy feed link'}</button>
+    </div>
+  );
+}
+
 export default function Sessions() {
   const [items, setItems] = useState(null);
   const [view, setView] = useState('calendar');
@@ -83,6 +99,7 @@ export default function Sessions() {
       <PageHero kicker="Plan ahead" title="Upcoming Sessions" subtitle="See when every program session starts, how many spots are left, and save your place." />
       <section className="py-14 lg:py-20">
         <div className="max-w-6xl mx-auto px-5 lg:px-8">
+          <SubscribeBar />
           <div className="flex gap-2 mb-6">
             {tabs.map(([v, l, Icon]) => (
               <button key={v} onClick={() => setView(v)} data-testid={`sessions-view-${v}`} className={`px-5 py-2 rounded-full text-[13.5px] font-semibold flex items-center gap-1.5 transition-colors ${view === v ? 'bg-[#3B0A2E] text-white' : 'bg-white text-[#3B0A2E] border border-[#3B0A2E]/12'}`}><Icon size={15} /> {l}</button>

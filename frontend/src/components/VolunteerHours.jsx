@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, Clock3, CheckCircle2, Trophy, Award } from 'lucide-react';
+import { Loader2, Clock3, CheckCircle2, Trophy, Award, PartyPopper } from 'lucide-react';
 import { api } from '../lib/api';
 import { errMsg } from '../pages/Events';
 
@@ -96,6 +96,31 @@ export const Leaderboard = () => {
             </li>
           ))}
         </ol>
+      </div>
+    </section>
+  );
+};
+
+export const AnniversaryShoutouts = () => {
+  const [d, setD] = useState(null);
+  useEffect(() => { api.get('/volunteer-hours/anniversaries').then(({ data }) => setD(data)).catch(() => {}); }, []);
+  if (!d || !d.items.length) return null;
+  return (
+    <section className="pb-16 lg:pb-20" data-testid="anniversary-shoutouts">
+      <div className="max-w-5xl mx-auto px-5 lg:px-8">
+        <div className="rounded-[24px] p-8 lg:p-10" style={{ background: '#fdf3e1' }}>
+          <h2 className="font-serif text-[26px] lg:text-[30px] text-[#3B0A2E] font-semibold mb-1 flex items-center gap-3"><PartyPopper size={24} className="text-[#B4247E]" /> Celebrating this {d.month}</h2>
+          <p className="text-[#5c4a1f] text-[14.5px] mb-6">Happy volunteer anniversary to these sisters. Thank you for showing up year after year!</p>
+          <div className="flex flex-wrap gap-3">
+            {d.items.map((a, i) => (
+              <span key={i} className="inline-flex items-center gap-2 bg-white rounded-full pl-2 pr-4 py-2 border border-[#CBA24B]/40" style={{ animation: `fadeUp .5s ease ${i * 50}ms both` }} data-testid="anniversary-item">
+                <span className="w-9 h-9 rounded-full flex items-center justify-center font-serif font-bold text-[13px] text-[#CBA24B]" style={{ background: '#3B0A2E' }}>{a.years}y</span>
+                <span className="text-[14px] font-semibold text-[#3B0A2E]" data-testid="anniversary-name">{a.name}</span>
+                <span className="text-[12px] text-[#241019]/55">{a.years} year{a.years === 1 ? '' : 's'} · {d.month.slice(0, 3)} {a.day}</span>
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
     </section>
   );

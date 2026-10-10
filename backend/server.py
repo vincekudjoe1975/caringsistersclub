@@ -5011,6 +5011,217 @@ async def public_sessions():
     return {"items": out}
 
 
+# ---------- Session calendar files ----------
+def _session_end(p: dict) -> str:
+    return p.get("end_date") or p["start_date"]
+
+
+def _session_vevent(p: dict) -> list:
+    s = datetime.strptime(p["start_date"], "%Y-%m-%d")
+    e = datetime.strptime(_session_end(p), "%Y-%m-%d") + timedelta(days=1)
+    desc = " · ".join(x for x in (p.get("schedule"), (p.get("summary") or "")[:500]) if x) + f"\n\nDetails & sign-up: {PUBLIC_APP_URL}/initiatives/{p['slug']}"
+    return ["BEGIN:VEVENT", f"UID:session-{p['id']}@caringsistersclub", f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+            f"DTSTART;VALUE=DATE:{s.strftime('%Y%m%d')}", f"DTEND;VALUE=DATE:{e.strftime('%Y%m%d')}",
+            f"SUMMARY:{_ics_escape(p['title'] + (' (' + p['schedule'] + ')' if p.get('schedule') else ''))}",
+            f"DESCRIPTION:{_ics_escape(desc)}", f"URL:{PUBLIC_APP_URL}/initiatives/{p['slug']}", "END:VEVENT"]
+
+
+def _ics_doc(events: list, name: str) -> str:
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Caring Sisters Club//Sessions//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+             f"X-WR-CALNAME:{_ics_escape(name)}", "REFRESH-INTERVAL;VALUE=DURATION:PT6H", "X-PUBLISHED-TTL:PT6H"]
+    for p in events:
+        lines += _session_vevent(p)
+    return "\r\n".join(lines + ["END:VCALENDAR"]) + "\r\n"
+
+
+def _session_gcal(p: dict) -> str:
+    s = datetime.strptime(p["start_date"], "%Y-%m-%d")
+    e = datetime.strptime(_session_end(p), "%Y-%m-%d") + timedelta(days=1)
+    details = (p.get("schedule") or "") + f"\n\nDetails: {PUBLIC_APP_URL}/initiatives/{p['slug']}"
+    return ("https://calendar.google.com/calendar/render?action=TEMPLATE"
+            f"&text={_urlquote(p['title'])}&dates={s.strftime('%Y%m%d')}/{e.strftime('%Y%m%d')}&details={_urlquote(details)}")
+
+
+@api_router.get("/sessions.ics")
+async def sessions_feed():
+    items = [p for p in await db.programs.find({"published": True, "start_date": {"$nin": [None, ""]}}, {"_id": 0}).sort("start_date", 1).to_list(300)
+             if _session_end(p) >= (datetime.now(timezone.utc).date() - timedelta(days=30)).isoformat()]
+    return Response(content=_ics_doc(items, "Caring Sisters Club Sessions"), media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": 'inline; filename="caring-sisters-sessions.ics"', "Cache-Control": "public, max-age=900", "X-Content-Type-Options": "nosniff"})
+
+
+@api_router.get("/sessions/{slug}/calendar.ics")
+async def session_calendar_file(slug: str):
+    p = await db.programs.find_one({"slug": slug[:100], "published": True, "start_date": {"$nin": [None, ""]}}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return Response(content=_ics_doc([p], p["title"]), media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{p["slug"][:60]}.ics"', "X-Content-Type-Options": "nosniff"})
+
+
+# ---------- Session reminders ----------
+def _session_reminder_html(name: str, p: dict, kind: str) -> str:
+    when = "today" if kind == "dayof" else "in 2 days"
+    dates = datetime.strptime(p["start_date"], "%Y-%m-%d").strftime("%A, %B %-d")
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Session Reminder") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 12px">{_esc(p["title"])} starts {when}!</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 14px">Hi {_esc(name)}, this is a friendly reminder that your session begins <strong>{dates}</strong>.</p>'
+        + (f'<p style="font-size:14px;color:#3B0A2E;font-weight:bold;margin:0 0 18px">Schedule: {_esc(p["schedule"])}</p>' if p.get("schedule") else "")
+        + _btn(_session_gcal(p), "Add to Google Calendar", primary=True) + "&nbsp; "
+        + _btn(f"{PUBLIC_APP_URL}/api/sessions/{p['slug']}/calendar.ics", "Apple / Outlook") +
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">We can\'t wait to see you!<br/>The Caring Sisters Club</p></td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you have a seat in this program. Can\'t make it? Just reply to let us know so we can offer your seat to someone on the waitlist.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _send_session_reminders(now=None) -> int:
+    now = now or datetime.now(timezone.utc)
+    today = now.date()
+    targets = [((today + timedelta(days=2)).isoformat(), "2day")]
+    if now.hour >= 11:
+        targets.append((today.isoformat(), "dayof"))
+    sent = 0
+    for day, kind in targets:
+        for p in await db.programs.find({"published": True, "start_date": day}, {"_id": 0}).to_list(100):
+            for s in await db.submissions.find(_seats_q(p), {"_id": 0, "id": 1, "data": 1}).to_list(2000):
+                r = await db.session_reminders.update_one({"submission_id": s["id"], "kind": kind, "start_date": day}, {"$setOnInsert": {"program_id": p["id"], "at": _now_iso()}}, upsert=True)
+                if r.upserted_id is None:
+                    continue
+                try:
+                    await send_email(to=s["data"].get("email"), subject=(f"Today: {p['title']}" if kind == "dayof" else f"Reminder: {p['title']} starts in 2 days")[:150],
+                                     html=_session_reminder_html((s["data"].get("name") or "friend").split(" ")[0], p, kind))
+                    sent += 1
+                except Exception as ex:
+                    logging.error(f"Session reminder failed: {ex}")
+    return sent
+
+
+# ---------- Session feedback ----------
+def _feedback_html(name: str, p: dict, tok: str) -> str:
+    stars = "".join(f'<a href="{PUBLIC_APP_URL}/feedback?token={tok}&rating={n}" style="display:inline-block;margin:0 3px;padding:10px 13px;border-radius:10px;background:#faf2f7;color:#B4247E;font-size:15px;font-weight:bold;text-decoration:none">{n} &#9733;</a>' for n in range(1, 6))
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("How Did It Go?") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019;text-align:center">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 12px">How was {_esc(p["title"])}?</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">Hi {_esc(name)}, thank you for being part of this session! It takes 30 seconds: tap a rating to tell us how it went.</p>'
+        f'<p style="margin:0 0 20px">{stars}</p>'
+        '<p style="font-size:12px;color:#6b5560;margin:0">1 = not great, 5 = loved it. You can add a comment on the next screen.</p></td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you took part in this program. Your feedback link is private to you.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _send_session_feedback(today=None) -> int:
+    today = today or datetime.now(timezone.utc).date()
+    lo, hi = (today - timedelta(days=4)).isoformat(), (today - timedelta(days=1)).isoformat()
+    sent = 0
+    for p in await db.programs.find({"start_date": {"$nin": [None, ""]}}, {"_id": 0}).to_list(300):
+        if not lo <= _session_end(p) <= hi:
+            continue
+        for s in await db.submissions.find(_seats_q(p), {"_id": 0, "id": 1, "data": 1}).to_list(2000):
+            tok = secrets.token_urlsafe(24)
+            r = await db.session_feedback.update_one({"submission_id": s["id"], "session_end": _session_end(p)},
+                                                     {"$setOnInsert": {"id": str(uuid.uuid4()), "token": tok, "program_id": p["id"], "email": (s["data"].get("email") or "").lower(),
+                                                                       "name": s["data"].get("name") or "", "sent_at": _now_iso()}}, upsert=True)
+            if r.upserted_id is None:
+                continue
+            try:
+                await send_email(to=s["data"].get("email"), subject=f"How was {p['title']}? (30-second feedback)"[:150], html=_feedback_html((s["data"].get("name") or "friend").split(" ")[0], p, tok))
+                sent += 1
+            except Exception as ex:
+                logging.error(f"Feedback email failed: {ex}")
+    return sent
+
+
+@api_router.get("/feedback")
+async def get_feedback(token: str, request: Request):
+    _rate_limit(request, "feedback", max_hits=30, window_s=60)
+    f = await db.session_feedback.find_one({"token": token[:64]}, {"_id": 0}) if token else None
+    if not f:
+        raise HTTPException(status_code=404, detail="This feedback link is invalid.")
+    p = await db.programs.find_one({"id": f["program_id"]}, {"_id": 0, "title": 1}) or {}
+    return {"program": p.get("title", "your session"), "name": f["name"].split(" ")[0], "submitted": bool(f.get("submitted_at")),
+            "rating": f.get("rating"), "recommend": f.get("recommend"), "comment": f.get("comment", "")}
+
+
+class FeedbackIn(BaseModel):
+    token: str
+    rating: int
+    recommend: Optional[bool] = None
+    comment: str = ""
+
+
+@api_router.post("/feedback")
+async def submit_feedback(payload: FeedbackIn, request: Request):
+    _rate_limit(request, "feedback-post", max_hits=10, window_s=60)
+    if not 1 <= payload.rating <= 5:
+        raise HTTPException(status_code=400, detail="Please choose a rating from 1 to 5.")
+    res = await db.session_feedback.update_one({"token": payload.token[:64]}, {"$set": {"rating": payload.rating, "recommend": payload.recommend,
+                                                                                    "comment": payload.comment.strip()[:1500], "submitted_at": _now_iso()}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="This feedback link is invalid.")
+    return {"message": "Thank you for your feedback!"}
+
+
+@api_router.get("/admin/reports/session-feedback")
+async def admin_session_feedback(user=Depends(require_admin)):
+    out = []
+    for pid in await db.session_feedback.distinct("program_id"):
+        p = await db.programs.find_one({"id": pid}, {"_id": 0, "title": 1, "start_date": 1, "end_date": 1}) or {"title": "(deleted program)"}
+        rows = await db.session_feedback.find({"program_id": pid}, {"_id": 0, "token": 0, "email": 0}).sort("submitted_at", -1).to_list(2000)
+        done = [r for r in rows if r.get("submitted_at")]
+        rec = [r for r in done if r.get("recommend") is not None]
+        out.append({"program_id": pid, "title": p["title"], "end": p.get("end_date") or p.get("start_date"), "sent": len(rows), "responses": len(done),
+                    "response_rate": round(100 * len(done) / len(rows), 1) if rows else None,
+                    "avg_rating": round(sum(r["rating"] for r in done) / len(done), 2) if done else None,
+                    "recommend_pct": round(100 * sum(1 for r in rec if r["recommend"]) / len(rec)) if rec else None,
+                    "comments": [{"id": r["id"], "rating": r["rating"], "comment": r["comment"], "name": _short_name(r["name"]), "featured": bool(r.get("featured"))}
+                                 for r in done if r.get("comment")][:8]})
+    return {"items": sorted(out, key=lambda r: r.get("end") or "", reverse=True)}
+
+
+@api_router.post("/admin/feedback/{fid}/feature")
+async def admin_feature_feedback(fid: str, user=Depends(require_admin)):
+    f = await db.session_feedback.find_one({"id": fid}, {"_id": 0})
+    if not f or not f.get("comment"):
+        raise HTTPException(status_code=404, detail="Comment not found")
+    if f.get("featured"):
+        raise HTTPException(status_code=409, detail="Already featured")
+    p = await db.programs.find_one({"id": f["program_id"]}, {"_id": 0, "testimonials": 1, "title": 1})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    if len(p.get("testimonials") or []) >= 6:
+        raise HTTPException(status_code=400, detail="This program already shows 6 testimonials. Remove one in Programs first.")
+    t = {"id": str(uuid.uuid4()), "quote": f["comment"][:600], "name": _short_name(f["name"]), "role": f"{p['title']} participant"[:80], "photo_url": "", "added_at": _now_iso()}
+    await db.programs.update_one({"id": f["program_id"]}, {"$push": {"testimonials": t}})
+    await db.session_feedback.update_one({"id": fid}, {"$set": {"featured": True}})
+    return {"testimonial": t}
+
+
+# ---------- Anniversary shout-outs ----------
+@api_router.get("/volunteer-hours/anniversaries")
+async def anniversary_shoutouts():
+    now = datetime.now(timezone.utc).date()
+    mode = (await _site()).get("badge_wall_mode") or "optin"
+    out = []
+    async for r in db.volunteer_hours.aggregate([{"$match": {"status": "approved"}}, {"$group": {"_id": "$email", "first": {"$min": "$date"}}}]):
+        first = r["first"] or ""
+        if len(first) < 10 or int(first[5:7]) != now.month or now.year - int(first[:4]) < 1:
+            continue
+        if mode == "optin" and not await db.volunteer_hours.find_one({"email": r["_id"], "leaderboard": True}, {"_id": 1}):
+            continue
+        last = await db.volunteer_hours.find_one({"email": r["_id"], "status": "approved"}, {"_id": 0, "name": 1}, sort=[("created_at", -1)])
+        out.append({"name": _short_name((last or {}).get("name", "")), "years": now.year - int(first[:4]), "day": int(first[8:10])})
+    return {"month": now.strftime("%B"), "items": sorted(out, key=lambda x: x["day"])[:24]}
+
+
 @api_router.get("/volunteer-hours/leaderboard")
 async def hours_leaderboard():
     year = datetime.now(timezone.utc).strftime("%Y")
@@ -5219,6 +5430,8 @@ async def _hourly_scheduler():
             await _process_all_waitlists()
             await _send_volunteer_thanks()
             await _celebrate_badge_wall()
+            await _send_session_reminders()
+            await _send_session_feedback()
             for p in await db.programs.find({"capacity": {"$gt": 0}}, {"_id": 0, "id": 1}).to_list(200):
                 await _fill_seats(p["id"])
         except Exception as e:

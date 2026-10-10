@@ -7,6 +7,7 @@ import { ForecastHistory } from '../components/ForecastHistory';
 import { AppealComparison } from '../components/AppealComparison';
 import { TemplateInsights } from '../components/TemplateInsights';
 import { LaunchResults } from '../components/LaunchResults';
+import { SessionFeedback } from '../components/SessionFeedback';
 
 const monthLabel = (k) => new Date(`${k}-01T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 const csvCell = (v) => { let t = String(v ?? ''); if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`; return `"${t.replace(/"/g, '""')}"`; };
@@ -315,6 +316,7 @@ export default function AdminReports() {
       <AppealComparison />
       <TemplateInsights />
       <LaunchResults />
+      <SessionFeedback />
       <StoryRequestResults />
       <SignupReport />
       <HoursReview />

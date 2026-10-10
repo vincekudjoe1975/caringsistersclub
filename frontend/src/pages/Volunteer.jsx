@@ -3,7 +3,7 @@ import { api } from '../lib/api';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
 import { CheckCircle2, Users, HandHeart, Loader2 } from 'lucide-react';
-import { LogHours, Leaderboard, CertificateRequest, BadgeWall } from '../components/VolunteerHours';
+import { LogHours, Leaderboard, CertificateRequest, BadgeWall, AnniversaryShoutouts } from '../components/VolunteerHours';
 import { useToast } from '../hooks/use-toast';
 
 const interests = ['Events & Programs', 'Community Drives', 'Mentorship', 'Fundraising', 'Administration', 'Chapter Leadership'];
@@ -89,6 +89,7 @@ export default function Volunteer() {
       </section>
       <Leaderboard />
       <BadgeWall />
+      <AnniversaryShoutouts />
       <CertificateRequest />
       <LogHours />
     </div>
