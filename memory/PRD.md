@@ -216,3 +216,8 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Staff: GET /api/admin/programs/{pid}/waitlist; POST /api/admin/waitlist/{sid}/offer|move-in|remove (staff offers set offer_override → claim skips seat check). WaitlistPanel.jsx via "Waitlist" button on program rows (capacity>0).
 - YIR: settings.site.yir_ask_amount (default 50); public YIR returns ask_amount; email "Help Us Do It Again" → /donate?amount= (recipient's last gift or default). Donate.jsx reads ?amount=.
 - Certificates: milestones >=50 (CERT_MIN) store cert_token; GET /api/certificates/{token}.pdf (Pillow PDF, letter landscape); badge email links it; public POST /api/certificates/request {email} (3/10min) emails links; CertificateRequest form on /volunteer.
+
+## 2026 — Waitlist join alerts, badge sharing, YIR gift attribution, program forecast (iteration_14: 100%)
+- settings.site: wl_alert_mode instant|digest|threshold, wl_alert_threshold (5), forecast_weekly (true). _waitlist_join_alert (background on waitlist join), _send_waitlist_digest (daily), _send_forecast (Mondays, scheduled_runs forecast:YYYY-Www). PUT /api/admin/reports/forecast-settings, GET /api/admin/reports/program-forecast, POST .../send. ProgramForecast.jsx in Reports.
+- Badges: volunteer_milestones.share_token; GET /api/badges/{token} (short name only), /api/share/badge/{token}(/card.png) OG; page /badge/:token. ShareBar(url,text,testid) exported from YearInReview.jsx.
+- YIR attribution: db.yir_clicks {year,source,clicks}; /api/t/yir/{year}/email redirect, POST /api/yir/{year}/click; payment_transactions.source 'yir-(email|page)-YYYY' (from Donate ?src → sessionStorage csc_source); GET /api/admin/year-in-review/{year}/results.
