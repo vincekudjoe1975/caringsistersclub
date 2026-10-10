@@ -89,6 +89,13 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
   cooldown in AdminCampaign. Verified (sends once, cooldown skips repeat, disable skips).
 - **Go Live guidance** provided (Manage → Payments → Claim Stripe sandbox + install Emergent
   app; keys/webhook auto-managed). User action — not a code change.
+- **Year-end statements branded**: `_year_statement_html` now uses the shared `_brand_header`
+  (logo) and shows the configurable real EIN (fake "sample" EIN removed); `_run_year_statements`
+  passes `org_ein` from settings. Verified.
+- **Donor search filters + sortable columns** (AdminDonors.jsx): quick-filter chips with live
+  counts — All / Monthly / Lapsed / Major ($500+) — plus clickable, sortable column headers
+  (Donor, Gifts, Last Gift, Lifetime) via a `SortTh` component. Verified visually (Major filter
+  shows only the $600 lapsed donor; name sort orders A→Z).
 
 ## Known issues / notes
 - **Email delivery works** via the Emergent platform-verified domain (202 + id for real

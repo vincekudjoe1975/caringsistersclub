@@ -1,7 +1,20 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, Search, X, Repeat, Calendar, AlertTriangle, Tag, Save, HeartHandshake } from 'lucide-react';
+import { Loader2, Search, X, Repeat, Calendar, AlertTriangle, Tag, Save, HeartHandshake, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
+
+const SortTh = ({ label, k, sort, onSort, align }) => {
+  const active = sort.key === k;
+  const Icon = !active ? ChevronsUpDown : (sort.dir === 'asc' ? ChevronUp : ChevronDown);
+  return (
+    <th className={`px-5 py-3 font-semibold ${align === 'right' ? 'text-right' : ''}`}>
+      <button onClick={() => onSort(k)} data-testid={`sort-${k}`}
+        className={`inline-flex items-center gap-1 uppercase tracking-wide hover:text-[#B4247E] transition-colors ${active ? 'text-[#B4247E]' : ''}`}>
+        {label}<Icon size={13} className={active ? 'opacity-90' : 'opacity-40'} />
+      </button>
+    </th>
+  );
+};
 
 function fmt(n) {
   return `$${Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
@@ -14,7 +27,8 @@ export default function AdminDonors() {
   const { toast } = useToast();
   const [donors, setDonors] = useState([]);
   const [lapsedCount, setLapsedCount] = useState(0);
-  const [showLapsedOnly, setShowLapsedOnly] = useState(false);
+  const [quickFilter, setQuickFilter] = useState('all'); // all | monthly | lapsed | major
+  const [sort, setSort] = useState({ key: 'lifetime', dir: 'desc' });
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
   const [selected, setSelected] = useState(null);
@@ -108,10 +122,42 @@ export default function AdminDonors() {
     }
   };
 
-  const filtered = donors.filter((d) =>
-    (!q || (d.name || '').toLowerCase().includes(q.toLowerCase()) || (d.email || '').toLowerCase().includes(q.toLowerCase()))
-    && (!showLapsedOnly || d.lapsed)
-  );
+  const MAJOR_DONOR_MIN = 500;
+
+  const matchesQuick = (d) => {
+    if (quickFilter === 'monthly') return d.has_monthly;
+    if (quickFilter === 'lapsed') return d.lapsed;
+    if (quickFilter === 'major') return (d.lifetime || 0) >= MAJOR_DONOR_MIN;
+    return true;
+  };
+
+  const toggleSort = (key) => {
+    setSort((s) => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : 'desc' });
+  };
+
+  const filtered = donors
+    .filter((d) =>
+      (!q || (d.name || '').toLowerCase().includes(q.toLowerCase()) || (d.email || '').toLowerCase().includes(q.toLowerCase()))
+      && matchesQuick(d)
+    )
+    .sort((a, b) => {
+      const dir = sort.dir === 'asc' ? 1 : -1;
+      let av; let bv;
+      if (sort.key === 'name') { av = (a.name || '').toLowerCase(); bv = (b.name || '').toLowerCase(); }
+      else if (sort.key === 'gifts') { av = a.gifts || 0; bv = b.gifts || 0; }
+      else if (sort.key === 'last_gift') { av = a.last_gift || ''; bv = b.last_gift || ''; }
+      else { av = a.lifetime || 0; bv = b.lifetime || 0; }
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return 0;
+    });
+
+  const quickFilters = [
+    { key: 'all', label: 'All', count: donors.length },
+    { key: 'monthly', label: 'Monthly', count: donors.filter((d) => d.has_monthly).length },
+    { key: 'lapsed', label: 'Lapsed', count: donors.filter((d) => d.lapsed).length },
+    { key: 'major', label: `Major ($${MAJOR_DONOR_MIN}+)`, count: donors.filter((d) => (d.lifetime || 0) >= MAJOR_DONOR_MIN).length },
+  ];
 
   if (loading) {
     return <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-[#B4247E]" size={32} /></div>;
@@ -129,12 +175,22 @@ export default function AdminDonors() {
               <strong>{lapsedCount} monthly donor{lapsedCount > 1 ? 's have' : ' has'}</strong> no recurring gift in over 35 days — their monthly support may have lapsed.
             </p>
           </div>
-          <button onClick={() => setShowLapsedOnly((v) => !v)} data-testid="toggle-lapsed-filter"
+          <button onClick={() => setQuickFilter((v) => v === 'lapsed' ? 'all' : 'lapsed')} data-testid="toggle-lapsed-filter"
             className="px-4 py-2 rounded-full text-[12.5px] font-semibold whitespace-nowrap text-white" style={{ background: '#e85c3a' }}>
-            {showLapsedOnly ? 'Show all donors' : 'Review lapsed'}
+            {quickFilter === 'lapsed' ? 'Show all donors' : 'Review lapsed'}
           </button>
         </div>
       )}
+
+      <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="donor-quick-filters">
+        {quickFilters.map((f) => (
+          <button key={f.key} onClick={() => setQuickFilter(f.key)} data-testid={`donor-filter-${f.key}`}
+            className={`px-3.5 py-1.5 rounded-full text-[12.5px] font-semibold transition-colors ${quickFilter === f.key ? 'bg-[#3B0A2E] text-white' : 'bg-white text-[#3B0A2E]'}`}
+            style={quickFilter === f.key ? {} : { border: '1px solid rgba(59,10,46,0.15)' }}>
+            {f.label} <span className="opacity-60">({f.count})</span>
+          </button>
+        ))}
+      </div>
 
       <div className="relative max-w-sm mb-6">
         <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#241019]/40" />
@@ -143,16 +199,16 @@ export default function AdminDonors() {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl p-12 text-center border border-[#3B0A2E]/8"><p className="text-[#241019]/50">{showLapsedOnly ? 'No lapsed donors.' : 'No donors yet.'}</p></div>
+        <div className="bg-white rounded-2xl p-12 text-center border border-[#3B0A2E]/8"><p className="text-[#241019]/50">{quickFilter === 'all' && !q ? 'No donors yet.' : 'No donors match this filter.'}</p></div>
       ) : (
         <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 overflow-hidden">
           <table className="w-full text-left">
             <thead>
               <tr className="text-[#241019]/55 text-[12px] uppercase tracking-wide" style={{ background: '#faf2f7' }}>
-                <th className="px-5 py-3 font-semibold">Donor</th>
-                <th className="px-5 py-3 font-semibold">Gifts</th>
-                <th className="px-5 py-3 font-semibold">Last Gift</th>
-                <th className="px-5 py-3 font-semibold text-right">Lifetime</th>
+                <SortTh label="Donor" k="name" sort={sort} onSort={toggleSort} />
+                <SortTh label="Gifts" k="gifts" sort={sort} onSort={toggleSort} />
+                <SortTh label="Last Gift" k="last_gift" sort={sort} onSort={toggleSort} />
+                <SortTh label="Lifetime" k="lifetime" sort={sort} onSort={toggleSort} align="right" />
               </tr>
             </thead>
             <tbody>

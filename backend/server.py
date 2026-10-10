@@ -1097,19 +1097,18 @@ async def export_donations_csv(year: Optional[int] = None, user=Depends(require_
     )
 
 
-def _year_statement_html(name: str, year: int, total: float, gifts: list) -> str:
+def _year_statement_html(name: str, year: int, total: float, gifts: list, ein: str = "") -> str:
     rows = "".join(
         f'<tr><td style="padding:8px 12px;font-size:13px;color:#4a3340;border-top:1px solid #eadfe6">{_esc((g.get("updated_at") or "")[:10])}</td>'
         f'<td style="padding:8px 12px;font-size:13px;color:#4a3340;border-top:1px solid #eadfe6">{"Monthly" if g.get("frequency")=="monthly" else "One-Time"}</td>'
         f'<td align="right" style="padding:8px 12px;font-size:13px;color:#3B0A2E;font-weight:bold;border-top:1px solid #eadfe6">${float(g.get("amount",0)):,.2f}</td></tr>'
         for g in gifts
     )
+    ein_txt = f" (EIN {_esc(ein)})" if ein else ""
     return (
         '<table role="presentation" width="100%" style="background:#f7efe9;padding:0;margin:0"><tr><td align="center" style="padding:28px 16px">'
         '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
-        '<tr><td style="background:#3B0A2E;padding:26px 32px;color:#F7EFE9;font-family:Georgia,serif">'
-        '<div style="font-size:19px;font-weight:bold">The Caring Sisters Club</div>'
-        f'<div style="font-size:11px;color:#CBA24B;letter-spacing:3px;text-transform:uppercase;margin-top:4px">{year} Annual Giving Statement</div></td></tr>'
+        + _brand_header(f"{year} Annual Giving Statement") +
         '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
         f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:22px;margin:0 0 12px">Thank you, {_esc(name)}</h1>'
         f'<p style="font-size:14px;line-height:1.6;color:#4a3340;margin:0 0 18px">Here is a summary of your tax-deductible contributions to The Caring Sisters Club during {year}. Please retain this statement for your records.</p>'
@@ -1121,7 +1120,7 @@ def _year_statement_html(name: str, year: int, total: float, gifts: list) -> str
         '<table role="presentation" width="100%" style="background:#3B0A2E;border-radius:12px">'
         f'<tr><td style="padding:16px 22px;font-size:14px;color:#F7EFE9">Total {year} contributions</td>'
         f'<td align="right" style="padding:16px 22px;font-size:20px;font-weight:bold;color:#CBA24B">${total:,.2f}</td></tr></table>'
-        '<p style="font-size:12px;line-height:1.6;color:#6b5560;margin:18px 0 0">The Caring Sisters Club, Inc. is a 501(c)(3) tax-exempt organization (EIN 88-1234567, sample). No goods or services were provided in exchange for these contributions. Please consult your tax advisor.</p>'
+        f'<p style="font-size:12px;line-height:1.6;color:#6b5560;margin:18px 0 0">The Caring Sisters Club, Inc. is a 501(c)(3) tax-exempt organization{ein_txt}. No goods or services were provided in exchange for these contributions. Please consult your tax advisor.</p>'
         '</td></tr>'
         '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">With gratitude, The Caring Sisters Club. We never ask for your password or card details by email.</p></td></tr>'
         '</table></td></tr></table>'
@@ -1129,6 +1128,8 @@ def _year_statement_html(name: str, year: int, total: float, gifts: list) -> str
 
 
 async def _run_year_statements(yr: int) -> dict:
+    settings = await _get_settings()
+    ein = settings.get("org_ein", "")
     rows = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(5000)
     rows = [r for r in rows if (r.get("updated_at") or "").startswith(str(yr)) and (r.get("donor_email") or "").strip()]
     by_email = {}
@@ -1139,7 +1140,7 @@ async def _run_year_statements(yr: int) -> dict:
         total = sum(float(g.get("amount", 0)) for g in gifts)
         name = next((g.get("donor_name") for g in gifts if (g.get("donor_name") or "").strip()), None) or "Friend"
         gifts_sorted = sorted(gifts, key=lambda g: g.get("updated_at") or "")
-        html = _year_statement_html(name, yr, total, gifts_sorted)
+        html = _year_statement_html(name, yr, total, gifts_sorted, ein=ein)
         result = await send_email(to=email, subject=f"Your {yr} giving statement — The Caring Sisters Club", html=html)
         if result is not None:
             sent += 1
