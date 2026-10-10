@@ -5,6 +5,8 @@ import { eventImg } from './Events';
 import { CtaLink } from './Initiatives';
 import Reveal from '../components/Reveal';
 import { TestimonialCard } from '../components/TestimonialCard';
+import { ShareStory } from '../components/ShareStory';
+import { ProgramSignup } from '../components/ProgramSignup';
 import { imgSrc } from '../lib/useHomeContent';
 import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
 import { ArrowLeft, CheckCircle2, Loader2, Heart, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -89,16 +91,22 @@ export default function ProgramDetail() {
 
       <Gallery items={p.gallery || []} />
 
-      {p.testimonials?.length > 0 && (
-        <section className="py-16 lg:py-20" data-testid="program-testimonials">
-          <div className="max-w-6xl mx-auto px-5 lg:px-8">
+      <section className="py-16 lg:py-20" data-testid="program-testimonials">
+        <div className="max-w-6xl mx-auto px-5 lg:px-8">
+          {p.testimonials?.length > 0 && <>
             <h2 className="font-serif text-[30px] lg:text-[38px] text-[#3B0A2E] font-semibold mb-10 text-center">Voices from the program</h2>
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-7">
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-7 mb-10">
               {p.testimonials.map((t, i) => <Reveal key={t.id || i} delay={(i % 3) * 100}><TestimonialCard t={t} /></Reveal>)}
             </div>
+          </>}
+          <div className="text-center">
+            <p className="text-[#241019]/65 text-[15px] mb-4">Part of {p.title}? Share how it made a difference.</p>
+            <ShareStory programSlug={p.slug} />
           </div>
-        </section>
-      )}
+        </div>
+      </section>
+
+      <div style={{ background: '#F7EFE9' }}><ProgramSignup slug={p.slug} title={p.title} /></div>
     </div>
   );
 }

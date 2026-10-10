@@ -255,6 +255,17 @@ async def upload_media(
 ):
     if category not in ALLOWED_CATEGORIES:
         raise HTTPException(status_code=400, detail="Invalid category")
+    return await _store_upload(file, category, title, subtitle, user["email"])
+
+
+@api_router.post("/stories/photo")
+async def upload_story_photo(request: Request, file: UploadFile = File(...)):
+    _rate_limit(request, "story-photo", max_hits=3, window_s=600)
+    doc = await _store_upload(file, "story", "Story photo", None, "public")
+    return {"url": doc["url"]}
+
+
+async def _store_upload(file: UploadFile, category: str, title, subtitle, uploader: str) -> dict:
     item_id = str(uuid.uuid4())
     ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else ""
     is_doc = category in ("document", "report")
@@ -292,7 +303,7 @@ async def upload_media(
         "size": result.get("size", len(data)),
         "is_deleted": False,
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
-        "uploaded_by": user["email"],
+        "uploaded_by": uploader,
     }
     await db.media.insert_one(doc)
     doc.pop("_id", None)
@@ -302,8 +313,8 @@ async def upload_media(
 
 @api_router.get("/media")
 async def list_media(category: Optional[str] = None):
-    query = {"is_deleted": {"$ne": True}}
-    if category:
+    query = {"is_deleted": {"$ne": True}, "category": {"$ne": "story"}}
+    if category and category != "story":
         query["category"] = category
     items = await db.media.find(query, {"_id": 0}).sort("uploaded_at", -1).to_list(500)
     for it in items:
@@ -629,7 +640,7 @@ class SubmissionCreate(BaseModel):
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PUBLIC_SUB_TYPES = {"volunteer", "member", "contact"}
-SUB_LABELS = {"volunteer": "Volunteer application", "member": "Membership application", "contact": "Contact message", "rsvp": "Event RSVP"}
+SUB_LABELS = {"program_signup": "Program sign-up", "story": "Member story", "volunteer": "Volunteer application", "member": "Membership application", "contact": "Contact message", "rsvp": "Event RSVP"}
 
 
 def _validate_person(data: dict):
@@ -2663,6 +2674,7 @@ class ImpactItem(BaseModel):
 class GalleryItem(BaseModel):
     url: str
     caption: str = ""
+    added_at: Optional[str] = None
 
 
 class TestimonialItem(BaseModel):
@@ -2671,6 +2683,7 @@ class TestimonialItem(BaseModel):
     name: str
     role: str = ""
     photo_url: str = ""
+    added_at: Optional[str] = None
 
 
 def _ok_img(url: str) -> bool:
@@ -2685,7 +2698,7 @@ def _clean_testimonials(items: list, limit: int) -> list:
         if not _ok_img(t.photo_url.strip()):
             raise HTTPException(status_code=400, detail="Testimonial photo must be an uploaded image or https URL")
         out.append({"id": t.id or str(uuid.uuid4()), "quote": t.quote.strip()[:600], "name": t.name.strip()[:80],
-                    "role": t.role.strip()[:80], "photo_url": t.photo_url.strip()})
+                    "role": t.role.strip()[:80], "photo_url": t.photo_url.strip(), "added_at": t.added_at or _now_iso()})
     return out
 
 
@@ -2732,7 +2745,7 @@ def _clean_gallery(items: list) -> list:
         url = g.url.strip()
         if not url or not _ok_img(url):
             raise HTTPException(status_code=400, detail="Gallery photos must be uploaded images or https URLs")
-        out.append({"url": url, "caption": g.caption.strip()[:150]})
+        out.append({"url": url, "caption": g.caption.strip()[:150], "added_at": g.added_at or _now_iso()})
     return out
 
 
@@ -2879,9 +2892,9 @@ DEFAULT_HOME = {
         {"icon": "Home", "title": "Housing Assistance", "text": "We provide comprehensive housing navigation, emergency support, and resource connection so every sister has a stable foundation to build her future upon.", "cta": "Learn More", "to": "/initiatives"},
     ],
     "testimonials": [
-        {"id": "t-adaeze", "quote": "The Caring Sisters Club gave me a mentor, a grant, and a sisterhood. My business tripled in a year.", "name": "Adaeze N.", "role": "Elevation Lab Graduate", "photo_url": ""},
-        {"id": "t-louise", "quote": "When I needed housing support, my sisters showed up. This community is family.", "name": "Louise M.", "role": "Member since 2022", "photo_url": ""},
-        {"id": "t-chantal", "quote": "I found my leadership voice here. Now I mentor five other women.", "name": "Chantal B.", "role": "Chapter Lead, Brooklyn", "photo_url": ""},
+        {"id": "t-adaeze", "quote": "The Caring Sisters Club gave me a mentor, a grant, and a sisterhood. My business tripled in a year.", "name": "Adaeze N.", "role": "Elevation Lab Graduate", "photo_url": "", "added_at": "2020-01-01T00:00:00+00:00"},
+        {"id": "t-louise", "quote": "When I needed housing support, my sisters showed up. This community is family.", "name": "Louise M.", "role": "Member since 2022", "photo_url": "", "added_at": "2020-01-01T00:00:00+00:00"},
+        {"id": "t-chantal", "quote": "I found my leadership voice here. Now I mentor five other women.", "name": "Chantal B.", "role": "Chapter Lead, Brooklyn", "photo_url": "", "added_at": "2020-01-01T00:00:00+00:00"},
     ],
     "updated_at": None,
 }
@@ -2966,6 +2979,315 @@ async def admin_winbacks(user=Depends(require_admin)):
     notes = sum(1 for c in cancels if c.get("thanked"))
     return {"cancellations": len(cancels), "notes_sent": notes, "returned": returned,
             "rate": round(returned / notes * 100, 1) if notes else 0, "recovered": round(recovered, 2), "items": rows}
+
+
+# ---------- About page content (editable) ----------
+VALUE_ICONS = ("Heart", "Shield", "Sparkles", "Users", "HandHeart", "Star", "Crown", "Globe", "Sprout", "GraduationCap", "Briefcase", "HeartHandshake")
+DEFAULT_ABOUT = {
+    "hero_subtitle": "What began as ten women around a kitchen table is now a global network transforming individual ambition into shared empowerment.",
+    "mission_title": "Why we exist",
+    "mission_body": DEFAULT_HOME["mission_body"],
+    "mission_image": "",
+    "values": [
+        {"icon": "Heart", "title": "Love", "text": "We lead with empathy, meeting every sister where she is with genuine care."},
+        {"icon": "Shield", "title": "Respect", "text": "Mutual respect is the foundation of trust that holds our sisterhood together."},
+        {"icon": "Sparkles", "title": "Empowerment", "text": "We equip women with tools, mentorship, and capital to rise and lead."},
+        {"icon": "Users", "title": "Community", "text": "We invest in the collective, knowing our impact multiplies when we grow together."},
+    ],
+    "story_title": "A journey of shared strength",
+    "story": [
+        {"year": "2019", "title": "A Circle of Ten", "text": "Ten women of the Diaspora gathered around a kitchen table with a shared belief: no sister should build alone.", "image": ""},
+        {"year": "2021", "title": "Formal 501(c)(3) Status", "text": "The club incorporated as a nonprofit, launching its first mentorship and housing-support cohort.", "image": ""},
+        {"year": "2023", "title": "Regional Expansion", "text": "Chapters opened across 14 cities, delivering workshops, grants, and community drives.", "image": ""},
+        {"year": "2025", "title": "The Sisterhood Fund", "text": "We launched a member grant fund distributing over $600K toward member-led businesses and relief.", "image": ""},
+    ],
+    "updated_at": None,
+}
+
+
+class ValueItem(BaseModel):
+    icon: str = "Heart"
+    title: str
+    text: str = ""
+
+
+class StoryItem(BaseModel):
+    year: str = ""
+    title: str
+    text: str = ""
+    image: str = ""
+
+
+class AboutIn(BaseModel):
+    hero_subtitle: str = ""
+    mission_title: str = ""
+    mission_body: str = ""
+    mission_image: str = ""
+    values: List[ValueItem] = []
+    story_title: str = ""
+    story: List[StoryItem] = []
+
+
+async def _get_about() -> dict:
+    doc = await db.settings.find_one({"key": "about"}, {"_id": 0, "key": 0}) or {}
+    return {k: doc.get(k, v) for k, v in DEFAULT_ABOUT.items()}
+
+
+@api_router.get("/about-content")
+async def public_about():
+    return await _get_about()
+
+
+@api_router.put("/admin/about-content")
+async def admin_update_about(payload: AboutIn, user=Depends(require_admin)):
+    bad = lambda m: HTTPException(status_code=400, detail=m)  # noqa: E731
+    if not payload.mission_body.strip():
+        raise bad("Mission paragraph is required.")
+    if not 1 <= len(payload.values) <= 8 or any(not v.title.strip() for v in payload.values):
+        raise bad("Add 1–8 values, each with a title.")
+    if len(payload.story) > 12 or any(not st.title.strip() for st in payload.story):
+        raise bad("Each story milestone needs a title (max 12).")
+    if not all(_ok_img(u.strip()) for u in [payload.mission_image] + [st.image for st in payload.story]):
+        raise bad("Photos must be uploaded images or https URLs")
+    doc = {
+        "hero_subtitle": payload.hero_subtitle.strip()[:300] or DEFAULT_ABOUT["hero_subtitle"],
+        "mission_title": payload.mission_title.strip()[:120] or "Why we exist",
+        "mission_body": payload.mission_body.strip()[:3000], "mission_image": payload.mission_image.strip(),
+        "values": [{"icon": v.icon if v.icon in VALUE_ICONS else "Heart", "title": v.title.strip()[:60], "text": v.text.strip()[:400]} for v in payload.values],
+        "story_title": payload.story_title.strip()[:120] or DEFAULT_ABOUT["story_title"],
+        "story": [{"year": st.year.strip()[:12], "title": st.title.strip()[:100], "text": st.text.strip()[:800], "image": st.image.strip()} for st in payload.story],
+        "updated_at": _now_iso(), "updated_by": user.get("email"),
+    }
+    await db.settings.update_one({"key": "about"}, {"$set": doc}, upsert=True)
+    return await _get_about()
+
+
+# ---------- Member story submissions ----------
+class StorySubmitIn(BaseModel):
+    name: str
+    email: str
+    role: str = ""
+    quote: str
+    photo_url: str = ""
+    program_slug: str = ""
+
+
+class StoryApproveIn(BaseModel):
+    target: str  # "home" or a program id
+    quote: Optional[str] = None
+
+
+@api_router.post("/stories")
+async def submit_story(payload: StorySubmitIn, request: Request, background: BackgroundTasks):
+    _rate_limit(request, "story", max_hits=3, window_s=600)
+    name, email = _validate_person({"name": payload.name, "email": payload.email})
+    quote = payload.quote.strip()
+    if len(quote) < 20:
+        raise HTTPException(status_code=400, detail="Please share a little more of your story (at least 20 characters).")
+    photo = payload.photo_url.strip()
+    if photo and not re.match(r"^/api/media/file/[A-Za-z0-9-]+$", photo):
+        raise HTTPException(status_code=400, detail="Invalid photo.")
+    program = await db.programs.find_one({"slug": payload.program_slug[:100], "published": True}, {"_id": 0, "id": 1, "title": 1}) if payload.program_slug else None
+    doc = {"id": str(uuid.uuid4()), "name": name[:80], "email": email.lower(), "role": payload.role.strip()[:80], "quote": quote[:1000],
+           "photo_url": photo, "program_id": (program or {}).get("id"), "program_title": (program or {}).get("title"),
+           "status": "pending", "created_at": _now_iso()}
+    await db.story_submissions.insert_one(dict(doc))
+    background.add_task(_notify_staff, "story", {"name": doc["name"], "email": doc["email"], "role": doc["role"],
+                                                 "program": doc["program_title"] or "General", "story": doc["quote"]})
+    return {"id": doc["id"], "message": "Thank you for sharing your story! Our team will review it shortly."}
+
+
+@api_router.get("/admin/stories")
+async def admin_list_stories(user=Depends(require_admin)):
+    items = await db.story_submissions.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"items": items}
+
+
+@api_router.post("/admin/stories/{sid}/approve")
+async def admin_approve_story(sid: str, payload: StoryApproveIn, user=Depends(require_admin)):
+    st = await db.story_submissions.find_one({"id": sid, "status": "pending"}, {"_id": 0})
+    if not st:
+        raise HTTPException(status_code=404, detail="Pending story not found")
+    t = {"id": str(uuid.uuid4()), "quote": (payload.quote or st["quote"]).strip()[:600], "name": st["name"], "role": st["role"],
+         "photo_url": st["photo_url"], "added_at": _now_iso()}
+    if payload.target == "home":
+        home = await _get_home_content()
+        if len(home["testimonials"]) >= 12:
+            raise HTTPException(status_code=400, detail="The Home page already has 12 testimonials. Remove one first.")
+        await db.settings.update_one({"key": "home"}, {"$set": {**{k: v for k, v in home.items() if k != "testimonials"},
+                                                               "testimonials": home["testimonials"] + [t], "updated_at": _now_iso()}}, upsert=True)
+        label = "Home page"
+    else:
+        prog = await db.programs.find_one({"id": payload.target}, {"_id": 0, "testimonials": 1, "title": 1})
+        if not prog:
+            raise HTTPException(status_code=404, detail="Program not found")
+        if len(prog.get("testimonials") or []) >= 6:
+            raise HTTPException(status_code=400, detail="That program already has 6 testimonials. Remove one first.")
+        await db.programs.update_one({"id": payload.target}, {"$push": {"testimonials": t}})
+        label = prog["title"]
+    await db.story_submissions.update_one({"id": sid}, {"$set": {"status": "approved", "featured_on": label, "reviewed_at": _now_iso(), "reviewed_by": user.get("email")}})
+    return {"approved": True, "featured_on": label}
+
+
+@api_router.post("/admin/stories/{sid}/reject")
+async def admin_reject_story(sid: str, user=Depends(require_admin)):
+    res = await db.story_submissions.update_one({"id": sid, "status": "pending"}, {"$set": {"status": "rejected", "reviewed_at": _now_iso()}})
+    if not res.modified_count:
+        raise HTTPException(status_code=404, detail="Pending story not found")
+    return {"rejected": True}
+
+
+# ---------- Program sign-ups ----------
+class ProgramSignupIn(BaseModel):
+    name: str
+    email: str
+    phone: str = ""
+    message: str = ""
+
+
+def _signup_confirm_html(name: str, prog: dict) -> str:
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Program Sign-Up") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 14px">Welcome, {_esc(name)}!</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">Thank you for your interest in <strong>{_esc(prog["title"])}</strong>. '
+        'A member of our team will reach out within 3 business days with next steps.</p>'
+        + _btn(f'{PUBLIC_APP_URL}/initiatives/{prog["slug"]}', "View the Program", primary=True) +
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">With warmth,<br/>The Caring Sisters Club</p></td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you signed up on our website. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _send_signup_confirm(email: str, name: str, prog: dict):
+    try:
+        await send_email(to=email, subject=f"You're signed up: {prog['title']}"[:150], html=_signup_confirm_html(name, prog))
+    except Exception as e:
+        logging.error(f"Signup confirmation failed: {e}")
+
+
+@api_router.post("/programs/{slug}/signup")
+async def program_signup(slug: str, payload: ProgramSignupIn, request: Request, background: BackgroundTasks):
+    _rate_limit(request, "submission", max_hits=5, window_s=60)
+    name, email = _validate_person({"name": payload.name, "email": payload.email, "message": payload.message})
+    prog = await db.programs.find_one({"slug": slug[:100], "published": True}, {"_id": 0, "id": 1, "title": 1, "slug": 1})
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+    phone = re.sub(r"[^0-9+()\- .]", "", payload.phone)[:30]
+    data = {"program": prog["title"], "name": name, "email": email.lower(), "phone": phone, "message": payload.message.strip()[:3000]}
+    await db.submissions.insert_one({"id": str(uuid.uuid4()), "type": "program_signup", "data": data, "read": False, "created_at": _now_iso()})
+    background.add_task(_notify_staff, "program_signup", data)
+    background.add_task(_send_signup_confirm, email.lower(), name, prog)
+    return {"message": "You're signed up! Check your email for a confirmation."}
+
+
+# ---------- Monthly impact email ----------
+def _abs_img(url: str) -> str:
+    return f"{PUBLIC_APP_URL}{url}" if url.startswith("/api/") else url
+
+
+async def _impact_content(since: str) -> dict:
+    photos, stories = [], []
+    async for p in db.programs.find({"published": True}, {"_id": 0}):
+        for g in p.get("gallery") or []:
+            if (g.get("added_at") or "") > since:
+                photos.append({"url": _abs_img(g["url"]), "caption": g.get("caption") or p["title"], "program": p["title"], "slug": p["slug"]})
+        for t in p.get("testimonials") or []:
+            if (t.get("added_at") or "") > since:
+                stories.append({**t, "program": p["title"]})
+    for t in (await _get_home_content())["testimonials"]:
+        if (t.get("added_at") or "") > since:
+            stories.append({**t, "program": ""})
+    return {"photos": photos[:6], "stories": stories[:3]}
+
+
+def _impact_email_html(name: str, content: dict, month: str) -> str:
+    cells = "".join(
+        f'<td width="50%" style="padding:6px;vertical-align:top"><img src="{_esc(ph["url"])}" alt="" width="260" style="width:100%;max-width:260px;height:170px;object-fit:cover;border-radius:10px;display:block"/>'
+        f'<p style="font-size:12px;color:#6b5560;margin:6px 0 0">{_esc(ph["caption"])}</p></td>' + ("</tr><tr>" if i % 2 == 1 else "")
+        for i, ph in enumerate(content["photos"]))
+    photos = f'<table role="presentation" width="100%" style="margin:0 0 18px"><tr>{cells}</tr></table>' if cells else ""
+    stories = "".join(
+        f'<div style="background:#faf2f7;border-radius:12px;padding:16px 18px;margin:0 0 12px"><p style="font-family:Georgia,serif;font-style:italic;font-size:15px;line-height:1.6;color:#3B0A2E;margin:0 0 8px">&ldquo;{_esc(st["quote"])}&rdquo;</p>'
+        f'<p style="font-size:12.5px;color:#B4247E;font-weight:bold;margin:0">{_esc(st["name"])}{(" · " + _esc(st["role"])) if st.get("role") else ""}{(" · " + _esc(st["program"])) if st.get("program") else ""}</p></div>'
+        for st in content["stories"])
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header(f"Your Impact · {month}") +
+        '<tr><td style="padding:30px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 12px">Dear {_esc(name)}, look what you made possible</h1>'
+        '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">Your monthly gift keeps our programs running. Here is a glimpse of the sisterhood you supported this month.</p>'
+        + photos + stories +
+        _btn(f"{PUBLIC_APP_URL}/initiatives", "See Our Programs", primary=True) +
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">With gratitude,<br/>The Caring Sisters Club</p></td></tr>'
+        f'<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You receive this monthly update as a monthly donor. Manage your gift anytime at <a href="{PUBLIC_APP_URL}/manage-gift" style="color:#CBA24B">our Manage My Gift page</a>. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _monthly_recipients() -> list:
+    cancelled = set(await db.cancellations.distinct("sub_id"))
+    seen, out = set(), []
+    async for t in db.payment_transactions.find({"frequency": "monthly", "payment_status": "paid", "stripe_subscription_id": {"$nin": [None, ""]}},
+                                                 {"_id": 0, "donor_email": 1, "donor_name": 1, "stripe_subscription_id": 1}).sort("created_at", -1):
+        em = (t.get("donor_email") or "").lower()
+        if em and em not in seen and t["stripe_subscription_id"] not in cancelled:
+            seen.add(em)
+            out.append({"email": em, "name": (t.get("donor_name") or "").strip() or "Friend"})
+    return out
+
+
+def _impact_window():
+    now = datetime.now(timezone.utc)
+    return (now - timedelta(days=31)).isoformat(), now.strftime("%B %Y")
+
+
+@api_router.get("/admin/impact-email/preview")
+async def impact_preview(user=Depends(require_admin)):
+    since, month = _impact_window()
+    content = await _impact_content(since)
+    last = await db.impact_emails.find_one({}, {"_id": 0}, sort=[("sent_at", -1)])
+    return {"html": _impact_email_html("Friend", content, month), "recipients": len(await _monthly_recipients()),
+            "photos": len(content["photos"]), "stories": len(content["stories"]), "last_sent": last}
+
+
+async def _send_impact_email(trigger: str, test_to: str = None) -> dict:
+    since, month = _impact_window()
+    content = await _impact_content(since)
+    if not content["photos"] and not content["stories"]:
+        return {"sent": 0, "skipped": "No new program photos or stories in the past month."}
+    recipients = [{"email": test_to, "name": "Friend"}] if test_to else await _monthly_recipients()
+    sent = 0
+    for r in recipients:
+        try:
+            if await send_email(to=r["email"], subject=f"Your impact this month · {month}"[:150], html=_impact_email_html(r["name"], content, month)) is not None:
+                sent += 1
+        except Exception as e:
+            logging.error(f"Impact email failed: {e}")
+    if not test_to:
+        await db.impact_emails.insert_one({"month": datetime.now(timezone.utc).strftime("%Y-%m"), "trigger": trigger, "sent": sent,
+                                           "recipients": len(recipients), "photos": len(content["photos"]), "stories": len(content["stories"]), "sent_at": _now_iso()})
+    return {"sent": sent, "recipients": len(recipients)}
+
+
+@api_router.post("/admin/impact-email/send")
+async def impact_send(user=Depends(require_admin)):
+    return await _send_impact_email("manual")
+
+
+@api_router.post("/admin/impact-email/test")
+async def impact_test(user=Depends(require_admin)):
+    return await _send_impact_email("test", test_to=user.get("email"))
+
+
+async def _maybe_monthly_impact():
+    now = datetime.now(timezone.utc)
+    if now.day > 3 or await db.impact_emails.find_one({"month": now.strftime("%Y-%m"), "trigger": "auto"}):
+        return
+    await _send_impact_email("auto")
 
 
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------
@@ -3109,6 +3431,7 @@ async def _daily_scheduler():
             await _send_event_reminders()
             await _process_all_waitlists()
             await _check_cancellations()
+            await _maybe_monthly_impact()
             await db.donor_manage_tokens.delete_many({"expires_at": {"$lt": datetime.now(timezone.utc).isoformat()}})
         except Exception as e:
             logging.error(f"Daily scheduler error: {e}")

@@ -30,3 +30,15 @@ export async function uploadImage(file, category, title) {
   const { data } = await api.post('/media', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
   return data.url;
 }
+
+let aboutCache = null;
+export function useAboutContent(fallback) {
+  const [data, setData] = useState(aboutCache || fallback);
+  useEffect(() => {
+    if (aboutCache) return;
+    api.get('/about-content').then(({ data: d }) => { aboutCache = d; setData(d); })
+      .catch((e) => console.error('About content: load failed', e));
+  }, []);
+  return data;
+}
+export const resetAboutCache = () => { aboutCache = null; };

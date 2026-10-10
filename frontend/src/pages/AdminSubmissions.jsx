@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, Trash2, Mail, MailOpen, HandHeart, Users, MessageSquare, CalendarCheck, Heart } from 'lucide-react';
+import { Loader2, Trash2, Mail, MailOpen, HandHeart, Users, MessageSquare, CalendarCheck, Heart, Layers } from 'lucide-react';
 
 const TYPES = [
   { key: 'volunteer', label: 'Volunteers', icon: HandHeart },
   { key: 'member', label: 'Memberships', icon: Users },
   { key: 'contact', label: 'Contact', icon: MessageSquare },
   { key: 'rsvp', label: 'Event RSVPs', icon: CalendarCheck },
+  { key: 'program_signup', label: 'Program Sign-Ups', icon: Layers },
   { key: 'donation', label: 'Donations', icon: Heart },
 ];
 

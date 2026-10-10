@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { hero } from '../mock/mock';
 import { useHomeContent, imgSrc, DEFAULT_MISSION_IMAGE } from '../lib/useHomeContent';
 import { TestimonialCard } from '../components/TestimonialCard';
+import { ShareStory } from '../components/ShareStory';
 import { useTransparency } from '../lib/useTransparency';
 import { CtaLink } from './Initiatives';
 import Reveal from '../components/Reveal';
@@ -128,6 +129,10 @@ export default function Home() {
                 <TestimonialCard t={t} />
               </Reveal>
             ))}
+          </div>
+          <div className="text-center mt-12">
+            <p className="text-[#241019]/65 text-[15px] mb-4">Has the sisterhood touched your life? We'd love to hear from you.</p>
+            <ShareStory />
           </div>
         </div>
       </section>
