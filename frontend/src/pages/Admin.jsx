@@ -8,8 +8,9 @@ import AdminDonations from './AdminDonations';
 import AdminTeam from './AdminTeam';
 import AdminCampaign from './AdminCampaign';
 import AdminDonors from './AdminDonors';
+import AdminEvents from './AdminEvents';
 import { useToast } from '../hooks/use-toast';
-import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch } from 'lucide-react';
+import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart } from 'lucide-react';
 
 const TABS = [
   { key: 'gallery', label: 'Gallery Photos', icon: ImageIcon, accept: 'image/*', titleLabel: 'Caption', subLabel: '' },
@@ -135,6 +136,7 @@ export default function Admin() {
           {[
             { k: 'media', l: 'Media Library', icon: Images },
             { k: 'inbox', l: 'Form Submissions', icon: Inbox },
+            { k: 'events', l: 'Events', icon: CalendarHeart },
             { k: 'donations', l: 'Donations', icon: DollarSign },
             { k: 'donors', l: 'Donors', icon: UserSearch },
             { k: 'campaign', l: 'Campaign', icon: Target },
@@ -142,7 +144,7 @@ export default function Admin() {
           ].map((v) => {
             const Icon = v.icon;
             return (
-              <button key={v.k} onClick={() => setView(v.k)}
+              <button key={v.k} onClick={() => setView(v.k)} data-testid={`admin-view-${v.k}`}
                 className={`px-5 py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 transition-all ${view === v.k ? 'text-white' : 'text-[#3B0A2E]'}`}
                 style={view === v.k ? { background: '#3B0A2E' } : {}}>
                 <Icon size={16} /> {v.l}
@@ -153,6 +155,8 @@ export default function Admin() {
 
         {view === 'inbox' ? (
           <AdminSubmissions />
+        ) : view === 'events' ? (
+          <AdminEvents />
         ) : view === 'donations' ? (
           <AdminDonations />
         ) : view === 'donors' ? (

@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import re
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
@@ -68,7 +69,7 @@ async def get_status_checks():
 
 # ---------- Emergent Google Auth + File/Media Storage ----------
 import requests as _requests
-from fastapi import Request, Response, HTTPException, UploadFile, File, Form, Depends, Header, Query
+from fastapi import Request, Response, HTTPException, UploadFile, File, Form, Depends, Header, Query, BackgroundTasks
 from typing import Optional
 from datetime import timedelta
 
@@ -216,7 +217,12 @@ async def auth_session(payload: SessionRequest, response: Response):
 
 
 @api_router.get("/auth/me")
-async def auth_me(user=Depends(get_current_user)):
+async def auth_me(request: Request, user=Depends(get_current_user)):
+    if user.get("role") == "admin":
+        try:
+            await _detect_site_url(request)
+        except Exception as e:
+            logging.error(f"Site URL detection failed: {e}")
     return user
 
 
@@ -619,13 +625,63 @@ class SubmissionCreate(BaseModel):
     type: str
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PUBLIC_SUB_TYPES = {"volunteer", "member", "contact"}
+SUB_LABELS = {"volunteer": "Volunteer application", "member": "Membership application", "contact": "Contact message", "rsvp": "Event RSVP"}
+
+
+def _validate_person(data: dict):
+    name = str(data.get("name") or "").strip()
+    email = str(data.get("email") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Please enter your name.")
+    if not _EMAIL_RE.match(email) or len(email) > 254:
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+    for k, v in data.items():
+        if isinstance(v, str) and len(v) > 5000:
+            raise HTTPException(status_code=400, detail=f"The {k} field is too long.")
+    return name, email
+
+
+def _staff_notice_html(stype: str, data: dict) -> str:
+    rows = "".join(
+        f'<tr><td style="padding:6px 12px;font-size:13px;color:#6b5560;vertical-align:top;white-space:nowrap">{_esc(str(k).replace("_", " ").title())}</td>'
+        f'<td style="padding:6px 12px;font-size:13px;color:#241019">{_esc(str(v)).replace(chr(10), "<br/>")}</td></tr>'
+        for k, v in data.items() if v not in (None, "")
+    )
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:24px 12px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("New Website Submission") +
+        f'<tr><td style="padding:26px 24px;font-family:Arial,sans-serif"><h2 style="font-family:Georgia,serif;color:#3B0A2E;font-size:20px;margin:0 0 14px">{_esc(SUB_LABELS.get(stype, stype))}</h2>'
+        f'<table role="presentation" width="100%" style="background:#faf2f7;border-radius:10px">{rows}</table>'
+        '<p style="font-size:12px;color:#6b5560;margin:16px 0 0">Review and manage it in Admin &rarr; Form Submissions.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _notify_staff(stype: str, data: dict):
+    try:
+        to = (await _get_settings()).get("staff_notify_email")
+        if not to:
+            return
+        who = data.get("name") or "someone"
+        await send_email(to=to, subject=f"New {SUB_LABELS.get(stype, stype).lower()} from {who}"[:150],
+                         html=_staff_notice_html(stype, data), reply_to=data.get("email"))
+    except Exception as e:
+        logging.error(f"Staff notification failed: {e}")
+
+
 @api_router.post("/submissions")
-async def create_submission(payload: SubmissionCreate, request: Request):
+async def create_submission(payload: SubmissionCreate, request: Request, background: BackgroundTasks):
     _rate_limit(request, "submission", max_hits=5, window_s=60)
     data = payload.model_dump()
     stype = data.get("type")
-    if stype not in ALLOWED_SUB_TYPES:
+    if stype not in PUBLIC_SUB_TYPES:
         raise HTTPException(status_code=400, detail="Invalid submission type")
+    _validate_person(data)
+    if stype == "contact" and not str(data.get("message") or "").strip():
+        raise HTTPException(status_code=400, detail="Please enter a message.")
     doc = {
         "id": str(uuid.uuid4()),
         "type": stype,
@@ -634,6 +690,7 @@ async def create_submission(payload: SubmissionCreate, request: Request):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.submissions.insert_one(doc)
+    background.add_task(_notify_staff, stype, doc["data"])
     return {"id": doc["id"], "message": "Received"}
 
 
@@ -775,7 +832,36 @@ async def send_email(*, to: str, subject: str, html: str, reply_to: str = None):
         return None
 
 
-PUBLIC_APP_URL = os.environ.get("PUBLIC_APP_URL", "https://caring-sisters-clone.preview.emergentagent.com").rstrip("/")
+_SITE_URL_FALLBACK = os.environ.get("PUBLIC_APP_URL", "https://caring-sisters-clone.preview.emergentagent.com").rstrip("/")
+PUBLIC_APP_URL = _SITE_URL_FALLBACK
+
+
+def _clean_site_url(url: str) -> str:
+    url = (url or "").strip().rstrip("/")
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.path or parsed.query:
+        raise ValueError("Website address must look like https://yourdomain.org")
+    return f"https://{parsed.netloc.lower()}"
+
+
+async def _refresh_site_url():
+    """Email links use: admin-set site_url > auto-detected live host > env fallback."""
+    global PUBLIC_APP_URL
+    doc = await db.settings.find_one({"key": "site"}, {"_id": 0}) or {}
+    PUBLIC_APP_URL = (doc.get("site_url") or doc.get("detected_site_url") or _SITE_URL_FALLBACK).rstrip("/")
+
+
+async def _detect_site_url(request: Request):
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip().lower()
+    if not host or host.startswith(("localhost", "127.", "0.0.0.0")) or ":" in host:
+        return
+    url = f"https://{host}"
+    doc = await db.settings.find_one({"key": "site"}, {"_id": 0, "detected_site_url": 1}) or {}
+    if doc.get("detected_site_url") != url:
+        await db.settings.update_one({"key": "site"}, {"$set": {"detected_site_url": url}}, upsert=True)
+        await _refresh_site_url()
 
 
 def _brand_header(eyebrow: str) -> str:
@@ -908,6 +994,9 @@ DEFAULT_SETTINGS = {
     "org_ein": "",
     "lapsed_autoemail_enabled": True,
     "lapsed_cooldown_days": 30,
+    "site_url": "",
+    "detected_site_url": "",
+    "staff_notify_email": "caringsistersclub@gmail.com",
 }
 
 
@@ -927,6 +1016,9 @@ async def _get_settings():
         "org_ein": doc.get("org_ein", DEFAULT_SETTINGS["org_ein"]),
         "lapsed_autoemail_enabled": doc.get("lapsed_autoemail_enabled", DEFAULT_SETTINGS["lapsed_autoemail_enabled"]),
         "lapsed_cooldown_days": int(doc.get("lapsed_cooldown_days") or DEFAULT_SETTINGS["lapsed_cooldown_days"]),
+        "site_url": doc.get("site_url") or "",
+        "detected_site_url": doc.get("detected_site_url") or "",
+        "staff_notify_email": doc.get("staff_notify_email", DEFAULT_SETTINGS["staff_notify_email"]),
     }
 
 
@@ -942,6 +1034,8 @@ class SettingsUpdate(BaseModel):
     org_ein: Optional[str] = None
     lapsed_autoemail_enabled: Optional[bool] = None
     lapsed_cooldown_days: Optional[int] = None
+    site_url: Optional[str] = None
+    staff_notify_email: Optional[str] = None
 
 
 @api_router.get("/settings")
@@ -991,8 +1085,19 @@ async def update_settings(payload: SettingsUpdate, user=Depends(require_admin)):
         update["lapsed_autoemail_enabled"] = bool(payload.lapsed_autoemail_enabled)
     if payload.lapsed_cooldown_days is not None:
         update["lapsed_cooldown_days"] = max(1, int(payload.lapsed_cooldown_days))
+    if payload.site_url is not None:
+        try:
+            update["site_url"] = _clean_site_url(payload.site_url)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    if payload.staff_notify_email is not None:
+        em = payload.staff_notify_email.strip()
+        if em and not _EMAIL_RE.match(em):
+            raise HTTPException(status_code=400, detail="Staff notification email is not valid")
+        update["staff_notify_email"] = em
     if update:
         await db.settings.update_one({"key": "site"}, {"$set": update}, upsert=True)
+        await _refresh_site_url()
     return await _get_settings()
 
 
@@ -1174,7 +1279,7 @@ def _progress_email_html(pct: int, raised: float, goal: float, title: str, note:
         f'<p style="font-size:14px;line-height:1.6;color:#4a3340;margin:0 0 8px">Thanks to supporters like you, <strong>{_esc(title)}</strong> has raised <strong>${raised:,.0f}</strong> of our <strong>${goal:,.0f}</strong> goal.</p>'
         f'{note_html}'
         f'<div style="height:16px;border-radius:999px;background:#eadfe6;overflow:hidden;margin:6px 0 20px"><div style="height:16px;width:{bar_w}%;background:#B4247E;border-radius:999px"></div></div>'
-        '<a href="https://caring-sisters-clone.preview.emergentagent.com/donate" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">Give Again</a>'
+        '<a href="' + PUBLIC_APP_URL + '/donate" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">Give Again</a>'
         '</td></tr>'
         '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You\'re receiving this because you supported The Caring Sisters Club. We never ask for your password or card details by email.</p></td></tr>'
         '</table></td></tr></table>'
@@ -1325,7 +1430,7 @@ def _reactivation_email_html(name: str) -> str:
         f'<h1 style="font-family:Georgia,serif;color:#B4247E;font-size:24px;margin:0 0 14px">We miss you, {_esc(name)}</h1>'
         '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 16px">It has been a little while since your last gift, and we wanted to reach out — not to ask, but to say thank you. Your past generosity helped empower women of the Diaspora through friendship, professional growth, and community care.</p>'
         '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">If you would like to rejoin our community of givers, we would be honored to welcome you back. Every gift, of any size, makes a real difference.</p>'
-        '<a href="https://caring-sisters-clone.preview.emergentagent.com/donate" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">Rejoin Our Mission</a>'
+        '<a href="' + PUBLIC_APP_URL + '/donate" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">Rejoin Our Mission</a>'
         '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:22px 0 0">With warmth and gratitude,<br/>The Caring Sisters Club</p>'
         '</td></tr>'
         '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you previously supported The Caring Sisters Club. We never ask for your password or card details by email.</p></td></tr>'
@@ -1644,6 +1749,231 @@ async def _run_scheduled_appeals() -> dict:
     return {"processed": processed}
 
 
+# ---------- Events & RSVPs ----------
+def _csv_safe(v) -> str:
+    v = str(v or "")
+    return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+
+
+class EventIn(BaseModel):
+    title: str
+    date: str  # YYYY-MM-DD
+    time: str = ""
+    location: str = ""
+    description: str = ""
+    category: str = ""
+    image_url: str = ""
+    capacity: int = 50
+
+
+class RsvpIn(BaseModel):
+    name: str
+    email: str
+    guests: int = 1
+
+
+def _clean_event(p: EventIn) -> dict:
+    title = (p.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Event title is required")
+    try:
+        datetime.strptime((p.date or "").strip(), "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Event date must be YYYY-MM-DD")
+    if p.capacity < 1 or p.capacity > 100000:
+        raise HTTPException(status_code=400, detail="Capacity must be at least 1")
+    img = (p.image_url or "").strip()
+    if img and not (img.startswith("/api/media/file/") or img.startswith("https://")):
+        raise HTTPException(status_code=400, detail="Image must be an uploaded image or https URL")
+    return {
+        "title": title[:200], "date": p.date.strip(), "time": (p.time or "").strip()[:50],
+        "location": (p.location or "").strip()[:300], "description": (p.description or "").strip()[:4000],
+        "category": (p.category or "").strip()[:50], "image_url": img, "capacity": int(p.capacity),
+    }
+
+
+async def _rsvp_totals(event_ids: list) -> dict:
+    out = {}
+    async for row in db.event_rsvps.aggregate([
+        {"$match": {"event_id": {"$in": event_ids}}},
+        {"$group": {"_id": "$event_id", "seats": {"$sum": "$guests"}, "rsvps": {"$sum": 1}}},
+    ]):
+        out[row["_id"]] = row
+    return out
+
+
+async def _events_with_counts(query: dict, sort_dir: int) -> list:
+    items = await db.events.find(query, {"_id": 0}).sort("date", sort_dir).to_list(500)
+    totals = await _rsvp_totals([e["id"] for e in items])
+    for e in items:
+        t = totals.get(e["id"], {})
+        e["seats_taken"] = t.get("seats", 0)
+        e["rsvp_count"] = t.get("rsvps", 0)
+        e["spots_left"] = max(0, e["capacity"] - e["seats_taken"])
+    return items
+
+
+@api_router.get("/events")
+async def public_events():
+    today = datetime.now(timezone.utc).date().isoformat()
+    items = await _events_with_counts({"date": {"$gte": today}}, 1)
+    for e in items:
+        e.pop("created_by", None)
+        e.pop("rsvp_count", None)
+    return {"items": items}
+
+
+@api_router.get("/admin/events")
+async def admin_list_events(user=Depends(require_admin)):
+    return {"items": await _events_with_counts({}, -1)}
+
+
+@api_router.post("/admin/events")
+async def admin_create_event(payload: EventIn, user=Depends(require_admin)):
+    doc = {"id": str(uuid.uuid4()), **_clean_event(payload),
+           "created_at": datetime.now(timezone.utc).isoformat(), "created_by": user.get("email")}
+    await db.events.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/admin/events/{eid}")
+async def admin_update_event(eid: str, payload: EventIn, user=Depends(require_admin)):
+    res = await db.events.update_one({"id": eid}, {"$set": {**_clean_event(payload), "updated_at": datetime.now(timezone.utc).isoformat()}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return await db.events.find_one({"id": eid}, {"_id": 0})
+
+
+@api_router.delete("/admin/events/{eid}")
+async def admin_delete_event(eid: str, user=Depends(require_admin)):
+    res = await db.events.delete_one({"id": eid})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Event not found")
+    await db.event_rsvps.delete_many({"event_id": eid})
+    return {"deleted": True}
+
+
+@api_router.get("/admin/events/{eid}/rsvps")
+async def admin_event_rsvps(eid: str, user=Depends(require_admin)):
+    items = await db.event_rsvps.find({"event_id": eid}, {"_id": 0}).sort("created_at", 1).to_list(5000)
+    return {"items": items}
+
+
+@api_router.get("/admin/events/{eid}/rsvps/export")
+async def admin_export_rsvps(eid: str, user=Depends(require_admin)):
+    ev = await db.events.find_one({"id": eid}, {"_id": 0})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    items = await db.event_rsvps.find({"event_id": eid}, {"_id": 0}).sort("created_at", 1).to_list(5000)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Name", "Email", "Guests", "RSVP Date", "Reminder Sent"])
+    for r in items:
+        w.writerow([_csv_safe(r.get("name")), _csv_safe(r.get("email")), r.get("guests", 1), r.get("created_at", "")[:10], "yes" if r.get("reminder_sent") else "no"])
+    fname = re.sub(r"[^A-Za-z0-9]+", "-", ev["title"]).strip("-")[:60] or "event"
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="rsvps-{fname}.csv"'})
+
+
+@api_router.delete("/admin/events/{eid}/rsvps/{rid}")
+async def admin_delete_rsvp(eid: str, rid: str, user=Depends(require_admin)):
+    res = await db.event_rsvps.delete_one({"id": rid, "event_id": eid})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="RSVP not found")
+    return {"deleted": True}
+
+
+def _fmt_event_date(d: str) -> str:
+    try:
+        return datetime.strptime(d, "%Y-%m-%d").strftime("%A, %B %-d, %Y")
+    except ValueError:
+        return d
+
+
+def _event_email_html(name: str, ev: dict, guests: int, reminder: bool) -> str:
+    heading = "See you tomorrow!" if reminder else "You're registered!"
+    intro = (f'This is a friendly reminder that <strong>{_esc(ev["title"])}</strong> is tomorrow. We can\'t wait to see you.'
+             if reminder else f'Thank you for your RSVP to <strong>{_esc(ev["title"])}</strong>. Your spot is confirmed.')
+    rows = [("Date", _fmt_event_date(ev["date"])), ("Time", ev.get("time")), ("Location", ev.get("location")),
+            ("Party size", f'{guests} {"guest" if guests == 1 else "guests"}')]
+    details = "".join(
+        f'<tr><td style="padding:8px 18px;font-size:13px;color:#6b5560">{k}</td><td style="padding:8px 18px;font-size:14px;color:#3B0A2E;font-weight:bold">{_esc(str(v))}</td></tr>'
+        for k, v in rows if v
+    )
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Event Reminder" if reminder else "RSVP Confirmed") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 14px">{heading}</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 6px">Dear {_esc(name)},</p>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">{intro}</p>'
+        f'<table role="presentation" width="100%" style="background:#faf2f7;border-radius:12px;margin:0 0 20px">{details}</table>'
+        '<a href="' + PUBLIC_APP_URL + '/events" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">View Events</a>'
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:22px 0 0">If your plans change, simply reply to this email to let us know.<br/><br/>With warmth,<br/>The Caring Sisters Club</p>'
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you RSVP\'d on our website. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _send_rsvp_confirmation(rsvp: dict, ev: dict):
+    try:
+        await send_email(to=rsvp["email"], subject=f"You're registered: {ev['title']}"[:150],
+                         html=_event_email_html(rsvp["name"], ev, rsvp["guests"], reminder=False))
+    except Exception as e:
+        logging.error(f"RSVP confirmation failed: {e}")
+
+
+@api_router.post("/events/{eid}/rsvp")
+async def create_rsvp(eid: str, payload: RsvpIn, request: Request, background: BackgroundTasks):
+    _rate_limit(request, "submission", max_hits=5, window_s=60)
+    name, email = _validate_person({"name": payload.name, "email": payload.email})
+    guests = int(payload.guests or 1)
+    if guests < 1 or guests > 10:
+        raise HTTPException(status_code=400, detail="Party size must be between 1 and 10.")
+    ev = await db.events.find_one({"id": eid}, {"_id": 0})
+    if not ev or ev["date"] < datetime.now(timezone.utc).date().isoformat():
+        raise HTTPException(status_code=404, detail="This event is no longer open for RSVPs.")
+    email_l = email.lower()
+    if await db.event_rsvps.find_one({"event_id": eid, "email": email_l}):
+        raise HTTPException(status_code=409, detail="You're already registered for this event with that email.")
+    taken = (await _rsvp_totals([eid])).get(eid, {}).get("seats", 0)
+    left = ev["capacity"] - taken
+    if left <= 0:
+        raise HTTPException(status_code=409, detail="Sorry, this event is full.")
+    if guests > left:
+        raise HTTPException(status_code=409, detail=f"Only {left} spot{'s' if left != 1 else ''} left. Please reduce your party size.")
+    rsvp = {"id": str(uuid.uuid4()), "event_id": eid, "name": name[:200], "email": email_l, "guests": guests,
+            "created_at": datetime.now(timezone.utc).isoformat(), "reminder_sent": False}
+    await db.event_rsvps.insert_one(dict(rsvp))
+    sub_data = {"event": ev["title"], "event_date": ev["date"], "name": rsvp["name"], "email": email_l, "guests": guests}
+    await db.submissions.insert_one({"id": str(uuid.uuid4()), "type": "rsvp", "data": sub_data, "read": False,
+                                     "created_at": rsvp["created_at"]})
+    background.add_task(_send_rsvp_confirmation, rsvp, ev)
+    background.add_task(_notify_staff, "rsvp", sub_data)
+    return {"id": rsvp["id"], "event": ev["title"], "spots_left": left - guests}
+
+
+async def _send_event_reminders() -> dict:
+    """Daily: remind guests of events happening tomorrow (once per RSVP)."""
+    tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+    sent = 0
+    async for ev in db.events.find({"date": tomorrow}, {"_id": 0}):
+        async for r in db.event_rsvps.find({"event_id": ev["id"], "reminder_sent": {"$ne": True}}, {"_id": 0}):
+            try:
+                res = await send_email(to=r["email"], subject=f"Reminder: {ev['title']} is tomorrow"[:150],
+                                       html=_event_email_html(r["name"], ev, r.get("guests", 1), reminder=True))
+            except Exception as e:
+                logging.error(f"Event reminder failed: {e}")
+                res = None
+            await db.event_rsvps.update_one({"id": r["id"]}, {"$set": {"reminder_sent": True, "reminder_ok": res is not None,
+                                                                        "reminder_at": datetime.now(timezone.utc).isoformat()}})
+            sent += 1 if res is not None else 0
+    return {"sent": sent}
+
+
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------
 def _reminder_email_html(name: str, amount, next_date: str) -> str:
     when = f" around <strong>{_esc(next_date)}</strong>" if next_date else " soon"
@@ -1781,6 +2111,8 @@ async def _daily_scheduler():
             await _send_lapsed_reactivations()
             # Daily: dispatch any scheduled segment appeals that are now due
             await _run_scheduled_appeals()
+            # Daily: day-before reminders for event RSVPs
+            await _send_event_reminders()
         except Exception as e:
             logging.error(f"Daily scheduler error: {e}")
         await asyncio.sleep(24 * 60 * 60)  # once per day
@@ -1788,6 +2120,7 @@ async def _daily_scheduler():
 
 @app.on_event("startup")
 async def _start_scheduler():
+    await _refresh_site_url()
     asyncio.create_task(_daily_scheduler())
 
 

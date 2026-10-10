@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, Target, Save, Send, Heart, Mail, ShieldCheck, HeartHandshake } from 'lucide-react';
+import { Loader2, Target, Save, Send, Heart, Mail, ShieldCheck, HeartHandshake, Globe } from 'lucide-react';
 
 export default function AdminCampaign() {
   const { toast } = useToast();
-  const [form, setForm] = useState({ campaign_title: '', campaign_subtitle: '', goal: '', deadline: '', thankyou_enabled: true, thankyou_threshold: '', thankyou_sender_name: '', thankyou_note: '', org_ein: '', lapsed_autoemail_enabled: true, lapsed_cooldown_days: 30 });
+  const [form, setForm] = useState({ campaign_title: '', campaign_subtitle: '', goal: '', deadline: '', thankyou_enabled: true, thankyou_threshold: '', thankyou_sender_name: '', thankyou_note: '', org_ein: '', lapsed_autoemail_enabled: true, lapsed_cooldown_days: 30, site_url: '', staff_notify_email: '' });
+  const [detectedUrl, setDetectedUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState('');
@@ -58,7 +59,10 @@ export default function AdminCampaign() {
           org_ein: data.org_ein || '',
           lapsed_autoemail_enabled: data.lapsed_autoemail_enabled !== false,
           lapsed_cooldown_days: data.lapsed_cooldown_days ?? 30,
+          site_url: data.site_url || '',
+          staff_notify_email: data.staff_notify_email || '',
         });
+        setDetectedUrl(data.detected_site_url || '');
       } catch (e) {
         console.error('AdminCampaign: failed to load settings', e);
       } finally {
@@ -88,6 +92,8 @@ export default function AdminCampaign() {
         org_ein: form.org_ein,
         lapsed_autoemail_enabled: form.lapsed_autoemail_enabled,
         lapsed_cooldown_days: Number(form.lapsed_cooldown_days) || 30,
+        site_url: form.site_url,
+        staff_notify_email: form.staff_notify_email,
       });
       toast({ title: 'Campaign updated', description: 'Your donor wall now reflects the changes.' });
     } catch (err) {
@@ -189,7 +195,32 @@ export default function AdminCampaign() {
               onChange={(e) => setForm({ ...form, org_ein: e.target.value })}
               placeholder="XX-XXXXXXX"
               className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
-            <p className="text-[12px] text-[#241019]/50 mt-1.5">Leave blank to omit the EIN line from receipts.</p>
+            <p className="text-[12px] text-[#241019]/50 mt-1.5">Leave blank to omit the EIN line from receipts. It is never shown on the public website.</p>
+          </div>
+        </div>
+
+        <div className="mt-8 pt-7 border-t border-[#3B0A2E]/10">
+          <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold mb-1 flex items-center gap-2">
+            <Globe size={18} className="text-[#B4247E]" /> Website & Notifications
+          </h3>
+          <p className="text-[#241019]/60 text-[13px] mb-5">Buttons and logos in donor emails link to your website address. It's detected automatically when an admin signs in; set it here to override.</p>
+          <div className="grid sm:grid-cols-2 gap-5">
+            <div>
+              <label className="text-[13px] font-semibold text-[#3B0A2E]">Website address (optional override)</label>
+              <input value={form.site_url} data-testid="site-url-input"
+                onChange={(e) => setForm({ ...form, site_url: e.target.value })}
+                placeholder={detectedUrl || 'https://yourdomain.org'}
+                className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+              <p className="text-[12px] text-[#241019]/50 mt-1.5" data-testid="site-url-active">Email links currently use: <strong>{form.site_url || detectedUrl || 'not yet detected'}</strong></p>
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-[#3B0A2E]">Staff notification email</label>
+              <input type="email" value={form.staff_notify_email} data-testid="staff-notify-email-input"
+                onChange={(e) => setForm({ ...form, staff_notify_email: e.target.value })}
+                placeholder="caringsistersclub@gmail.com"
+                className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+              <p className="text-[12px] text-[#241019]/50 mt-1.5">Gets an email for each new contact message, application and RSVP. Leave blank to turn off.</p>
+            </div>
           </div>
         </div>
 

@@ -3,19 +3,27 @@ import { org, faqs } from '../mock/mock';
 import { api } from '../lib/api';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
-import { MapPin, Phone, Mail, Clock, Send } from 'lucide-react';
+import { MapPin, Phone, Mail, Clock, Send, Loader2 } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 import { useToast } from '../hooks/use-toast';
 
 export default function Contact() {
   const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
+  const [sending, setSending] = useState(false);
   const { toast } = useToast();
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    api.post('/submissions', { type: 'contact', ...form }).catch(() => {});
-    toast({ title: 'Message sent! (demo)', description: `Thank you, ${form.name}. We'll respond to ${form.email} shortly.` });
-    setForm({ name: '', email: '', subject: '', message: '' });
+    setSending(true);
+    try {
+      await api.post('/submissions', { type: 'contact', ...form });
+      toast({ title: 'Message sent!', description: `Thank you, ${form.name}. We'll respond to ${form.email} shortly.` });
+      setForm({ name: '', email: '', subject: '', message: '' });
+    } catch (err) {
+      toast({ title: 'Message not sent', description: err?.response?.status === 429 ? 'You\'ve sent a few requests in a row. Please wait a minute and try again.' : (err?.response?.data?.detail || 'Something went wrong. Please check your connection and try again.'), variant: 'destructive' });
+    } finally {
+      setSending(false);
+    }
   };
 
   const info = [
@@ -77,8 +85,8 @@ export default function Contact() {
                 <textarea required rows={5} value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })}
                   className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-3 text-[14px] focus:outline-none focus:border-[#B4247E] resize-none" />
               </div>
-              <button type="submit" className="btn-magenta rounded-full px-8 py-3.5 font-semibold flex items-center gap-2">
-                Send Message <Send size={16} />
+              <button type="submit" disabled={sending} data-testid="contact-submit-btn" className="btn-magenta rounded-full px-8 py-3.5 font-semibold flex items-center gap-2 disabled:opacity-60">
+                {sending ? <><Loader2 size={16} className="animate-spin" /> Sending…</> : <>Send Message <Send size={16} /></>}
               </button>
             </form>
           </Reveal>

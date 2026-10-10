@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { api } from '../lib/api';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
-import { CheckCircle2, Users, HandHeart } from 'lucide-react';
+import { CheckCircle2, Users, HandHeart, Loader2 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
 const interests = ['Events & Programs', 'Community Drives', 'Mentorship', 'Fundraising', 'Administration', 'Chapter Leadership'];
@@ -11,13 +11,21 @@ export default function Volunteer() {
   const [tab, setTab] = useState('volunteer');
   const [form, setForm] = useState({ name: '', email: '', phone: '', city: '', interest: interests[0], message: '' });
   const [submitted, setSubmitted] = useState(false);
+  const [sending, setSending] = useState(false);
   const { toast } = useToast();
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    api.post('/submissions', { type: tab === 'member' ? 'member' : 'volunteer', ...form }).catch(() => {});
-    setSubmitted(true);
-    toast({ title: `${tab === 'volunteer' ? 'Volunteer' : 'Membership'} application received! (demo)`, description: `Thank you, ${form.name}. A chapter lead would reach out within 3 business days.` });
+    setSending(true);
+    try {
+      await api.post('/submissions', { type: tab === 'member' ? 'member' : 'volunteer', ...form });
+      setSubmitted(true);
+      toast({ title: `${tab === 'volunteer' ? 'Volunteer' : 'Membership'} application received!`, description: `Thank you, ${form.name}. A chapter lead will reach out within 3 business days.` });
+    } catch (err) {
+      toast({ title: 'Application not sent', description: err?.response?.status === 429 ? 'You\'ve sent a few requests in a row. Please wait a minute and try again.' : (err?.response?.data?.detail || 'Something went wrong. Please check your connection and try again.'), variant: 'destructive' });
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -46,8 +54,8 @@ export default function Volunteer() {
           {submitted ? (
             <Reveal className="bg-white rounded-2xl p-10 text-center border border-[#3B0A2E]/8">
               <CheckCircle2 size={56} className="text-[#B4247E] mx-auto mb-5" />
-              <h2 className="font-serif text-[26px] text-[#3B0A2E] font-semibold mb-3">Welcome, Sister!</h2>
-              <p className="text-[#241019]/70 mb-6">Your application has been received. A chapter lead will reach out within 3 business days. <span className="italic">(Demo — no data stored yet.)</span></p>
+              <h2 className="font-serif text-[26px] text-[#3B0A2E] font-semibold mb-3" data-testid="volunteer-success">Welcome, Sister!</h2>
+              <p className="text-[#241019]/70 mb-6">Your application has been received. A chapter lead will reach out within 3 business days.</p>
               <button onClick={() => { setSubmitted(false); setForm({ name: '', email: '', phone: '', city: '', interest: interests[0], message: '' }); }} className="btn-magenta rounded-full px-8 py-3 font-semibold">Submit Another</button>
             </Reveal>
           ) : (
@@ -71,8 +79,8 @@ export default function Volunteer() {
                   className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-3 text-[14px] focus:outline-none focus:border-[#B4247E] resize-none"
                   placeholder={tab === 'volunteer' ? 'What draws you to volunteer with us?' : 'Why do you want to join the sisterhood?'} />
               </div>
-              <button type="submit" className="btn-magenta rounded-full w-full py-3.5 font-semibold text-[15px]">
-                {tab === 'volunteer' ? 'Submit Volunteer Application' : 'Submit Membership Application'}
+              <button type="submit" disabled={sending} data-testid="volunteer-submit-btn" className="btn-magenta rounded-full w-full py-3.5 font-semibold text-[15px] flex items-center justify-center gap-2 disabled:opacity-60">
+                {sending ? <><Loader2 size={16} className="animate-spin" /> Submitting…</> : tab === 'volunteer' ? 'Submit Volunteer Application' : 'Submit Membership Application'}
               </button>
             </form>
           )}
