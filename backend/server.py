@@ -1016,6 +1016,7 @@ DEFAULT_SETTINGS = {
     "site_url": "",
     "detected_site_url": "",
     "staff_notify_email": "caringsistersclub@gmail.com",
+    "story_requests_enabled": True,
 }
 
 
@@ -1038,6 +1039,7 @@ async def _get_settings():
         "site_url": doc.get("site_url") or "",
         "detected_site_url": doc.get("detected_site_url") or "",
         "staff_notify_email": doc.get("staff_notify_email", DEFAULT_SETTINGS["staff_notify_email"]),
+        "story_requests_enabled": doc.get("story_requests_enabled", True),
     }
 
 
@@ -1055,6 +1057,7 @@ class SettingsUpdate(BaseModel):
     lapsed_cooldown_days: Optional[int] = None
     site_url: Optional[str] = None
     staff_notify_email: Optional[str] = None
+    story_requests_enabled: Optional[bool] = None
 
 
 @api_router.get("/settings")
@@ -1109,6 +1112,8 @@ async def update_settings(payload: SettingsUpdate, user=Depends(require_admin)):
             update["site_url"] = _clean_site_url(payload.site_url)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+    if payload.story_requests_enabled is not None:
+        update["story_requests_enabled"] = bool(payload.story_requests_enabled)
     if payload.staff_notify_email is not None:
         em = payload.staff_notify_email.strip()
         if em and not _EMAIL_RE.match(em):
@@ -3176,7 +3181,7 @@ async def program_signup(slug: str, payload: ProgramSignupIn, request: Request, 
     if not prog:
         raise HTTPException(status_code=404, detail="Program not found")
     phone = re.sub(r"[^0-9+()\- .]", "", payload.phone)[:30]
-    data = {"program": prog["title"], "name": name, "email": email.lower(), "phone": phone, "message": payload.message.strip()[:3000]}
+    data = {"program": prog["title"], "program_slug": prog["slug"], "name": name, "email": email.lower(), "phone": phone, "message": payload.message.strip()[:3000]}
     await db.submissions.insert_one({"id": str(uuid.uuid4()), "type": "program_signup", "data": data, "read": False, "created_at": _now_iso()})
     background.add_task(_notify_staff, "program_signup", data)
     background.add_task(_send_signup_confirm, email.lower(), name, prog)
@@ -3203,7 +3208,13 @@ async def _impact_content(since: str) -> dict:
     return {"photos": photos[:6], "stories": stories[:3]}
 
 
-def _impact_email_html(name: str, content: dict, month: str) -> str:
+def _impact_email_html(name: str, content: dict, month: str, track: tuple = None) -> str:
+    def link(path: str) -> str:
+        if not track:
+            return f"{PUBLIC_APP_URL}{path}"
+        return f"{PUBLIC_APP_URL}/api/t/impact/{track[0]}/click?r={track[1]}&u={_urlquote(path, safe='/')}"
+    pixel = (f'<img src="{PUBLIC_APP_URL}/api/t/impact/{track[0]}/open.gif?r={track[1]}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0"/>'
+             if track else "")
     cells = "".join(
         f'<td width="50%" style="padding:6px;vertical-align:top"><img src="{_esc(ph["url"])}" alt="" width="260" style="width:100%;max-width:260px;height:170px;object-fit:cover;border-radius:10px;display:block"/>'
         f'<p style="font-size:12px;color:#6b5560;margin:6px 0 0">{_esc(ph["caption"])}</p></td>' + ("</tr><tr>" if i % 2 == 1 else "")
@@ -3221,9 +3232,9 @@ def _impact_email_html(name: str, content: dict, month: str) -> str:
         f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 12px">Dear {_esc(name)}, look what you made possible</h1>'
         '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">Your monthly gift keeps our programs running. Here is a glimpse of the sisterhood you supported this month.</p>'
         + photos + stories +
-        _btn(f"{PUBLIC_APP_URL}/initiatives", "See Our Programs", primary=True) +
+        _btn(link("/initiatives"), "See Our Programs", primary=True) + pixel +
         '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">With gratitude,<br/>The Caring Sisters Club</p></td></tr>'
-        f'<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You receive this monthly update as a monthly donor. Manage your gift anytime at <a href="{PUBLIC_APP_URL}/manage-gift" style="color:#CBA24B">our Manage My Gift page</a>. We never ask for your password or card details by email.</p></td></tr>'
+        f'<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You receive this monthly update as a monthly donor. Manage your gift anytime at <a href="{link("/manage-gift")}" style="color:#CBA24B">our Manage My Gift page</a>. We never ask for your password or card details by email.</p></td></tr>'
         '</table></td></tr></table>'
     )
 
@@ -3260,15 +3271,20 @@ async def _send_impact_email(trigger: str, test_to: str = None) -> dict:
     if not content["photos"] and not content["stories"]:
         return {"sent": 0, "skipped": "No new program photos or stories in the past month."}
     recipients = [{"email": test_to, "name": "Friend"}] if test_to else await _monthly_recipients()
-    sent = 0
+    cid, sent = str(uuid.uuid4()), 0
     for r in recipients:
+        track = None
+        if not test_to:
+            track = (cid, secrets.token_urlsafe(12))
+            await db.impact_recipients.insert_one({"cid": cid, "rid": track[1], "email": r["email"], "opened_at": None,
+                                                   "clicked_at": None, "opens": 0, "clicks": 0})
         try:
-            if await send_email(to=r["email"], subject=f"Your impact this month · {month}"[:150], html=_impact_email_html(r["name"], content, month)) is not None:
+            if await send_email(to=r["email"], subject=f"Your impact this month · {month}"[:150], html=_impact_email_html(r["name"], content, month, track)) is not None:
                 sent += 1
         except Exception as e:
             logging.error(f"Impact email failed: {e}")
     if not test_to:
-        await db.impact_emails.insert_one({"month": datetime.now(timezone.utc).strftime("%Y-%m"), "trigger": trigger, "sent": sent,
+        await db.impact_emails.insert_one({"id": cid, "month": datetime.now(timezone.utc).strftime("%Y-%m"), "trigger": trigger, "sent": sent,
                                            "recipients": len(recipients), "photos": len(content["photos"]), "stories": len(content["stories"]), "sent_at": _now_iso()})
     return {"sent": sent, "recipients": len(recipients)}
 
@@ -3288,6 +3304,164 @@ async def _maybe_monthly_impact():
     if now.day > 3 or await db.impact_emails.find_one({"month": now.strftime("%Y-%m"), "trigger": "auto"}):
         return
     await _send_impact_email("auto")
+
+
+# ---------- Story request emails (60 days after program sign-up) ----------
+def _story_request_html(name: str, program: str, url: str) -> str:
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Share Your Story") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 14px">How has it been, {_esc(name)}?</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">It has been about two months since you joined <strong>{_esc(program)}</strong>. '
+        'We would love to hear how it has made a difference for you. Your story could inspire another sister to take her first step.</p>'
+        + _btn(url, "Share My Story", primary=True) +
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">It only takes a minute, and our team reviews every story before it is shared.<br/><br/>With warmth,<br/>The Caring Sisters Club</p></td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you signed up for a program on our website. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _send_story_requests() -> int:
+    if not (await _get_settings()).get("story_requests_enabled", True):
+        return 0
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+    sent = 0
+    async for sub in db.submissions.find({"type": "program_signup", "created_at": {"$lte": cutoff}, "story_request_sent": {"$ne": True}}, {"_id": 0}):
+        d = sub.get("data") or {}
+        await db.submissions.update_one({"id": sub["id"]}, {"$set": {"story_request_sent": True, "story_request_at": _now_iso()}})
+        prog = await db.programs.find_one({"$or": [{"slug": d.get("program_slug") or "-"}, {"title": d.get("program")}], "published": True}, {"_id": 0, "slug": 1, "title": 1})
+        if not prog or not d.get("email"):
+            continue
+        try:
+            if await send_email(to=d["email"], subject=f"How has {prog['title']} been for you?"[:150],
+                                html=_story_request_html(d.get("name") or "Friend", prog["title"], f"{PUBLIC_APP_URL}/initiatives/{prog['slug']}?share=1")) is not None:
+                sent += 1
+        except Exception as e:
+            logging.error(f"Story request email failed: {e}")
+    return sent
+
+
+# ---------- Program interest report ----------
+def _last_months(n: int) -> list:
+    now = datetime.now(timezone.utc)
+    y, m, out = now.year, now.month, []
+    for _ in range(n):
+        out.append(f"{y:04d}-{m:02d}")
+        y, m = (y - 1, 12) if m == 1 else (y, m - 1)
+    return list(reversed(out))
+
+
+@api_router.get("/admin/reports/program-signups")
+async def report_program_signups(months: int = 6, user=Depends(require_admin)):
+    months = max(1, min(int(months), 24))
+    keys = _last_months(months)
+    counts = {}
+    async for row in db.submissions.aggregate([
+        {"$match": {"type": "program_signup", "created_at": {"$gte": keys[0]}}},
+        {"$group": {"_id": {"p": "$data.program", "m": {"$substr": ["$created_at", 0, 7]}}, "n": {"$sum": 1}}},
+    ]):
+        counts.setdefault(row["_id"]["p"] or "Unknown", {})[row["_id"]["m"]] = row["n"]
+    titles = [p["title"] async for p in db.programs.find({}, {"_id": 0, "title": 1}).sort("order", 1)]
+    rows = []
+    for t in titles + [t for t in counts if t not in titles]:
+        c = [counts.get(t, {}).get(k, 0) for k in keys]
+        trend = "up" if len(c) > 1 and c[-1] > c[-2] else "down" if len(c) > 1 and c[-1] < c[-2] else "flat"
+        rows.append({"program": t, "counts": c, "total": sum(c), "trend": trend})
+    return {"months": keys, "rows": rows, "totals": [sum(r["counts"][i] for r in rows) for i in range(len(keys))]}
+
+
+# ---------- Impact email tracking ----------
+_PIXEL = bytes.fromhex("47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b")
+
+
+@api_router.get("/t/impact/{cid}/open.gif")
+async def impact_open(cid: str, r: str = ""):
+    await db.impact_recipients.update_one({"cid": cid[:64], "rid": r[:64], "opened_at": None}, {"$set": {"opened_at": _now_iso()}})
+    await db.impact_recipients.update_one({"cid": cid[:64], "rid": r[:64]}, {"$inc": {"opens": 1}})
+    return Response(content=_PIXEL, media_type="image/gif", headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@api_router.get("/t/impact/{cid}/click")
+async def impact_click(cid: str, r: str = "", u: str = "/"):
+    path = u if re.match(r"^/[A-Za-z0-9/_\-?=&.]*$", u or "") and not u.startswith("//") else "/"
+    rec = await db.impact_recipients.find_one({"cid": cid[:64], "rid": r[:64]}, {"_id": 0, "opened_at": 1})
+    if rec:
+        now = _now_iso()
+        await db.impact_recipients.update_one({"cid": cid[:64], "rid": r[:64], "clicked_at": None}, {"$set": {"clicked_at": now}})
+        if not rec.get("opened_at"):
+            await db.impact_recipients.update_one({"cid": cid[:64], "rid": r[:64]}, {"$set": {"opened_at": now}})
+        await db.impact_recipients.update_one({"cid": cid[:64], "rid": r[:64]}, {"$inc": {"clicks": 1}})
+    return RedirectResponse(url=f"{PUBLIC_APP_URL}{path}", status_code=302)
+
+
+@api_router.get("/admin/impact-email/history")
+async def impact_history(user=Depends(require_admin)):
+    sends = await db.impact_emails.find({"id": {"$exists": True}}, {"_id": 0}).sort("sent_at", -1).to_list(12)
+    for s in sends:
+        q = {"cid": s["id"]}
+        s["opens"] = await db.impact_recipients.count_documents({**q, "opened_at": {"$ne": None}})
+        s["clicks"] = await db.impact_recipients.count_documents({**q, "clicked_at": {"$ne": None}})
+        s["open_rate"] = round(s["opens"] / s["sent"] * 100, 1) if s.get("sent") else 0
+        s["click_rate"] = round(s["clicks"] / s["sent"] * 100, 1) if s.get("sent") else 0
+    return {"items": sends}
+
+
+# ---------- Volunteer hours ----------
+class HoursIn(BaseModel):
+    name: str
+    email: str
+    program_id: str
+    date: str
+    hours: float
+    note: str = ""
+
+
+@api_router.post("/volunteer-hours")
+async def log_hours(payload: HoursIn, request: Request, background: BackgroundTasks):
+    _rate_limit(request, "hours", max_hits=10, window_s=600)
+    name, email = _validate_person({"name": payload.name, "email": payload.email, "note": payload.note})
+    if not 0.25 <= payload.hours <= 24:
+        raise HTTPException(status_code=400, detail="Hours must be between 0.25 and 24 for a single day.")
+    try:
+        day = datetime.strptime(payload.date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Please choose a valid date.")
+    today = datetime.now(timezone.utc).date()
+    if day > today or day < today - timedelta(days=365):
+        raise HTTPException(status_code=400, detail="Date must be within the past year and not in the future.")
+    prog = await db.programs.find_one({"id": payload.program_id[:64], "published": True}, {"_id": 0, "id": 1, "title": 1})
+    if not prog:
+        raise HTTPException(status_code=400, detail="Please choose a program.")
+    doc = {"id": str(uuid.uuid4()), "name": name[:80], "email": email.lower(), "program_id": prog["id"], "program": prog["title"],
+           "date": payload.date, "hours": round(payload.hours, 2), "note": payload.note.strip()[:500], "status": "pending", "created_at": _now_iso()}
+    await db.volunteer_hours.insert_one(dict(doc))
+    return {"id": doc["id"], "message": "Thank you! Your hours were submitted for review."}
+
+
+@api_router.get("/volunteer-hours/summary")
+async def hours_summary():
+    by = [{"program": r["_id"], "hours": round(r["h"], 1)} async for r in db.volunteer_hours.aggregate([
+        {"$match": {"status": "approved"}}, {"$group": {"_id": "$program", "h": {"$sum": "$hours"}}}, {"$sort": {"h": -1}}])]
+    vols = len(await db.volunteer_hours.distinct("email", {"status": "approved"}))
+    return {"total_hours": round(sum(b["hours"] for b in by), 1), "volunteers": vols, "by_program": by}
+
+
+@api_router.get("/admin/volunteer-hours")
+async def admin_hours(user=Depends(require_admin)):
+    return {"items": await db.volunteer_hours.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)}
+
+
+@api_router.post("/admin/volunteer-hours/{hid}/{action}")
+async def admin_review_hours(hid: str, action: str, user=Depends(require_admin)):
+    if action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="Invalid action")
+    res = await db.volunteer_hours.update_one({"id": hid, "status": "pending"}, {"$set": {
+        "status": "approved" if action == "approve" else "rejected", "reviewed_at": _now_iso(), "reviewed_by": user.get("email")}})
+    if not res.modified_count:
+        raise HTTPException(status_code=404, detail="Pending entry not found")
+    return {"ok": True}
 
 
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------
@@ -3432,6 +3606,7 @@ async def _daily_scheduler():
             await _process_all_waitlists()
             await _check_cancellations()
             await _maybe_monthly_impact()
+            await _send_story_requests()
             await db.donor_manage_tokens.delete_many({"expires_at": {"$lt": datetime.now(timezone.utc).isoformat()}})
         except Exception as e:
             logging.error(f"Daily scheduler error: {e}")

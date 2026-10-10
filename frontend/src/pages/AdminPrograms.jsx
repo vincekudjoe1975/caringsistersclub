@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 import { eventImg } from './Events';
 import { TestimonialsEditor } from './AdminHome';
+import { useSignupReport, Trend } from './AdminReports';
 import { uploadImage, imgSrc } from '../lib/useHomeContent';
 import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, X, UploadCloud, Tags, ExternalLink } from 'lucide-react';
 
@@ -172,6 +173,25 @@ function HomePicks({ selected, onChange }) {
   );
 }
 
+function SignupCard() {
+  const data = useSignupReport(2);
+  if (!data || !data.rows.length) return null;
+  const top = [...data.rows].sort((a, b) => b.counts[1] - a.counts[1]).slice(0, 4);
+  return (
+    <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 p-5 mb-5" data-testid="program-signup-card">
+      <p className="text-[13px] font-semibold text-[#3B0A2E] mb-3">Sign-ups this month <span className="font-normal text-[#241019]/55">(vs last month · full report in Reports)</span></p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {top.map((r) => (
+          <div key={r.program} className="rounded-xl px-4 py-3" style={{ background: '#faf2f7' }} data-testid="program-signup-card-item">
+            <p className="text-[12px] text-[#241019]/60 truncate">{r.program}</p>
+            <p className="font-serif text-[22px] font-bold text-[#3B0A2E] flex items-center gap-2">{r.counts[1]} <Trend t={r.trend} /><span className="text-[11px] font-sans font-normal text-[#241019]/45">was {r.counts[0]}</span></p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CategoryEditor({ categories, onSaved }) {
   const [text, setText] = useState(categories.join(', '));
   const [saving, setSaving] = useState(false);
@@ -260,6 +280,7 @@ export default function AdminPrograms() {
         </div>
         <button onClick={() => setEditing({})} data-testid="new-program-btn" className="btn-magenta rounded-full px-5 py-2.5 text-[13.5px] font-semibold flex items-center gap-2"><Plus size={16} /> New Program</button>
       </div>
+      <SignupCard />
       <CategoryEditor categories={categories} onSaved={setCategories} />
       {items === null ? <div className="flex justify-center py-16"><Loader2 className="animate-spin text-[#B4247E]" size={30} /></div> : (
         <div className="space-y-3">{items.map((p, i) => (

@@ -53,8 +53,8 @@ function StoryForm({ programSlug, onDone }) {
   );
 }
 
-export const ShareStory = ({ programSlug, className = '' }) => {
-  const [open, setOpen] = useState(false);
+export const ShareStory = ({ programSlug, className = '', autoOpen = false }) => {
+  const [open, setOpen] = useState(autoOpen);
   const [done, setDone] = useState(false);
   return (
     <>

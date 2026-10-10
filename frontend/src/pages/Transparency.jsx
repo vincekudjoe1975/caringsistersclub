@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { org } from '../mock/mock';
 import { api, mediaSrc } from '../lib/api';
 import { useTransparency } from '../lib/useTransparency';
+import { VolunteerImpact } from '../components/VolunteerHours';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
 import { FileText, Download, PieChart, TrendingUp, BarChart3 } from 'lucide-react';
@@ -140,6 +141,7 @@ export default function Transparency() {
       </section>
 
       <FinancialsTable rows={t.financials || []} />
+      <VolunteerImpact />
 
       <section className="py-16 lg:py-20" style={{ background: '#F7EFE9' }}>
         <div className="max-w-5xl mx-auto px-5 lg:px-8">

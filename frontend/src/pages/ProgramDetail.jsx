@@ -101,7 +101,7 @@ export default function ProgramDetail() {
           </>}
           <div className="text-center">
             <p className="text-[#241019]/65 text-[15px] mb-4">Part of {p.title}? Share how it made a difference.</p>
-            <ShareStory programSlug={p.slug} />
+            <ShareStory programSlug={p.slug} autoOpen={new URLSearchParams(window.location.search).get('share') === '1'} />
           </div>
         </div>
       </section>

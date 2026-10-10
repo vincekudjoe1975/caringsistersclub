@@ -58,6 +58,45 @@ function StoryCard({ st, programs, onDone }) {
   );
 }
 
+function ImpactHistory() {
+  const [items, setItems] = useState([]);
+  useEffect(() => { api.get('/admin/impact-email/history').then(({ data }) => setItems(data.items || [])).catch(() => {}); }, []);
+  if (!items.length) return null;
+  return (
+    <div className="mt-5 overflow-x-auto" data-testid="impact-history">
+      <p className="text-[12.5px] font-semibold text-[#3B0A2E] mb-2">Engagement <span className="font-normal text-[#241019]/50">(opens are approximate; some email apps block tracking images)</span></p>
+      <table className="w-full text-left text-[13px]">
+        <thead><tr className="text-[11px] uppercase tracking-wide text-[#241019]/50"><th className="px-3 py-2">Sent</th><th className="px-3 py-2 text-right">Delivered</th><th className="px-3 py-2 text-right">Opened</th><th className="px-3 py-2 text-right">Clicked</th></tr></thead>
+        <tbody>{items.map((s) => (
+          <tr key={s.id} className="border-t border-[#3B0A2E]/8" data-testid="impact-history-row">
+            <td className="px-3 py-2">{new Date(s.sent_at).toLocaleDateString()} <span className="text-[11px] text-[#241019]/45 capitalize">({s.trigger})</span></td>
+            <td className="px-3 py-2 text-right">{s.sent}</td>
+            <td className="px-3 py-2 text-right" data-testid="impact-history-opens">{s.opens} <span className="text-[#241019]/45">({s.open_rate}%)</span></td>
+            <td className="px-3 py-2 text-right font-semibold text-[#B4247E]" data-testid="impact-history-clicks">{s.clicks} <span className="text-[#241019]/45 font-normal">({s.click_rate}%)</span></td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function StoryRequestToggle() {
+  const [on, setOn] = useState(null);
+  const { toast } = useToast();
+  useEffect(() => { api.get('/admin/settings').then(({ data }) => setOn(data.story_requests_enabled !== false)).catch(() => {}); }, []);
+  if (on === null) return null;
+  const flip = async () => {
+    try { await api.put('/admin/settings', { story_requests_enabled: !on }); setOn(!on); toast({ title: !on ? 'Story requests turned on' : 'Story requests turned off' }); }
+    catch { toast({ title: 'Could not update', variant: 'destructive' }); }
+  };
+  return (
+    <label className="mt-5 pt-4 border-t border-[#3B0A2E]/8 flex items-start gap-3 cursor-pointer" data-testid="story-request-toggle">
+      <input type="checkbox" checked={on} onChange={flip} className="accent-[#B4247E] w-4 h-4 mt-0.5" data-testid="story-request-checkbox" />
+      <span className="text-[13px] text-[#3B0A2E]"><strong>Automatic story requests</strong><br /><span className="text-[#241019]/60">Email each program sign-up once, 60 days after they join, inviting them to share their story.</span></span>
+    </label>
+  );
+}
+
 function ImpactEmail() {
   const [info, setInfo] = useState(null);
   const [show, setShow] = useState(false);
@@ -95,6 +134,8 @@ function ImpactEmail() {
         </div>
       </div>
       {show && <iframe title="Impact email preview" srcDoc={info.html} sandbox="" className="w-full h-[560px] mt-4 rounded-xl border border-[#3B0A2E]/10" data-testid="impact-preview-frame" />}
+      <ImpactHistory />
+      <StoryRequestToggle />
     </div>
   );
 }

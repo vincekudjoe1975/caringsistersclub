@@ -14,9 +14,10 @@ import AdminPrograms from './AdminPrograms';
 import AdminHome from './AdminHome';
 import AdminAbout from './AdminAbout';
 import AdminStories from './AdminStories';
+import AdminReports from './AdminReports';
 import { SiteUrlBanner } from '../components/SiteUrlBanner';
 import { useToast } from '../hooks/use-toast';
-import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote } from 'lucide-react';
+import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote, BarChart3 } from 'lucide-react';
 
 const TABS = [
   { key: 'gallery', label: 'Gallery Photos', icon: ImageIcon, accept: 'image/*', titleLabel: 'Caption', subLabel: '' },
@@ -147,6 +148,7 @@ export default function Admin() {
             { k: 'home', l: 'Home Page', icon: LayoutTemplate },
             { k: 'about', l: 'About Page', icon: BookOpen },
             { k: 'stories', l: 'Stories & Updates', icon: MessageSquareQuote },
+            { k: 'reports', l: 'Reports', icon: BarChart3 },
             { k: 'programs', l: 'Programs', icon: Layers },
             { k: 'events', l: 'Events', icon: CalendarHeart },
             { k: 'transparency', l: 'Transparency', icon: PieChart },
@@ -168,6 +170,8 @@ export default function Admin() {
 
         {view === 'inbox' ? (
           <AdminSubmissions />
+        ) : view === 'reports' ? (
+          <AdminReports />
         ) : view === 'about' ? (
           <AdminAbout />
         ) : view === 'stories' ? (
