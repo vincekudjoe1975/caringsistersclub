@@ -23,7 +23,6 @@ db.member_meetings.delete_many({"title": {"$regex": "^QA"}})
 db.member_pay_tokens.delete_many({"user_id": {"$in": uids}})
 db.member_december.delete_many({"key": {"$regex": "qa_mem"}})
 db.member_collections.delete_many({"beneficiary_id": {"$in": uids}})
-db.member_runs.delete_many({})
 bids = [b["id"] for b in db.member_ballots.find({"title": {"$regex": "^QA"}}, {"id": 1})]
 db.member_votes.delete_many({"ballot_id": {"$in": bids}})
 db.member_voters.delete_many({"ballot_id": {"$in": bids}})
