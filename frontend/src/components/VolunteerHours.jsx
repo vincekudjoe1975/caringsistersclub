@@ -127,3 +127,34 @@ export const VolunteerImpact = () => {
     </section>
   );
 };
+
+export const CertificateRequest = () => {
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [error, setError] = useState('');
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError(''); setMsg('');
+    try { const { data } = await api.post('/certificates/request', { email }); setMsg(data.message); }
+    catch (err) { setError(errMsg(err)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section className="pb-16 lg:pb-20" data-testid="certificate-request">
+      <div className="max-w-3xl mx-auto px-5 lg:px-8">
+        <div className="rounded-[24px] p-8 lg:p-10 text-white" style={{ background: 'linear-gradient(160deg,#3B0A2E,#4d1240)' }}>
+          <h2 className="font-serif text-[26px] font-semibold flex items-center gap-2 mb-1"><Award size={22} className="text-[#CBA24B]" /> Download my certificate</h2>
+          <p className="text-[#F7EFE9]/75 text-[14px] mb-5">Earned a 50 or 100-hour badge? Enter the email you log hours with and we'll send your printable certificate.</p>
+          {msg ? <p className="text-[14px] text-[#CBA24B] font-semibold flex items-center gap-2" data-testid="certificate-request-success"><CheckCircle2 size={18} /> {msg}</p> : (
+            <form onSubmit={submit} className="flex flex-col sm:flex-row gap-3">
+              <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" data-testid="certificate-email-input" className="flex-1 rounded-full px-5 py-3 text-[14px] text-[#241019] focus:outline-none" />
+              <button type="submit" disabled={busy} data-testid="certificate-request-btn" className="btn-gold rounded-full px-7 py-3 font-semibold text-[14px] flex items-center justify-center gap-2 disabled:opacity-60">{busy && <Loader2 size={15} className="animate-spin" />} Email My Certificate</button>
+            </form>
+          )}
+          {error && <p className="text-[13px] text-[#ffb3c7] mt-3" data-testid="certificate-request-error">{error}</p>}
+        </div>
+      </div>
+    </section>
+  );
+};

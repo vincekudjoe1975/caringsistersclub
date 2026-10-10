@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Loader2, CheckCircle2, UserPlus, Users, Hourglass } from 'lucide-react';
 import { api } from '../lib/api';
 import { errMsg } from '../pages/Events';
@@ -14,11 +15,13 @@ export const SeatsBadge = ({ p, className = '' }) => {
   );
 };
 
-const Done = ({ waitlist, email }) => (
+const Done = ({ waitlist, email, position, token }) => (
   <div className="text-center" data-testid="program-signup-success">
     <CheckCircle2 size={44} className="text-[#B4247E] mx-auto mb-3" />
     <p className="font-serif text-[22px] text-[#3B0A2E] font-semibold mb-1">{waitlist ? "You're on the waitlist!" : "You're signed up!"}</p>
+    {waitlist && position > 0 && <p className="font-serif text-[40px] text-[#B4247E] font-bold leading-none my-3" data-testid="waitlist-position-number">You're #{position}</p>}
     <p className="text-[14px] text-[#241019]/65">We've emailed a confirmation to <strong>{email}</strong>. {waitlist ? "We'll reach out as soon as a spot opens up." : 'Our team will reach out within 3 business days.'}</p>
+    {waitlist && token && <Link to={`/waitlist/status?token=${token}`} data-testid="waitlist-status-link" className="inline-block mt-4 text-[13.5px] font-semibold text-[#B4247E] link-underline">Check my position anytime</Link>}
   </div>
 );
 
@@ -32,7 +35,7 @@ export const ProgramSignup = ({ program: p }) => {
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true); setError('');
-    try { const { data } = await api.post(`/programs/${encodeURIComponent(p.slug)}/signup`, form); setDone({ waitlist: !!data.waitlist }); }
+    try { const { data } = await api.post(`/programs/${encodeURIComponent(p.slug)}/signup`, form); setDone({ waitlist: !!data.waitlist, position: data.position, token: data.status_token }); }
     catch (err) { setError(errMsg(err)); }
     finally { setBusy(false); }
   };
@@ -41,7 +44,7 @@ export const ProgramSignup = ({ program: p }) => {
     <section className="py-16 lg:py-20" id="join" data-testid="program-signup">
       <div className="max-w-3xl mx-auto px-5 lg:px-8">
         <div className="bg-white rounded-[24px] p-8 lg:p-10 border border-[#3B0A2E]/8">
-          {done ? <Done waitlist={done.waitlist} email={form.email} /> : (
+          {done ? <Done {...done} email={form.email} /> : (
             <form onSubmit={submit}>
               <h2 className="font-serif text-[28px] text-[#3B0A2E] font-semibold flex items-center gap-2 mb-1"><UserPlus size={24} className="text-[#B4247E]" /> {p.full ? 'Join the waitlist' : 'Join this program'}</h2>
               <p className="text-[14px] text-[#241019]/65 mb-3">{p.full ? `${p.title} is currently full. Join the waitlist and we'll contact you when a spot opens.` : `Interested in ${p.title}? Leave your details and our team will be in touch.`}</p>

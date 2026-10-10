@@ -21,6 +21,10 @@ export default function Donate() {
   useEffect(() => {
     const a = new URLSearchParams(window.location.search).get('appeal');
     if (a && /^[0-9a-f-]{36}$/i.test(a)) sessionStorage.setItem('csc_appeal', a);
+    const amt = Number(new URLSearchParams(window.location.search).get('amount'));
+    if (amt >= 1 && amt <= 100000) {
+      if (donationTiers.some((t) => t.amount === amt)) setAmount(amt); else setCustom(String(Math.round(amt)));
+    }
   }, []);
 
   const finalAmount = custom ? Number(custom) : amount;

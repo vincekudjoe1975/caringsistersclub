@@ -88,7 +88,7 @@ export default function YearInReview() {
           <p className="text-[#241019]/65 text-[15px] mb-7">Help more sisters find us by sharing this page.</p>
           <ShareBar year={d.year} />
           <div className="mt-10 flex flex-wrap justify-center gap-3">
-            <Link to="/donate" data-testid="yir-donate-link" className="btn-gold rounded-full px-7 py-3 font-semibold text-[14px]">Be part of next year</Link>
+            <Link to={`/donate?amount=${d.ask_amount || 50}`} data-testid="yir-donate-link" className="btn-gold rounded-full px-7 py-3 font-semibold text-[14px] flex items-center gap-2"><Heart size={15} /> Help us do it again: give ${d.ask_amount || 50}</Link>
             <Link to="/volunteer" className="rounded-full px-7 py-3 font-semibold text-[14px] text-[#3B0A2E] border border-[#3B0A2E]/15">Volunteer</Link>
           </div>
         </div>

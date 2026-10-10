@@ -156,6 +156,23 @@ function YirShareImage({ year, d, onSaved }) {
   );
 }
 
+function AskAmount({ year, d, onSaved }) {
+  const { toast } = useToast();
+  const [v, setV] = useState(d.ask_amount || 50);
+  const save = async () => {
+    try { const { data } = await api.put(`/admin/year-in-review/${year}`, { ask_amount: Number(v) }); onSaved({ ask_amount: data.ask_amount }); toast({ title: `Suggested gift set to $${data.ask_amount}` }); }
+    catch (err) { toast({ title: 'Save failed', description: err?.response?.data?.detail, variant: 'destructive' }); }
+  };
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px] text-[#3B0A2E]" data-testid="yir-ask-amount">
+      <span className="font-semibold">"Help us do it again" suggested gift: $</span>
+      <input type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} data-testid="yir-ask-amount-input" className="w-24 rounded-full px-3 py-1.5 border border-[#3B0A2E]/15" />
+      <button onClick={save} disabled={Number(v) === d.ask_amount} data-testid="yir-ask-amount-save" className="font-semibold px-4 py-1.5 rounded-full text-white bg-[#3B0A2E] disabled:opacity-40">Save</button>
+      <span className="text-[#241019]/55">Past donors see their own last gift amount in the email.</span>
+    </div>
+  );
+}
+
 function YirEmail({ year, d, onSaved }) {
   const { toast } = useToast();
   const [info, setInfo] = useState(null);
@@ -186,6 +203,7 @@ function YirEmail({ year, d, onSaved }) {
           <button disabled={!d.public || !info.recipients || !!busy} title={d.public ? '' : 'Publish the page first'} onClick={() => window.confirm(`Email the ${year} Year in Review to ${info.recipients} people?`) && run('send', () => api.post(`/admin/year-in-review/${year}/email/send`, { force: false }), 'Year in Review email is sending')} data-testid="yir-email-send-btn" className="btn-magenta text-[12.5px] font-semibold px-4 py-2 rounded-full flex items-center gap-1.5 disabled:opacity-50"><Send size={13} /> {busy === 'send' ? 'Queuing…' : 'Send to all'}</button>
         </div>
       </div>
+      <AskAmount year={year} d={d} onSaved={onSaved} />
       <label className="mt-3 flex items-center gap-2 text-[12.5px] text-[#3B0A2E] font-semibold"><input type="checkbox" checked={!!d.autosend} onChange={toggleAuto} data-testid="yir-autosend-checkbox" className="accent-[#B4247E]" /> Send automatically when a year's page is published (once per year)</label>
       {last && <p className="text-[12px] text-[#241019]/55 mt-2" data-testid="yir-email-last">Last send: {new Date(last.started_at).toLocaleString()} · {last.status === 'done' ? `${last.sent} sent${last.failed ? `, ${last.failed} failed` : ''}` : `sending to ${last.recipients}…`} ({last.trigger})</p>}
       {!d.public && <p className="text-[12px] text-[#9b3b4f] mt-2">Publish the page before sending so the email link works.</p>}

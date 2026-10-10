@@ -3180,9 +3180,12 @@ class ProgramSignupIn(BaseModel):
     message: str = ""
 
 
-def _signup_confirm_html(name: str, prog: dict, waitlist: bool = False) -> str:
+def _signup_confirm_html(name: str, prog: dict, waitlist: bool = False, pos: int = 0, status_token: str = "") -> str:
     lead = (f'Thank you for your interest in <strong>{_esc(prog["title"])}</strong>. The program is currently full, so you have been added to the <strong>waitlist</strong>. '
-            'We will reach out as soon as a spot opens up.</p>') if waitlist else (
+            'We will reach out as soon as a spot opens up.</p>'
+            f'<p style="font-family:Georgia,serif;font-size:30px;color:#B4247E;font-weight:bold;margin:0 0 6px">You\'re #{pos} in line</p>'
+            '<p style="font-size:13px;color:#6b5560;margin:0 0 18px">Your place updates as spots open. Check it anytime:</p>'
+            + _btn(f"{PUBLIC_APP_URL}/waitlist/status?token={status_token}", "Check My Position") + "&nbsp; ") if waitlist else (
             f'Thank you for your interest in <strong>{_esc(prog["title"])}</strong>. '
             'A member of our team will reach out within 3 business days with next steps.</p>')
     return (
@@ -3199,10 +3202,10 @@ def _signup_confirm_html(name: str, prog: dict, waitlist: bool = False) -> str:
     )
 
 
-async def _send_signup_confirm(email: str, name: str, prog: dict, waitlist: bool = False):
+async def _send_signup_confirm(email: str, name: str, prog: dict, waitlist: bool = False, pos: int = 0, status_token: str = ""):
     try:
-        subj = f"You're on the waitlist: {prog['title']}" if waitlist else f"You're signed up: {prog['title']}"
-        await send_email(to=email, subject=subj[:150], html=_signup_confirm_html(name, prog, waitlist))
+        subj = f"You're #{pos} on the waitlist: {prog['title']}" if waitlist else f"You're signed up: {prog['title']}"
+        await send_email(to=email, subject=subj[:150], html=_signup_confirm_html(name, prog, waitlist, pos, status_token))
     except Exception as e:
         logging.error(f"Signup confirmation failed: {e}")
 
@@ -3219,12 +3222,18 @@ async def program_signup(slug: str, payload: ProgramSignupIn, request: Request, 
     data = {"program": prog["title"], "program_slug": prog["slug"], "name": name, "email": email.lower(), "phone": phone, "message": payload.message.strip()[:3000]}
     if full:
         data["list"] = "Waitlist"
-    await db.submissions.insert_one({"id": str(uuid.uuid4()), "type": "program_signup", "program_id": prog["id"], "waitlist": full,
-                                     "data": data, "read": False, "created_at": _now_iso()})
-    background.add_task(_notify_staff, "program_signup", data)
-    background.add_task(_send_signup_confirm, email.lower(), name, prog, full)
+    doc = {"id": str(uuid.uuid4()), "type": "program_signup", "program_id": prog["id"], "waitlist": full,
+           "data": data, "read": False, "created_at": _now_iso()}
     if full:
-        return {"waitlist": True, "message": "This program is full, so you've been added to the waitlist. Check your email for details."}
+        doc["status_token"] = secrets.token_urlsafe(24)
+    await db.submissions.insert_one(dict(doc))
+    background.add_task(_notify_staff, "program_signup", data)
+    if full:
+        pos, total = await _wl_position(doc)
+        background.add_task(_send_signup_confirm, email.lower(), name, prog, True, pos, doc["status_token"])
+        return {"waitlist": True, "position": pos, "total": total, "status_token": doc["status_token"],
+                "message": f"This program is full, so you've been added to the waitlist. You're #{pos} in line."}
+    background.add_task(_send_signup_confirm, email.lower(), name, prog, False)
     return {"waitlist": False, "message": "You're signed up! Check your email for a confirmation."}
 
 
@@ -3316,7 +3325,7 @@ async def _offer(token: str, request: Request):
     status = sub.get("offer_status")
     if status == "open" and sub.get("offer_expires", "") <= _now_iso():
         status = "expired"
-    if status == "open" and prog.get("capacity") and prog["capacity"] - await _seats_taken(prog) <= 0:
+    if status == "open" and not sub.get("offer_override") and prog.get("capacity") and prog["capacity"] - await _seats_taken(prog) <= 0:
         status = "full"
     return sub, prog, status
 
@@ -3341,6 +3350,76 @@ async def waitlist_claim(payload: ClaimIn, request: Request, background: Backgro
         raise HTTPException(status_code=409, detail="This offer is no longer available.")
     background.add_task(_spot_email, sub, prog, "auto")
     return {"status": "claimed", "program": prog["title"]}
+
+
+def _wl_q(pid: str) -> dict:
+    return {"type": "program_signup", "program_id": pid, "waitlist": True, "stage": {"$nin": ["enrolled", "not_fit"]}}
+
+
+async def _wl_position(sub: dict):
+    q = _wl_q(sub["program_id"])
+    return await db.submissions.count_documents({**q, "created_at": {"$lte": sub["created_at"]}}), await db.submissions.count_documents(q)
+
+
+@api_router.get("/waitlist/status")
+async def waitlist_status(token: str, request: Request):
+    _rate_limit(request, "claim", max_hits=20, window_s=60)
+    sub = await db.submissions.find_one({"status_token": token[:64], "type": "program_signup"}, {"_id": 0}) if token else None
+    if not sub:
+        raise HTTPException(status_code=404, detail="This link is invalid.")
+    prog = await db.programs.find_one({"id": sub.get("program_id")}, {"_id": 0, "title": 1, "slug": 1}) or {}
+    out = {"program": prog.get("title", sub["data"].get("program")), "slug": prog.get("slug", ""), "name": (sub["data"].get("name") or "").split(" ")[0]}
+    if sub.get("stage") == "not_fit":
+        return {**out, "status": "removed"}
+    if not sub.get("waitlist") or sub.get("stage") == "enrolled":
+        return {**out, "status": "in"}
+    pos, total = await _wl_position(sub)
+    out.update({"position": pos, "total": total, "status": "waiting"})
+    if sub.get("offer_status") == "open" and sub.get("offer_expires", "") > _now_iso():
+        out.update({"status": "offer", "claim_token": sub["offer_token"], "expires": sub["offer_expires"]})
+    return out
+
+
+@api_router.get("/admin/programs/{pid}/waitlist")
+async def admin_program_waitlist(pid: str, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    now = _now_iso()
+    items = []
+    for i, s in enumerate(await db.submissions.find(_wl_q(pid), {"_id": 0}).sort("created_at", 1).to_list(1000)):
+        st = s.get("offer_status") or "waiting"
+        if st == "open" and s.get("offer_expires", "") <= now:
+            st = "expired"
+        items.append({"id": s["id"], "position": i + 1, "name": s["data"].get("name"), "email": s["data"].get("email"), "joined": s["created_at"],
+                      "offer_status": st, "offer_expires": s.get("offer_expires") if st == "open" else None, "offer_sent_at": s.get("offer_sent_at")})
+    p = await _with_seats(p)
+    return {"program": p["title"], "capacity": p.get("capacity", 0), "seats_left": p.get("seats_left"), "mode": p.get("waitlist_mode") or "claim", "items": items}
+
+
+@api_router.post("/admin/waitlist/{sid}/{action}")
+async def admin_waitlist_action(sid: str, action: str, user=Depends(require_admin)):
+    if action not in ("offer", "move-in", "remove"):
+        raise HTTPException(status_code=400, detail="Invalid action")
+    sub = await db.submissions.find_one({"id": sid, "type": "program_signup", "waitlist": True, "stage": {"$nin": ["enrolled", "not_fit"]}}, {"_id": 0})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Waitlisted sign-up not found")
+    prog = await db.programs.find_one({"id": sub.get("program_id")}, {"_id": 0})
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+    now = datetime.now(timezone.utc)
+    if action == "remove":
+        await db.submissions.update_one({"id": sid}, {"$set": {"stage": "not_fit", "stage_at": now.isoformat(), "offer_status": "removed", "data.list": "Removed from waitlist"}})
+        return {"ok": True}
+    if action == "move-in":
+        await db.submissions.update_one({"id": sid}, {"$set": {"waitlist": False, "offer_status": "claimed", "moved_at": now.isoformat(), "data.list": "Moved in by staff"}})
+        await _spot_email(sub, prog, "auto")
+        return {"ok": True}
+    tok = secrets.token_urlsafe(24)
+    await db.submissions.update_one({"id": sid}, {"$set": {"offer_status": "open", "offer_token": tok, "offer_mode": "staff", "offer_override": True,
+                                                          "offer_sent_at": now.isoformat(), "offer_expires": (now + timedelta(hours=OFFER_HOURS)).isoformat()}})
+    await _spot_email(sub, prog, "claim", f"{PUBLIC_APP_URL}/waitlist/claim?token={tok}")
+    return {"ok": True, "offer_expires": (now + timedelta(hours=OFFER_HOURS)).isoformat()}
 
 
 # ---------- Monthly impact email ----------
@@ -3718,10 +3797,11 @@ async def _award_milestones(email: str, year: str, year_total: float, all_total:
     for scope, total, label in (("all", all_total, "{n} Hours All-Time"), (f"year:{year}", year_total, "{n} Hours in " + year)):
         for n in VOL_MILESTONES:
             if total >= n:
+                tok = secrets.token_urlsafe(24) if n >= CERT_MIN else None
                 r = await db.volunteer_milestones.update_one({"email": email, "scope": scope, "threshold": n},
-                                                             {"$setOnInsert": {"hours": total, "awarded_at": _now_iso()}}, upsert=True)
+                                                             {"$setOnInsert": {"hours": total, "awarded_at": _now_iso(), "label": label.format(n=n), "cert_token": tok}}, upsert=True)
                 if r.upserted_id is not None:
-                    out.append({"scope": scope, "threshold": n, "label": label.format(n=n)})
+                    out.append({"scope": scope, "threshold": n, "label": label.format(n=n), "cert_token": tok})
     return out
 
 
@@ -3735,11 +3815,109 @@ def _milestone_html(name: str, b: dict, year_total: float, all_total: float) -> 
         f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:26px;margin:0 0 10px">Congratulations, {_esc(name)}!</h1>'
         f'<p style="font-size:15px;line-height:1.7;color:#4a3340;margin:0 0 8px">You have earned the <strong>{_esc(b["label"])}</strong> badge.</p>'
         f'<p style="font-size:13.5px;line-height:1.7;color:#6b5560;margin:0 0 22px">That is {year_total:g} hours this year and {all_total:g} hours all-time given to our sisterhood. Thank you for showing up again and again.</p>'
-        + _btn(f"{PUBLIC_APP_URL}/volunteer#log-hours", "Keep Going", primary=True) +
+        + (_btn(f"{PUBLIC_APP_URL}/api/certificates/{b['cert_token']}.pdf", "Download Your Certificate", primary=True) + "&nbsp; " if b.get("cert_token") else "")
+        + _btn(f"{PUBLIC_APP_URL}/volunteer#log-hours", "Keep Going", primary=not b.get("cert_token")) +
         '</td></tr>'
         '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you logged volunteer hours on our website. We never ask for your password or card details by email.</p></td></tr>'
         '</table></td></tr></table>'
     )
+
+
+# ---------- Volunteer certificates ----------
+CERT_MIN = 50
+
+
+def _cert_pdf(name: str, label: str, threshold: int, date: str) -> bytes:
+    from PIL import Image, ImageDraw, ImageFont
+    W, H = 1650, 1275
+    img = Image.new("RGB", (W, H), "#FFFDF9")
+    dr = ImageDraw.Draw(img)
+    f = lambda n, sz: ImageFont.truetype(str(_FONT_DIR / n), sz)  # noqa: E731
+    dr.rectangle((40, 40, W - 40, H - 40), outline="#3B0A2E", width=14)
+    dr.rectangle((78, 78, W - 78, H - 78), outline="#CBA24B", width=4)
+
+    def center(y, text, font, fill):
+        w = dr.textlength(text, font=font)
+        dr.text(((W - w) / 2, y), text, font=font, fill=fill)
+    try:
+        logo = Image.open(ROOT_DIR / "brand_logo.png").convert("RGBA")
+        logo.thumbnail((170, 170))
+        img.paste(logo, ((W - logo.width) // 2, 120), logo)
+    except Exception:
+        pass
+    center(310, "THE CARING SISTERS CLUB", f("LiberationSans-Bold.ttf", 34), "#CBA24B")
+    center(370, "Certificate of Volunteer Service", f("LiberationSerif-Bold.ttf", 76), "#3B0A2E")
+    center(500, "This certificate is proudly presented to", f("LiberationSans-Regular.ttf", 32), "#6b5560")
+    center(560, name, f("LiberationSerif-Bold.ttf", 92), "#B4247E")
+    dr.line(((W - 900) / 2, 680, (W + 900) / 2, 680), fill="#CBA24B", width=3)
+    center(715, f"in recognition of earning the {label} badge", f("LiberationSans-Regular.ttf", 34), "#3B0A2E")
+    center(765, f"for giving {threshold}+ hours of service to our sisterhood.", f("LiberationSans-Regular.ttf", 34), "#3B0A2E")
+    cx, cy, r = W // 2, 945, 85
+    dr.ellipse((cx - r, cy - r, cx + r, cy + r), fill="#3B0A2E", outline="#CBA24B", width=8)
+    center(cy - 32, f"{threshold}h", f("LiberationSerif-Bold.ttf", 58), "#CBA24B")
+    for x0, top, bottom in ((230, "Fem Mansaray", "Founder & President"), (W - 630, date, "Date Awarded")):
+        dr.line((x0, 1080, x0 + 400, 1080), fill="#3B0A2E", width=2)
+        tw = dr.textlength(top, font=f("LiberationSerif-Bold.ttf", 34))
+        dr.text((x0 + (400 - tw) / 2, 1030), top, font=f("LiberationSerif-Bold.ttf", 34), fill="#3B0A2E")
+        bw = dr.textlength(bottom, font=f("LiberationSans-Regular.ttf", 24))
+        dr.text((x0 + (400 - bw) / 2, 1095), bottom, font=f("LiberationSans-Regular.ttf", 24), fill="#6b5560")
+    buf = io.BytesIO()
+    img.save(buf, "PDF", resolution=150)
+    return buf.getvalue()
+
+
+@api_router.get("/certificates/{token}.pdf")
+async def volunteer_certificate(token: str, request: Request):
+    _rate_limit(request, "cert", max_hits=30, window_s=60)
+    m = await db.volunteer_milestones.find_one({"cert_token": token[:64]}, {"_id": 0}) if token else None
+    if not m:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    last = await db.volunteer_hours.find_one({"email": m["email"], "status": "approved"}, {"_id": 0, "name": 1}, sort=[("created_at", -1)])
+    name = ((last or {}).get("name") or "Volunteer").strip()[:60]
+    label = m.get("label") or (f"{m['threshold']} Hours All-Time" if m["scope"] == "all" else f"{m['threshold']} Hours in {m['scope'][5:]}")
+    date = datetime.fromisoformat(m["awarded_at"]).strftime("%B %-d, %Y")
+    pdf = await asyncio.to_thread(_cert_pdf, name, label, m["threshold"], date)
+    fname = f"caring-sisters-certificate-{m['threshold']}h.pdf"
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{fname}"', "Cache-Control": "private, max-age=300"})
+
+
+class CertRequestIn(BaseModel):
+    email: str
+
+
+def _cert_list_html(name: str, certs: list) -> str:
+    btns = "".join(f'<p style="margin:0 0 12px">{_btn(f"{PUBLIC_APP_URL}/api/certificates/{c[0]}.pdf", f"Download: {c[1]}", primary=True)}</p>' for c in certs)
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Your Certificates") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019;text-align:center">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 12px">Here are your certificates, {_esc(name)}!</h1>'
+        '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">Thank you for your dedicated service. Download and print your volunteer certificates below.</p>'
+        + btns + '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You requested this from our website. If this wasn\'t you, you can ignore this email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+@api_router.post("/certificates/request")
+async def request_certificates(payload: CertRequestIn, request: Request):
+    _rate_limit(request, "cert-request", max_hits=3, window_s=600)
+    em = payload.email.strip().lower()[:200]
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", em):
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+    certs = []
+    async for m in db.volunteer_milestones.find({"email": em, "threshold": {"$gte": CERT_MIN}}, {"_id": 0}).sort("threshold", -1):
+        tok = m.get("cert_token")
+        if not tok:
+            tok = secrets.token_urlsafe(24)
+            await db.volunteer_milestones.update_one({"email": em, "scope": m["scope"], "threshold": m["threshold"]}, {"$set": {"cert_token": tok}})
+        label = m.get("label") or (f"{m['threshold']} Hours All-Time" if m["scope"] == "all" else f"{m['threshold']} Hours in {m['scope'][5:]}")
+        certs.append((tok, label))
+    if certs:
+        last = await db.volunteer_hours.find_one({"email": em}, {"_id": 0, "name": 1}, sort=[("created_at", -1)])
+        await send_email(to=em, subject="Your volunteer certificates from The Caring Sisters Club", html=_cert_list_html(((last or {}).get("name") or "friend").split(" ")[0], certs))
+    return {"message": "If that email has earned a 50 or 100-hour badge, we've sent the certificate link(s) to it."}
 
 
 # ---------- Enrollment reminders (staff digest) ----------
@@ -3815,7 +3993,7 @@ async def _year_in_review(year: int) -> dict:
 async def public_year_in_review(year: int):
     if year not in await _yir_public_years():
         raise HTTPException(status_code=404, detail="This Year in Review is not published yet.")
-    return await _year_in_review(year)
+    return {**await _year_in_review(year), "ask_amount": _ask(await _yir_site())}
 
 
 @api_router.get("/admin/year-in-review/{year}")
@@ -3824,17 +4002,22 @@ async def admin_year_in_review(year: int, user=Depends(require_admin)):
         raise HTTPException(status_code=400, detail="Invalid year")
     site = await _yir_site()
     return {**await _year_in_review(year), "public": year in (site.get("yir_public") or []), "autosend": bool(site.get("yir_autosend")),
-            "image_url": (site.get("yir_images") or {}).get(str(year), "")}
+            "image_url": (site.get("yir_images") or {}).get(str(year), ""), "ask_amount": _ask(site)}
 
 
 class YirPublishIn(BaseModel):
     public: Optional[bool] = None
     autosend: Optional[bool] = None
     image_url: Optional[str] = None
+    ask_amount: Optional[float] = None
 
 
 async def _yir_site() -> dict:
-    return await db.settings.find_one({"key": "site"}, {"_id": 0, "yir_public": 1, "yir_images": 1, "yir_autosend": 1}) or {}
+    return await db.settings.find_one({"key": "site"}, {"_id": 0, "yir_public": 1, "yir_images": 1, "yir_autosend": 1, "yir_ask_amount": 1}) or {}
+
+
+def _ask(site: dict) -> int:
+    return int(site.get("yir_ask_amount") or 50)
 
 
 @api_router.put("/admin/year-in-review/{year}")
@@ -3846,6 +4029,10 @@ async def admin_publish_yir(year: int, payload: YirPublishIn, background: Backgr
         await db.settings.update_one({"key": "site"}, op, upsert=True)
     if payload.autosend is not None:
         await db.settings.update_one({"key": "site"}, {"$set": {"yir_autosend": bool(payload.autosend)}}, upsert=True)
+    if payload.ask_amount is not None:
+        if not 1 <= payload.ask_amount <= 100000:
+            raise HTTPException(status_code=400, detail="Suggested amount must be between $1 and $100,000.")
+        await db.settings.update_one({"key": "site"}, {"$set": {"yir_ask_amount": int(round(payload.ask_amount))}}, upsert=True)
     if payload.image_url is not None:
         img = payload.image_url.strip()
         if img and not re.match(r"^/api/media/file/[A-Za-z0-9-]+$", img):
@@ -3856,7 +4043,7 @@ async def admin_publish_yir(year: int, payload: YirPublishIn, background: Backgr
     if payload.public and site.get("yir_autosend") and not await db.yir_emails.find_one({"year": year}):
         queued = await _queue_yir_send(year, background, user.get("email"), "auto-publish")
     return {"year": year, "public": year in (site.get("yir_public") or []), "autosend": bool(site.get("yir_autosend")),
-            "image_url": (site.get("yir_images") or {}).get(str(year), ""), "email_queued": queued}
+            "image_url": (site.get("yir_images") or {}).get(str(year), ""), "ask_amount": _ask(site), "email_queued": queued}
 
 
 # ---------- Year in Review: share card & share page ----------
@@ -3943,10 +4130,14 @@ async def _yir_recipients(year: int) -> list:
         out.setdefault(t["donor_email"].strip().lower(), t.get("donor_name") or "")
     async for h in db.volunteer_hours.find({"status": "approved", "date": rng}, {"_id": 0, "email": 1, "name": 1}):
         out.setdefault(h["email"].lower(), h.get("name") or "")
-    return [{"email": k, "name": v} for k, v in out.items() if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", k)]
+    default = _ask(await _yir_site())
+    last = {}
+    async for t in db.payment_transactions.find({"payment_status": "paid", "donor_email": {"$nin": [None, ""]}}, {"_id": 0, "donor_email": 1, "amount": 1}).sort("created_at", 1):
+        last[t["donor_email"].strip().lower()] = t.get("amount")
+    return [{"email": k, "name": v, "ask": int(round(float(last.get(k) or default))) or default} for k, v in out.items() if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", k)]
 
 
-def _yir_email_html(d: dict, name: str) -> str:
+def _yir_email_html(d: dict, name: str, ask: int = 50) -> str:
     stat = lambda v, l: (f'<td width="50%" style="padding:14px;text-align:center"><p style="font-family:Georgia,serif;font-size:28px;color:#B4247E;font-weight:bold;margin:0">{v}</p>'  # noqa: E731
                          f'<p style="font-size:12px;color:#6b5560;margin:4px 0 0">{l}</p></td>')
     stories = "".join(f'<p style="font-size:14px;line-height:1.7;color:#4a3340;font-style:italic;margin:0 0 6px">&ldquo;{_esc(s["quote"][:260])}&rdquo;</p>'
@@ -3962,7 +4153,8 @@ def _yir_email_html(d: dict, name: str) -> str:
         f'<tr>{stat("$" + format(int(round(d["donations_total"])), ","), "raised")}{stat(format(d["volunteer_hours"], "g"), "volunteer hours")}</tr>'
         f'<tr>{stat(format(d["signups"], ","), "program sign-ups")}{stat(format(d["stories"], ","), "member stories")}</tr></table>'
         + (f'<div style="background:#faf2f7;border-radius:12px;padding:18px 20px 4px;margin:0 0 20px">{stories}</div>' if stories else "")
-        + _btn(f"{PUBLIC_APP_URL}/year-in-review/{d['year']}", "See Our Year in Review", primary=True) +
+        + _btn(f"{PUBLIC_APP_URL}/year-in-review/{d['year']}", "See Our Year in Review", primary=True) + "&nbsp; "
+        + _btn(f"{PUBLIC_APP_URL}/donate?amount={int(ask)}", f"Help Us Do It Again: Give ${int(ask)}") +
         '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">With gratitude,<br/>The Caring Sisters Club</p></td></tr>'
         '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you donated or volunteered with us this year. We never ask for your password or card details by email.</p></td></tr>'
         '</table></td></tr></table>'
@@ -3974,7 +4166,7 @@ async def _run_yir_send(year: int, log_id: str):
     sent = failed = 0
     for r in await _yir_recipients(year):
         try:
-            ok = await send_email(to=r["email"], subject=f"Our {year} Year in Review: look what we did together", html=_yir_email_html(d, (r["name"] or "").split(" ")[0]))
+            ok = await send_email(to=r["email"], subject=f"Our {year} Year in Review: look what we did together", html=_yir_email_html(d, (r["name"] or "").split(" ")[0], r["ask"]))
         except Exception as e:
             logging.error(f"YIR email failed: {e}")
             ok = None
@@ -3997,7 +4189,7 @@ async def _queue_yir_send(year: int, background: BackgroundTasks, by: str, trigg
 async def admin_yir_email_preview(year: int, user=Depends(require_admin)):
     rec = await _yir_recipients(year)
     log = await db.yir_emails.find({"year": year}, {"_id": 0}).sort("started_at", -1).to_list(20)
-    return {"html": _yir_email_html(await _year_in_review(year), "Sister"), "recipients": len(rec), "history": log}
+    return {"html": _yir_email_html(await _year_in_review(year), "Sister", _ask(await _yir_site())), "recipients": len(rec), "history": log}
 
 
 class YirTestIn(BaseModel):
@@ -4009,7 +4201,7 @@ async def admin_yir_email_test(year: int, payload: YirTestIn, user=Depends(requi
     em = payload.email.strip().lower()
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", em):
         raise HTTPException(status_code=400, detail="Enter a valid email address.")
-    if await send_email(to=em, subject=f"[Test] Our {year} Year in Review", html=_yir_email_html(await _year_in_review(year), "Sister")) is None:
+    if await send_email(to=em, subject=f"[Test] Our {year} Year in Review", html=_yir_email_html(await _year_in_review(year), "Sister", _ask(await _yir_site()))) is None:
         raise HTTPException(status_code=502, detail="The test email could not be sent.")
     return {"sent": True}
 
