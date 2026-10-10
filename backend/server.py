@@ -723,7 +723,13 @@ async def submission_counts(user=Depends(require_admin)):
         total = await db.submissions.count_documents({"type": t})
         unread = await db.submissions.count_documents({"type": t, "read": False})
         out[t] = {"total": total, "unread": unread}
+    out["program_signup"]["overdue"] = await db.submissions.count_documents(_overdue_q())
     return out
+
+
+def _overdue_q() -> dict:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    return {"type": "program_signup", "created_at": {"$lte": cutoff}, "stage": {"$in": [None, "new"]}}
 
 
 @api_router.patch("/submissions/{item_id}/read")
@@ -2721,6 +2727,7 @@ class ProgramIn(BaseModel):
     cta_text: str = "Get Involved"
     cta_link: str = "/volunteer"
     published: bool = True
+    capacity: int = 0
 
 
 class CategoriesIn(BaseModel):
@@ -2771,7 +2778,23 @@ def _clean_program(p: ProgramIn) -> dict:
         "cta_text": p.cta_text.strip()[:40] or "Get Involved", "cta_link": link, "published": bool(p.published),
         "gallery": _clean_gallery(p.gallery), "testimonials": _clean_testimonials(p.testimonials, 6),
         "home_testimonial_ids": [i[:64] for i in p.home_testimonial_ids][:6],
+        "capacity": max(0, min(int(p.capacity or 0), 100000)),
     }
+
+
+async def _seats_taken(p: dict) -> int:
+    return await db.submissions.count_documents({
+        "type": "program_signup", "stage": {"$ne": "not_fit"},
+        "$and": [{"$or": [{"program_id": p["id"]}, {"program_id": {"$exists": False}, "data.program_slug": p["slug"]}]},
+                 {"$or": [{"waitlist": {"$ne": True}}, {"stage": "enrolled"}]}]})
+
+
+async def _with_seats(p: dict) -> dict:
+    cap = p.get("capacity") or 0
+    if cap:
+        p["seats_left"] = max(0, cap - await _seats_taken(p))
+        p["full"] = p["seats_left"] == 0
+    return p
 
 
 async def _seed_programs():
@@ -2810,7 +2833,7 @@ async def _program_categories() -> list:
 async def public_programs():
     await _seed_programs()
     items = await db.programs.find({"published": True}, {"_id": 0, "body": 0}).sort("order", 1).to_list(200)
-    return {"items": items, "categories": await _program_categories()}
+    return {"items": [await _with_seats(p) for p in items], "categories": await _program_categories()}
 
 
 @api_router.get("/programs/{slug}")
@@ -2822,14 +2845,14 @@ async def public_program(slug: str):
     if ids:
         home = {t["id"]: t for t in (await _get_home_content())["testimonials"]}
         p["testimonials"] = (p.get("testimonials") or []) + [home[i] for i in ids if i in home]
-    return p
+    return await _with_seats(p)
 
 
 @api_router.get("/admin/programs")
 async def admin_programs(user=Depends(require_admin)):
     await _seed_programs()
     items = await db.programs.find({}, {"_id": 0}).sort("order", 1).to_list(200)
-    return {"items": items, "categories": await _program_categories()}
+    return {"items": [await _with_seats(p) for p in items], "categories": await _program_categories()}
 
 
 @api_router.post("/admin/programs")
@@ -3150,15 +3173,18 @@ class ProgramSignupIn(BaseModel):
     message: str = ""
 
 
-def _signup_confirm_html(name: str, prog: dict) -> str:
+def _signup_confirm_html(name: str, prog: dict, waitlist: bool = False) -> str:
+    lead = (f'Thank you for your interest in <strong>{_esc(prog["title"])}</strong>. The program is currently full, so you have been added to the <strong>waitlist</strong>. '
+            'We will reach out as soon as a spot opens up.</p>') if waitlist else (
+            f'Thank you for your interest in <strong>{_esc(prog["title"])}</strong>. '
+            'A member of our team will reach out within 3 business days with next steps.</p>')
     return (
         '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
         '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
         + _brand_header("Program Sign-Up") +
         '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
         f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 14px">Welcome, {_esc(name)}!</h1>'
-        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">Thank you for your interest in <strong>{_esc(prog["title"])}</strong>. '
-        'A member of our team will reach out within 3 business days with next steps.</p>'
+        '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">' + lead
         + _btn(f'{PUBLIC_APP_URL}/initiatives/{prog["slug"]}', "View the Program", primary=True) +
         '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">With warmth,<br/>The Caring Sisters Club</p></td></tr>'
         '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you signed up on our website. We never ask for your password or card details by email.</p></td></tr>'
@@ -3166,9 +3192,10 @@ def _signup_confirm_html(name: str, prog: dict) -> str:
     )
 
 
-async def _send_signup_confirm(email: str, name: str, prog: dict):
+async def _send_signup_confirm(email: str, name: str, prog: dict, waitlist: bool = False):
     try:
-        await send_email(to=email, subject=f"You're signed up: {prog['title']}"[:150], html=_signup_confirm_html(name, prog))
+        subj = f"You're on the waitlist: {prog['title']}" if waitlist else f"You're signed up: {prog['title']}"
+        await send_email(to=email, subject=subj[:150], html=_signup_confirm_html(name, prog, waitlist))
     except Exception as e:
         logging.error(f"Signup confirmation failed: {e}")
 
@@ -3177,15 +3204,21 @@ async def _send_signup_confirm(email: str, name: str, prog: dict):
 async def program_signup(slug: str, payload: ProgramSignupIn, request: Request, background: BackgroundTasks):
     _rate_limit(request, "submission", max_hits=5, window_s=60)
     name, email = _validate_person({"name": payload.name, "email": payload.email, "message": payload.message})
-    prog = await db.programs.find_one({"slug": slug[:100], "published": True}, {"_id": 0, "id": 1, "title": 1, "slug": 1})
+    prog = await db.programs.find_one({"slug": slug[:100], "published": True}, {"_id": 0, "id": 1, "title": 1, "slug": 1, "capacity": 1})
     if not prog:
         raise HTTPException(status_code=404, detail="Program not found")
+    full = bool((await _with_seats(dict(prog))).get("full"))
     phone = re.sub(r"[^0-9+()\- .]", "", payload.phone)[:30]
     data = {"program": prog["title"], "program_slug": prog["slug"], "name": name, "email": email.lower(), "phone": phone, "message": payload.message.strip()[:3000]}
-    await db.submissions.insert_one({"id": str(uuid.uuid4()), "type": "program_signup", "data": data, "read": False, "created_at": _now_iso()})
+    if full:
+        data["list"] = "Waitlist"
+    await db.submissions.insert_one({"id": str(uuid.uuid4()), "type": "program_signup", "program_id": prog["id"], "waitlist": full,
+                                     "data": data, "read": False, "created_at": _now_iso()})
     background.add_task(_notify_staff, "program_signup", data)
-    background.add_task(_send_signup_confirm, email.lower(), name, prog)
-    return {"message": "You're signed up! Check your email for a confirmation."}
+    background.add_task(_send_signup_confirm, email.lower(), name, prog, full)
+    if full:
+        return {"waitlist": True, "message": "This program is full, so you've been added to the waitlist. Check your email for details."}
+    return {"waitlist": False, "message": "You're signed up! Check your email for a confirmation."}
 
 
 # ---------- Monthly impact email ----------
@@ -3493,7 +3526,15 @@ async def _hours_total(email: str, since: str = "") -> float:
     return round(sum(h["hours"] for h in rows), 2)
 
 
-def _vol_thanks_html(name: str, entries: list, year_total: float, all_total: float) -> str:
+def _badges_html(badges: list) -> str:
+    if not badges:
+        return ""
+    cells = "".join(f'<td style="padding:8px;text-align:center"><div style="display:inline-block;width:74px;height:74px;border-radius:50%;background:#3B0A2E;border:3px solid #CBA24B;color:#CBA24B;font-family:Georgia,serif;font-size:22px;font-weight:bold;line-height:74px">{b["threshold"]}h</div>'
+                    f'<p style="font-size:12px;color:#3B0A2E;font-weight:bold;margin:6px 0 0">{_esc(b["label"])}</p></td>' for b in badges)
+    return f'<table role="presentation" width="100%" style="background:#fdf7e8;border-radius:12px;margin:0 0 18px"><tr><td colspan="9" style="padding:12px 16px 0;font-size:13px;color:#8a6a2c;font-weight:bold">New badge{"s" if len(badges) > 1 else ""} earned!</td></tr><tr>{cells}</tr></table>'
+
+
+def _vol_thanks_html(name: str, entries: list, year_total: float, all_total: float, badges: list = None) -> str:
     rows = "".join(f'<tr><td style="padding:7px 16px;font-size:13px;color:#4a3340">{_esc(e["date"])} &middot; {_esc(e["program"])}</td>'
                    f'<td style="padding:7px 16px;font-size:14px;color:#3B0A2E;font-weight:bold;text-align:right">{e["hours"]:g}h</td></tr>' for e in entries)
     stat = lambda v, l: (f'<td width="50%" style="padding:14px;text-align:center"><p style="font-family:Georgia,serif;font-size:30px;color:#B4247E;font-weight:bold;margin:0">{v:g}</p>'  # noqa: E731
@@ -3507,6 +3548,7 @@ def _vol_thanks_html(name: str, entries: list, year_total: float, all_total: flo
         '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 16px">Your volunteer hours have been confirmed. Every hour you give strengthens our sisterhood.</p>'
         f'<table role="presentation" width="100%" style="background:#faf2f7;border-radius:12px;margin:0 0 16px">{rows}</table>'
         f'<table role="presentation" width="100%" style="border:1px solid #eadfe6;border-radius:12px;margin:0 0 20px"><tr>{stat(year_total, "hours this year")}{stat(all_total, "hours all-time")}</tr></table>'
+        + _badges_html(badges or [])
         + _btn(f"{PUBLIC_APP_URL}/volunteer#log-hours", "Log More Hours", primary=True) +
         '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">With gratitude,<br/>The Caring Sisters Club</p></td></tr>'
         '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you logged volunteer hours on our website. We never ask for your password or card details by email.</p></td></tr>'
@@ -3528,13 +3570,150 @@ async def _send_volunteer_thanks() -> int:
         except Exception:
             continue
         await db.volunteer_hours.update_many({"id": {"$in": [e["id"] for e in entries]}}, {"$set": {"thanked": True, "thanked_at": _now_iso()}})
+        year_total, all_total = await _hours_total(email, year_start), await _hours_total(email)
+        first = entries[-1]["name"].split()[0]
+        badges = await _award_milestones(email, today[:4], year_total, all_total)
         try:
             if await send_email(to=email, subject="Thank you for volunteering with The Caring Sisters Club",
-                                html=_vol_thanks_html(entries[-1]["name"].split()[0], entries, await _hours_total(email, year_start), await _hours_total(email))) is not None:
+                                html=_vol_thanks_html(first, entries, year_total, all_total, badges)) is not None:
                 sent += 1
         except Exception as e:
             logging.error(f"Volunteer thank-you failed: {e}")
+        for b in badges:
+            try:
+                await send_email(to=email, subject=f"You earned a badge: {b['label']}!", html=_milestone_html(first, b, year_total, all_total))
+            except Exception as e:
+                logging.error(f"Milestone badge email failed: {e}")
     return sent
+
+
+MILESTONES = (10, 50, 100)
+
+
+async def _award_milestones(email: str, year: str, year_total: float, all_total: float) -> list:
+    """Records each newly crossed milestone exactly once (all-time and per calendar year)."""
+    out = []
+    for scope, total, label in (("all", all_total, "{n} Hours All-Time"), (f"year:{year}", year_total, "{n} Hours in " + year)):
+        for n in MILESTONES:
+            if total >= n:
+                r = await db.volunteer_milestones.update_one({"email": email, "scope": scope, "threshold": n},
+                                                             {"$setOnInsert": {"hours": total, "awarded_at": _now_iso()}}, upsert=True)
+                if r.upserted_id is not None:
+                    out.append({"scope": scope, "threshold": n, "label": label.format(n=n)})
+    return out
+
+
+def _milestone_html(name: str, b: dict, year_total: float, all_total: float) -> str:
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Volunteer Milestone") +
+        '<tr><td style="padding:36px 32px;font-family:Arial,sans-serif;color:#241019;text-align:center">'
+        f'<div style="display:inline-block;width:120px;height:120px;border-radius:50%;background:#3B0A2E;border:5px solid #CBA24B;color:#CBA24B;font-family:Georgia,serif;font-size:36px;font-weight:bold;line-height:120px;margin:0 0 18px">{b["threshold"]}h</div>'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:26px;margin:0 0 10px">Congratulations, {_esc(name)}!</h1>'
+        f'<p style="font-size:15px;line-height:1.7;color:#4a3340;margin:0 0 8px">You have earned the <strong>{_esc(b["label"])}</strong> badge.</p>'
+        f'<p style="font-size:13.5px;line-height:1.7;color:#6b5560;margin:0 0 22px">That is {year_total:g} hours this year and {all_total:g} hours all-time given to our sisterhood. Thank you for showing up again and again.</p>'
+        + _btn(f"{PUBLIC_APP_URL}/volunteer#log-hours", "Keep Going", primary=True) +
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you logged volunteer hours on our website. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+# ---------- Enrollment reminders (staff digest) ----------
+def _enroll_digest_html(items: list) -> str:
+    rows = "".join(f'<tr><td style="padding:8px 14px;font-size:13px;color:#3B0A2E;font-weight:bold">{_esc(s["data"].get("name", ""))}</td>'
+                   f'<td style="padding:8px 14px;font-size:12.5px;color:#4a3340">{_esc(s["data"].get("program", ""))}</td>'
+                   f'<td style="padding:8px 14px;font-size:12.5px;color:#4a3340">{_esc(s["data"].get("email", ""))}</td>'
+                   f'<td style="padding:8px 14px;font-size:12px;color:#9b3b4f;text-align:right">{(datetime.now(timezone.utc) - datetime.fromisoformat(s["created_at"])).days}d</td></tr>' for s in items[:100])
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="640" style="max-width:640px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Sign-Ups Waiting") +
+        '<tr><td style="padding:30px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:22px;margin:0 0 10px">{len(items)} sign-up{"s" if len(items) != 1 else ""} still marked "New" after 7+ days</h1>'
+        '<p style="font-size:13.5px;line-height:1.6;color:#4a3340;margin:0 0 16px">These sisters are waiting to hear from us. Reach out and update their stage to Contacted, Enrolled, or Not a fit.</p>'
+        f'<table role="presentation" width="100%" style="background:#faf2f7;border-radius:12px;margin:0 0 18px">{rows}</table>'
+        + _btn(f"{PUBLIC_APP_URL}/admin", "Open Form Submissions", primary=True) +
+        '</td></tr></table></td></tr></table>'
+    )
+
+
+async def _send_enrollment_reminders(force: bool = False) -> dict:
+    today = datetime.now(timezone.utc).date().isoformat()
+    items = await db.submissions.find(_overdue_q(), {"_id": 0}).sort("created_at", 1).to_list(1000)
+    to = (await _get_settings()).get("staff_notify_email")
+    if not items or not to:
+        return {"overdue": len(items), "sent": False}
+    if not force and await db.scheduled_runs.find_one({"key": f"enroll-remind:{today}"}):
+        return {"overdue": len(items), "sent": False}
+    res = await send_email(to=to, subject=f"Reminder: {len(items)} program sign-up{'s' if len(items) != 1 else ''} waiting 7+ days", html=_enroll_digest_html(items))
+    if res is None:
+        if force:
+            raise HTTPException(status_code=502, detail="The reminder email could not be sent.")
+        return {"overdue": len(items), "sent": False}
+    await db.scheduled_runs.update_one({"key": f"enroll-remind:{today}"}, {"$set": {"ran_at": _now_iso(), "count": len(items)}}, upsert=True)
+    return {"overdue": len(items), "sent": True}
+
+
+@api_router.post("/admin/signups/send-reminders")
+async def admin_send_enroll_reminders(user=Depends(require_admin)):
+    return await _send_enrollment_reminders(force=True)
+
+
+# ---------- Year in Review ----------
+async def _yir_public_years() -> list:
+    doc = await db.settings.find_one({"key": "site"}, {"_id": 0, "yir_public": 1}) or {}
+    return doc.get("yir_public") or []
+
+
+async def _year_in_review(year: int) -> dict:
+    y = str(year)
+    nxt = str(year + 1)
+    rng = {"$gte": f"{y}-01-01", "$lt": f"{nxt}-01-01"}
+    paid = await db.payment_transactions.find({"payment_status": "paid", "created_at": rng}, {"_id": 0, "amount": 1, "donor_email": 1}).to_list(20000)
+    donors = {(t.get("donor_email") or "").lower() for t in paid if t.get("donor_email")}
+    anon = sum(1 for t in paid if not t.get("donor_email"))
+    hrs = await db.volunteer_hours.find({"status": "approved", "date": rng}, {"_id": 0, "hours": 1, "email": 1}).to_list(20000)
+    stories = await db.story_submissions.find({"status": "approved", "created_at": rng}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    signups = await db.submissions.count_documents({"type": "program_signup", "created_at": rng})
+    enrolled = await db.submissions.count_documents({"type": "program_signup", "created_at": rng, "stage": "enrolled"})
+    return {
+        "year": year,
+        "donations_total": round(sum(float(t.get("amount") or 0) for t in paid), 2),
+        "gifts": len(paid), "donors": len(donors) + anon,
+        "volunteer_hours": round(sum(h["hours"] for h in hrs), 1), "volunteers": len({h["email"] for h in hrs}),
+        "stories": len(stories), "signups": signups, "enrolled": enrolled,
+        "featured_stories": [{"name": _short_name(s["name"]), "role": s.get("role", ""), "quote": s["quote"], "photo_url": s.get("photo_url", ""),
+                              "program": s.get("program_title") or ""} for s in stories[:6]],
+    }
+
+
+@api_router.get("/year-in-review/{year}")
+async def public_year_in_review(year: int):
+    if year not in await _yir_public_years():
+        raise HTTPException(status_code=404, detail="This Year in Review is not published yet.")
+    return await _year_in_review(year)
+
+
+@api_router.get("/admin/year-in-review/{year}")
+async def admin_year_in_review(year: int, user=Depends(require_admin)):
+    if not 2000 <= year <= 2100:
+        raise HTTPException(status_code=400, detail="Invalid year")
+    return {**await _year_in_review(year), "public": year in await _yir_public_years()}
+
+
+class YirPublishIn(BaseModel):
+    public: bool
+
+
+@api_router.put("/admin/year-in-review/{year}")
+async def admin_publish_yir(year: int, payload: YirPublishIn, user=Depends(require_admin)):
+    if not 2000 <= year <= 2100:
+        raise HTTPException(status_code=400, detail="Invalid year")
+    op = {"$addToSet": {"yir_public": year}} if payload.public else {"$pull": {"yir_public": year}}
+    await db.settings.update_one({"key": "site"}, op, upsert=True)
+    return {"year": year, "public": payload.public}
 
 
 @api_router.get("/volunteer-hours/leaderboard")
@@ -3723,6 +3902,7 @@ async def _daily_scheduler():
             await _check_cancellations()
             await _maybe_monthly_impact()
             await _send_story_requests()
+            await _send_enrollment_reminders()
             await db.donor_manage_tokens.delete_many({"expires_at": {"$lt": datetime.now(timezone.utc).isoformat()}})
         except Exception as e:
             logging.error(f"Daily scheduler error: {e}")
@@ -3872,6 +4052,7 @@ async def startup_indexes():
         await db.users.create_index("email", unique=True)
         await db.cancellations.create_index("sub_id", unique=True)
         await db.volunteer_thanks.create_index([("email", 1), ("day", 1)], unique=True)
+        await db.volunteer_milestones.create_index([("email", 1), ("scope", 1), ("threshold", 1)], unique=True)
         await db.users.create_index("user_id", unique=True)
         await db.user_sessions.create_index("session_token")
         await db.media.create_index("category")

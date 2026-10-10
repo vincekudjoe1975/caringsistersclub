@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { eventImg } from './Events';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
+import { SeatsBadge } from '../components/ProgramSignup';
 import { ArrowRight, Loader2, Layers } from 'lucide-react';
 
 export const CtaLink = ({ to, className, children, testid }) => (to.startsWith('https://')
@@ -22,6 +23,7 @@ function ProgramCard({ item }) {
           <Link to={`/initiatives/${item.slug}`} className="hover:text-[#B4247E] transition-colors">{item.title}</Link>
         </h3>
         <p className="text-[#241019]/70 text-[14.5px] leading-relaxed mb-5 flex-1">{item.summary}</p>
+        <SeatsBadge p={item} className="mb-4 self-start" />
         <div className="flex items-center gap-5">
           <Link to={`/initiatives/${item.slug}`} data-testid="program-learn-more" className="inline-flex items-center gap-2 text-[#B4247E] font-semibold text-[14px] link-underline">
             Learn More <ArrowRight size={16} />

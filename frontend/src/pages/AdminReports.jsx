@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Loader2, TrendingUp, TrendingDown, Minus, Download, Clock3, Check, X, BarChart3 } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, Minus, Download, Clock3, Check, X, BarChart3, Sparkles, ExternalLink } from 'lucide-react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 
@@ -122,10 +122,48 @@ function HoursReview() {
   );
 }
 
+function YearInReviewAdmin() {
+  const now = new Date().getFullYear();
+  const [year, setYear] = useState(now);
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const { toast } = useToast();
+  useEffect(() => { setD(null); api.get(`/admin/year-in-review/${year}`).then(({ data }) => setD(data)).catch(() => setD({})); }, [year]);
+  const toggle = async () => {
+    setBusy(true);
+    try { const { data } = await api.put(`/admin/year-in-review/${year}`, { public: !d.public }); setD({ ...d, public: data.public }); toast({ title: data.public ? 'Year in Review is now public' : 'Year in Review hidden' }); }
+    catch (err) { toast({ title: 'Update failed', description: err?.response?.data?.detail, variant: 'destructive' }); }
+    finally { setBusy(false); }
+  };
+  const stat = (l, v, id) => <div className="rounded-xl px-4 py-3" style={{ background: '#faf2f7' }}><p className="text-[11px] uppercase tracking-wide text-[#241019]/55 font-semibold">{l}</p><p className="font-serif text-[22px] font-bold text-[#3B0A2E]" data-testid={id}>{v}</p></div>;
+  return (
+    <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 p-6 mb-6" data-testid="yir-admin">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold flex items-center gap-2"><Sparkles size={18} className="text-[#B4247E]" /> Year in Review</h3>
+        <div className="flex items-center gap-2">
+          <select value={year} onChange={(e) => setYear(Number(e.target.value))} data-testid="yir-year-select" className="text-[13px] rounded-full px-3 py-1.5 border border-[#3B0A2E]/15">
+            {[0, 1, 2, 3].map((i) => <option key={i} value={now - i}>{now - i}</option>)}
+          </select>
+          {d?.year && <button onClick={toggle} disabled={busy} data-testid="yir-publish-toggle" className={`text-[12.5px] font-semibold px-4 py-2 rounded-full ${d.public ? 'text-[#3c7a2f] bg-[#e9f3e6]' : 'text-white bg-[#3B0A2E]'}`}>{d.public ? 'Public · Hide page' : 'Publish page'}</button>}
+          {d?.public && <a href={`/year-in-review/${year}`} target="_blank" rel="noreferrer" data-testid="yir-view-link" className="text-[12.5px] font-semibold px-4 py-2 rounded-full text-[#B4247E] flex items-center gap-1" style={{ border: '1px solid rgba(180,36,126,0.3)' }}><ExternalLink size={13} /> View</a>}
+        </div>
+      </div>
+      {!d ? <Loader2 className="animate-spin text-[#B4247E]" /> : d.year ? (
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+          {stat('Raised', `$${Math.round(d.donations_total).toLocaleString()}`, 'yir-admin-raised')}{stat('Donors', d.donors, 'yir-admin-donors')}
+          {stat('Vol. hours', d.volunteer_hours, 'yir-admin-hours')}{stat('Volunteers', d.volunteers, 'yir-admin-volunteers')}
+          {stat('Sign-ups', d.signups, 'yir-admin-signups')}{stat('Stories', d.stories, 'yir-admin-stories')}
+        </div>
+      ) : <p className="text-[13px] text-red-600">Could not load this year.</p>}
+    </div>
+  );
+}
+
 export default function AdminReports() {
   return (
     <div data-testid="admin-reports">
       <h2 className="font-serif text-[24px] text-[#3B0A2E] font-semibold mb-5">Reports</h2>
+      <YearInReviewAdmin />
       <StoryRequestResults />
       <SignupReport />
       <HoursReview />

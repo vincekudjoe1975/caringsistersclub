@@ -6,7 +6,7 @@ import { CtaLink } from './Initiatives';
 import Reveal from '../components/Reveal';
 import { TestimonialCard } from '../components/TestimonialCard';
 import { ShareStory } from '../components/ShareStory';
-import { ProgramSignup } from '../components/ProgramSignup';
+import { ProgramSignup, SeatsBadge } from '../components/ProgramSignup';
 import { imgSrc } from '../lib/useHomeContent';
 import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
 import { ArrowLeft, CheckCircle2, Loader2, Heart, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -79,7 +79,8 @@ export default function ProgramDetail() {
             )}
             <div className="rounded-2xl p-7 text-white" style={{ background: 'linear-gradient(160deg,#3B0A2E,#4d1240)' }}>
               <h3 className="font-serif text-[20px] font-semibold mb-2">Be part of it</h3>
-              <p className="text-[#F7EFE9]/75 text-[14px] mb-5">Your time and generosity keep this program growing.</p>
+              <p className="text-[#F7EFE9]/75 text-[14px] mb-4">Your time and generosity keep this program growing.</p>
+              <SeatsBadge p={p} className="mb-4" />
               <div className="flex flex-wrap gap-3">
                 <CtaLink to={p.cta_link} testid="program-cta" className="btn-gold rounded-full px-6 py-2.5 font-semibold text-[14px]">{p.cta_text}</CtaLink>
                 <Link to="/donate" className="rounded-full px-5 py-2.5 font-semibold text-[14px] border border-white/25 hover:bg-white/10 flex items-center gap-1.5"><Heart size={15} /> Donate</Link>
@@ -106,7 +107,7 @@ export default function ProgramDetail() {
         </div>
       </section>
 
-      <div style={{ background: '#F7EFE9' }}><ProgramSignup slug={p.slug} title={p.title} /></div>
+      <div style={{ background: '#F7EFE9' }}><ProgramSignup program={p} /></div>
     </div>
   );
 }
