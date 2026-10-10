@@ -1,0 +1,58 @@
+{
+  "summary": "Iter-19 (Attendance + Seat release + Low-rating alerts + Program ratings). Backend pytest 14/14 PASS (serial -n 0; parallel loadscope caused QA_PID collisions across workers — minor test-infra note, see below). Frontend 4/4 flows PASS: Admin > Programs attendance panel (rows, attended/no_show toggle+clear, mark-all, summary counts); /release?token=<seeded> confirm -> release-success; /release?token=BOGUS -> release-error; Admin > Reports attendance-report table + fb-alert-threshold-select; /initiatives list + /initiatives/caring-sisters-clone show program-rating '4.7 ★ (3 reviews)'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_results": [
+    {"case": "GET /api/admin/programs/{P}/attendance -> items for 3 seated only (no waitlist), each has id/name/email/attendance:null", "status": "PASS"},
+    {"case": "POST attendance updates valid pair -> updated=2, GET verifies persistence", "status": "PASS"},
+    {"case": "POST attendance invalid value 'maybe' -> 400", "status": "PASS"},
+    {"case": "POST {all:'attended'} -> all 3 seated marked attended", "status": "PASS"},
+    {"case": "POST {updates:{sid:null}} clears previously set attendance", "status": "PASS"},
+    {"case": "GET /api/admin/reports/attendance -> row with seated=3, attended=1, no_show=1, unmarked=1, attendance_pct=50", "status": "PASS"},
+    {"case": "_send_session_feedback (end=yesterday) with attendance taken -> feedback doc only for sid1 (attended)", "status": "PASS"},
+    {"case": "_send_session_feedback with no attendance marked -> docs for all 2 seated subs", "status": "PASS"},
+    {"case": "Release flow: _send_session_reminders assigns release_token on seated; GET /api/seat-release returns {program,start_date,name,released:false}; bad token -> 404; POST -> released=true, stage='not_fit', data.list='Cancelled by sister'; idempotent repeat; waitlist sister gets offer_status='open' within 3s (claim mode)", "status": "PASS"},
+    {"case": "GET /api/admin/feedback-alert-settings -> {threshold:2} default", "status": "PASS"},
+    {"case": "PUT threshold=3 OK (200)", "status": "PASS"},
+    {"case": "PUT threshold=4 -> 400", "status": "PASS"},
+    {"case": "POST /api/feedback rating=2 -> alerted=true; rating=5 recommend=True -> no alerted; rating=5 recommend=False -> alerted=true; re-submit alerted doc leaves alerted=true (no second send)", "status": "PASS"},
+    {"case": "Program ratings: 2 ratings -> rating_avg/count absent on /api/programs/{slug}; adding 3rd via clone (cloned_from=P) -> both root slug and clone slug show rating_avg=4.7 rating_count=3; /api/programs listing also carries it", "status": "PASS"},
+    {"case": "UI Admin > Programs: program-attendance-btn on QA19FE dated row opens attendance-panel; 2 attendance-row entries; attended-btn toggles 0→1; clicking Attended again clears to 0; no_show-btn flips to 1 no-show; attendance-mark-all-btn -> '2 attended · 0 no-show · 0 unmarked' in attendance-summary", "status": "PASS"},
+    {"case": "UI /release?token=<seeded>: release-confirm-btn visible -> click -> release-success renders", "status": "PASS"},
+    {"case": "UI /release?token=BOGUS: release-error renders", "status": "PASS"},
+    {"case": "UI Admin > Reports: fb-alert-threshold-select present (card non-empty via seeded clone/program feedback); attendance-report table with 1+ attendance-report-row", "status": "PASS"},
+    {"case": "UI /initiatives: 2 program-rating badges reading '4.7 (3 reviews)' (one on root, one on clone card); /initiatives/caring-sisters-clone detail page shows program-rating badge '4.7 (3 reviews)'", "status": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter19_attendance_release_rating.py",
+    "/app/backend/tests/_seed_iter19_fe.py",
+    "/app/test_reports/pytest/iter19.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "backend/server.py is now 5811 lines (prev reviewer flagged at 5623). Still trending up — please split before 6k. New attendance / seat-release / low-rating-alerts / program-ratings blocks are clean modules and are the perfect first candidates for extraction into routers/attendance.py, routers/seat_release.py, routers/feedback_alerts.py, services/program_ratings.py.",
+    "AttendanceIn uses `all: Optional[str] = None` but accepts None for valid 'clear' as well — the branch `if payload.all is not None` prevents clearing all, which is intentional. Document in a comment, else future-reader may think `all:null` would clear all. Consider renaming to `all_value` because `all` shadows the Python builtin inside the handler scope.",
+    "admin_set_attendance validates each `updates` value inside the loop; a payload with 5 valid + 1 invalid will have already written the first 5 before raising 400. Validate the entire dict first, then apply (atomicity). Low priority but surprises callers.",
+    "/api/admin/programs/{pid}/attendance POST does not require X-Requested-With explicitly — relies on global middleware. Confirmed admin cookie protects it in testing. OK.",
+    "_release_sub token lookup uses `token[:64]` and finds by `release_token`. Reminder-generated tokens are secrets.token_urlsafe(24) ~32 chars — safe. However there is no index on `release_token`; for production add a sparse unique index on submissions.release_token.",
+    "_after_release calls _fill_seats which can race with concurrent signups. Current `update_one({released:{$ne:true}})` guards the released flip, good. The subsequent fill is best-effort; consider logging a correlation ID.",
+    "submit_feedback alerts only when `payload.rating <= threshold OR recommend is False`. The `find_one_and_update({alerted:{$ne:True}})` is a correct one-shot guard — nice. But note `recommend` can be omitted (None) and then only rating triggers; this matches the spec.",
+    "_program_ratings reloads ALL programs {id,cloned_from} on every /api/programs and /api/programs/{slug} request. For hundreds of programs this is fine; above that cache the roots mapping (dict is tiny) with a 60s TTL.",
+    "RATING_MIN_REVIEWS = 3 is a module constant — expose it via /api/site settings so staff can tune without a deploy (optional).",
+    "AttendancePanel.jsx uses `payload.all` with the string 'attended' — works, but there's no 'Mark all no-show' or 'Clear all' button. Low priority UX gap.",
+    "SeatRelease.jsx reads token from window.location.search directly instead of react-router useSearchParams — works but inconsistent with other pages (/feedback uses URLSearchParams too). Minor.",
+    "pytest.ini forces -n 2 --dist loadscope. Our test module uses a module-scope `qa_program` fixture plus a wide delete regex in teardown; two workers running different classes of the same module race on QA_PID. Tests pass serially with `-n 0`. For future regression runs, either (a) include this file under a worker-scoped marker or (b) make PID unique per worker via PYTEST_XDIST_WORKER. I ran serial for determinism; iter19.xml reflects serial run. No product bug."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter19_attendance_release_rating.py",
+    "/app/backend/tests/_seed_iter19_fe.py",
+    "/app/test_reports/iteration_19.json"
+  ],
+  "success_rate": {"backend": "100% (14/14 serial)", "frontend": "100% (4/4 flows)"},
+  "test_credentials": "QA temp admin via /app/backend/tests/qa_session.py up (session_token=qa_tok_123). qa_session.py down executed at teardown.",
+  "seed_data_creation": "Backend tests: QA19 program + submissions created and cleaned per test (module teardown wipes qa19-* programs/submissions/session_reminders/session_feedback, resets fb_alert_threshold=2 and staff_notify_email). Frontend: _seed_iter19_fe.py created QA19FE dated program + QA19FE Clone (slug=caring-sisters-clone, cloned_from=QA19FE), 3 session_feedback ratings (5,4,5), 2 seated subs + 1 release-token sub. Both `down` scripts run — verified `delete_many` counts 0 on second run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Reuse _seed_iter19_fe.py pattern (dated program + clone with cloned_from + session_feedback seeds) for any ratings/attendance regressions. Backend helpers _send_session_reminders() and _send_session_feedback() continue to accept now=/today= overrides; attendance filter branch is inside _send_session_feedback (seated = [attended] when any(seated.attendance)). pytest.ini forces -n 2 --dist loadscope — when running modules that share a static program id across classes, pass `-n 0` explicitly. The slug 'caring-sisters-clone' was deliberately chosen to match the review request's example URL; teardown deletes by (slug + title regex) so real programs with that slug are safe.",
+  "rca of the issue": "No bugs found. All 4 feature groups behave to spec on backend and frontend."
+}

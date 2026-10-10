@@ -244,3 +244,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Hourly: _send_session_reminders (2day + dayof when UTC hour>=11; db.session_reminders), _send_session_feedback (sessions ended 1-4 days ago; db.session_feedback with token).
 - Public: GET /api/sessions.ics (subscribe feed), /api/sessions/{slug}/calendar.ics, GET/POST /api/feedback, GET /api/volunteer-hours/anniversaries (follows badge_wall_mode). Pages: /feedback; SubscribeBar on /sessions; AnniversaryShoutouts on /volunteer.
 - Admin: GET /api/admin/reports/session-feedback, POST /api/admin/feedback/{id}/feature (→ program.testimonials, max 6). SessionFeedback.jsx in Reports.
+
+## 2026 — Attendance, seat release, low-rating alerts, program ratings (iteration_19: 100%)
+- submission.attendance attended|no_show|null; GET/POST /api/admin/programs/{pid}/attendance ({updates} or {all}); GET /api/admin/reports/attendance; feedback emails only to attended if any attendance taken. Attendance.jsx (panel + report).
+- Reminders add submission.release_token + "I Can't Make It" → /release; GET/POST /api/seat-release → stage not_fit, released, _fill_seats + staff email.
+- settings.site.fb_alert_threshold (2|3); GET/PUT /api/admin/feedback-alert-settings; submit_feedback alerts once (session_feedback.alerted) when rating<=threshold or recommend false.
+- _program_ratings (family-wide, min 3) → rating_avg/rating_count on public /programs and /programs/{slug}; RatingBadge.
