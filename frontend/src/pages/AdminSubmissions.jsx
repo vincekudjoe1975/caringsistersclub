@@ -150,6 +150,7 @@ export default function AdminSubmissions() {
                   <div className="flex items-center gap-2 shrink-0">
                     {isOverdue(it) && <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#f5e9ec] text-[#9b3b4f] flex items-center gap-1" data-testid="signup-overdue-badge"><AlarmClock size={12} /> Overdue</span>}
                     {it.waitlist && <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#fdf3e1] text-[#8a6a2c]" data-testid="signup-waitlist-badge">Waitlist</span>}
+                    {it.came_back && <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#faf2f7] text-[#B4247E]" data-testid="signup-came-back-badge">Came back</span>}
                     {it.from_launch && <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#e9f3e6] text-[#3c7a2f]" data-testid="signup-from-launch-badge">From launch email</span>}
                     {it.type === 'program_signup' && <StageSelect it={it} onChange={(stage) => { setItems((prev) => prev.map((i) => (i.id === it.id ? { ...i, stage, read: true } : i))); loadCounts(); }} />}
                     <span className="text-[11.5px] text-[#241019]/45">{new Date(it.created_at).toLocaleString()}</span>

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Timer } from 'lucide-react';
+import { Timer, Lightbulb } from 'lucide-react';
 import { api } from '../lib/api';
 
 const hrs = (h) => (h === null || h === undefined ? '—' : h < 1 ? `${Math.round(h * 60)} min` : `${h} h`);
@@ -24,7 +24,8 @@ export const WaitlistSpeed = () => {
             <thead><tr className="text-[11px] uppercase tracking-wide text-[#241019]/50">{['Program', 'Offers', 'Claimed', 'Expired', 'Open', 'Auto moved', 'Claim rate', 'Median time'].map((h) => <th key={h} className="px-3 py-2">{h}</th>)}</tr></thead>
             <tbody>{d.items.map((r) => (
               <tr key={r.program_id || r.title} className="border-t border-[#3B0A2E]/8" data-testid="waitlist-speed-row">
-                <td className="px-3 py-2.5 font-semibold text-[#3B0A2E]">{r.title}</td><td className="px-3 py-2.5">{r.offers}</td><td className="px-3 py-2.5">{r.claimed}</td>
+                <td className="px-3 py-2.5"><p className="font-semibold text-[#3B0A2E]">{r.title} <span className="text-[11px] font-normal text-[#241019]/50">· {r.offer_hours}h window</span></p>
+                  {r.tip && <p className="text-[11.5px] text-[#8a6a2c] flex items-center gap-1 mt-0.5" data-testid="waitlist-speed-tip"><Lightbulb size={12} /> {r.tip}</p>}</td><td className="px-3 py-2.5">{r.offers}</td><td className="px-3 py-2.5">{r.claimed}</td>
                 <td className="px-3 py-2.5">{r.expired}</td><td className="px-3 py-2.5">{r.pending}</td><td className="px-3 py-2.5">{r.auto_moved}</td>
                 <td className="px-3 py-2.5 font-bold text-[#B4247E]">{r.claim_rate === null ? '—' : `${r.claim_rate}%`}</td><td className="px-3 py-2.5">{hrs(r.median_hours)}</td>
               </tr>

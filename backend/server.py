@@ -2738,6 +2738,7 @@ class ProgramIn(BaseModel):
     published: bool = True
     capacity: int = 0
     waitlist_mode: str = "claim"
+    offer_hours: int = 48
     start_date: str = ""
     end_date: str = ""
     schedule: str = ""
@@ -2805,6 +2806,7 @@ def _clean_program(p: ProgramIn) -> dict:
         "home_testimonial_ids": [i[:64] for i in p.home_testimonial_ids][:6],
         "capacity": max(0, min(int(p.capacity or 0), 100000)),
         "waitlist_mode": p.waitlist_mode if p.waitlist_mode in WAITLIST_MODES else "claim",
+        "offer_hours": p.offer_hours if p.offer_hours in (12, 24, 48, 72) else 48,
     }
 
 
@@ -3259,6 +3261,12 @@ async def program_signup(slug: str, payload: ProgramSignupIn, request: Request, 
         {"$set": {"converted_at": doc["created_at"], "submission_id": doc["id"]}})
     if le:
         doc["from_launch"] = True
+    fam = await _family_ids(prog["id"])
+    ns = await db.noshow_emails.find_one_and_update(
+        {"program_id": {"$in": fam}, "email": email.lower(), "at": {"$gte": (datetime.now(timezone.utc) - timedelta(days=COMEBACK_DAYS)).isoformat()}, "comeback_at": {"$exists": False}},
+        {"$set": {"comeback_at": doc["created_at"], "comeback_submission": doc["id"]}})
+    if ns:
+        doc["came_back"] = True
     if full:
         doc["status_token"] = secrets.token_urlsafe(24)
     await db.submissions.insert_one(dict(doc))
@@ -3290,7 +3298,7 @@ def _spot_email_html(name: str, prog: dict, mode: str, link: str = "") -> str:
         head, body, btn = "You're in!", f'Great news: a spot opened in <strong>{_esc(prog["title"])}</strong> and you have been moved from the waitlist into the program. Our team will reach out with next steps.', _btn(f'{PUBLIC_APP_URL}/initiatives/{prog["slug"]}', "View the Program", primary=True)
     else:
         race = " Spots go to whoever claims first, so act quickly." if mode == "broadcast" else ""
-        head, body, btn = "A spot just opened!", f'A seat is now available in <strong>{_esc(prog["title"])}</strong>. Claim it within {OFFER_HOURS} hours to secure your place.{race}', _btn(link, "Claim My Spot", primary=True)
+        head, body, btn = "A spot just opened!", f'A seat is now available in <strong>{_esc(prog["title"])}</strong>. Claim it within {prog.get("offer_hours") or OFFER_HOURS} hours to secure your place.{race}', _btn(link, "Claim My Spot", primary=True)
     return (
         '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
         '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
@@ -3343,7 +3351,7 @@ async def _fill_seats(pid: str) -> int:
     for s in subs:
         tok = secrets.token_urlsafe(24)
         await db.submissions.update_one({"id": s["id"]}, {"$set": {"offer_status": "open", "offer_token": tok, "offer_mode": mode,
-                                                                    "offer_sent_at": now.isoformat(), "offer_expires": (now + timedelta(hours=OFFER_HOURS)).isoformat()}})
+                                                                    "offer_sent_at": now.isoformat(), "offer_expires": (now + timedelta(hours=p.get("offer_hours") or OFFER_HOURS)).isoformat()}})
         await _spot_email(s, p, mode, f"{PUBLIC_APP_URL}/waitlist/claim?token={tok}")
     return len(subs)
 
@@ -3455,9 +3463,9 @@ async def admin_waitlist_action(sid: str, action: str, user=Depends(require_admi
         return {"ok": True}
     tok = secrets.token_urlsafe(24)
     await db.submissions.update_one({"id": sid}, {"$set": {"offer_status": "open", "offer_token": tok, "offer_mode": "staff", "offer_override": True,
-                                                          "offer_sent_at": now.isoformat(), "offer_expires": (now + timedelta(hours=OFFER_HOURS)).isoformat()}})
+                                                          "offer_sent_at": now.isoformat(), "offer_expires": (now + timedelta(hours=prog.get("offer_hours") or OFFER_HOURS)).isoformat()}})
     await _spot_email(sub, prog, "claim", f"{PUBLIC_APP_URL}/waitlist/claim?token={tok}")
-    return {"ok": True, "offer_expires": (now + timedelta(hours=OFFER_HOURS)).isoformat()}
+    return {"ok": True, "offer_expires": (now + timedelta(hours=prog.get("offer_hours") or OFFER_HOURS)).isoformat()}
 
 
 # ---------- Monthly impact email ----------
@@ -3820,7 +3828,7 @@ async def _send_volunteer_thanks() -> int:
             logging.error(f"Volunteer thank-you failed: {e}")
         for b in badges:
             try:
-                await send_email(to=email, subject=f"You earned a badge: {b['label']}!", html=_milestone_html(first, b, year_total, all_total))
+                await send_email(to=email, subject=f"You earned a badge: {b['label']}!", html=_add_sis(_milestone_html(first, b, year_total, all_total), await _sis_link(email)))
             except Exception as e:
                 logging.error(f"Milestone badge email failed: {e}")
     return sent
@@ -3961,8 +3969,17 @@ async def request_certificates(payload: CertRequestIn, request: Request):
         certs.append((tok, label, share))
     if certs:
         last = await db.volunteer_hours.find_one({"email": em}, {"_id": 0, "name": 1}, sort=[("created_at", -1)])
-        await send_email(to=em, subject="Your volunteer certificates from The Caring Sisters Club", html=_cert_list_html(((last or {}).get("name") or "friend").split(" ")[0], certs))
-    return {"message": "If that email has earned a 50 or 100-hour badge, we've sent the certificate link(s) to it."}
+        await send_email(to=em, subject="Your volunteer certificates from The Caring Sisters Club", html=_add_sis(_cert_list_html(((last or {}).get("name") or "friend").split(" ")[0], certs), await _sis_link(em)))
+    elif await db.volunteer_milestones.find_one({"email": em}, {"_id": 1}) or await db.participant_badges.find_one({"email": em}, {"_id": 1}):
+        link = await _sis_link(em)
+        await send_email(to=em, subject="Your badges from The Caring Sisters Club", html=(
+            '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+            '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">' + _brand_header("Your Badges") +
+            '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019;text-align:center">'
+            '<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 12px">Your badges are waiting!</h1>'
+            '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">Printable certificates unlock at 50 volunteer hours. In the meantime, see and share every badge you have earned:</p>'
+            + _btn(link, "See All My Badges", primary=True) + '</td></tr></table></td></tr></table>'))
+    return {"message": "If that email has earned badges, we've sent your certificate and badge links to it."}
 
 
 # ---------- Enrollment reminders (staff digest) ----------
@@ -4578,7 +4595,7 @@ async def _transfer_waitlist(pid: str) -> int:
         else:
             tok = secrets.token_urlsafe(24)
             nd.update({"waitlist": True, "offer_status": "open", "offer_token": tok, "offer_mode": "transfer", "offer_override": True,
-                       "offer_sent_at": now.isoformat(), "offer_expires": (now + timedelta(hours=OFFER_HOURS)).isoformat()})
+                       "offer_sent_at": now.isoformat(), "offer_expires": (now + timedelta(hours=new.get("offer_hours") or OFFER_HOURS)).isoformat()})
             nd["data"]["list"] = f"Priority offer from {src['title']} waitlist"
         await db.submissions.insert_one(dict(nd))
         await db.submissions.update_one({"id": x["id"]}, {"$set": {"transferred": True, "transferred_to": pid, "data.list": f"Transferred to {new['title']}"}})
@@ -4588,7 +4605,7 @@ async def _transfer_waitlist(pid: str) -> int:
             await _spot_email(nd, new, "claim", f"{PUBLIC_APP_URL}/waitlist/claim?token={nd['offer_token']}")
     upd = {"transferred_count": len(subs)}
     if mode == "claim" and subs:
-        upd["priority_until"] = (now + timedelta(hours=OFFER_HOURS)).isoformat()
+        upd["priority_until"] = (now + timedelta(hours=new.get("offer_hours") or OFFER_HOURS)).isoformat()
     await db.programs.update_one({"id": pid}, {"$set": upd})
     return len(subs)
 
@@ -4720,7 +4737,7 @@ async def _celebrate_badge_wall() -> int:
             continue
         first_time = await db.badge_wall_notified.count_documents({"email": b["email"]}) == 1
         try:
-            await send_email(to=b["email"], subject="You're on our Badge Wall!" if first_time else f"Your {b['label']} badge is on the wall!", html=_wall_email_html(b, first_time))
+            await send_email(to=b["email"], subject="You're on our Badge Wall!" if first_time else f"Your {b['label']} badge is on the wall!", html=_add_sis(_wall_email_html(b, first_time), await _sis_link(b["email"])))
             sent += 1
         except Exception as ex:
             logging.error(f"Badge wall email failed: {ex}")
@@ -5186,6 +5203,10 @@ async def submit_feedback(payload: FeedbackIn, request: Request, background: Bac
         f = await db.session_feedback.find_one_and_update({"token": payload.token[:64], "alerted": {"$ne": True}}, {"$set": {"alerted": True}})
         if f:
             background.add_task(_feedback_alert, {**f, "rating": payload.rating, "recommend": payload.recommend, "comment": payload.comment.strip()[:1500]})
+    if payload.rating == 5 and len(payload.comment.strip()) >= 10:
+        f = await db.session_feedback.find_one_and_update({"token": payload.token[:64], "review_requested": {"$ne": True}}, {"$set": {"review_requested": True, "review_requested_at": _now_iso()}})
+        if f:
+            background.add_task(_send_review_request, f)
     return {"message": "Thank you for your feedback!"}
 
 
@@ -5475,7 +5496,7 @@ async def _noshow_for_program(p: dict) -> int:
     nxt = await _next_session(p)
     sent = 0
     for s in await db.submissions.find({**_seats_q(p), "attendance": "no_show"}, {"_id": 0, "id": 1, "data": 1}).to_list(2000):
-        r = await db.noshow_emails.update_one({"submission_id": s["id"]}, {"$setOnInsert": {"program_id": p["id"], "at": _now_iso()}}, upsert=True)
+        r = await db.noshow_emails.update_one({"submission_id": s["id"]}, {"$setOnInsert": {"program_id": p["id"], "email": (s["data"].get("email") or "").lower(), "at": _now_iso()}}, upsert=True)
         if r.upserted_id is None:
             continue
         try:
@@ -5539,7 +5560,7 @@ async def _check_streaks(emails: list) -> int:
             continue
         awarded += 1
         try:
-            await send_email(to=em, subject="You earned the Faithful Sister badge!", html=_faithful_html(name.split(" ")[0] or "friend", tok))
+            await send_email(to=em, subject="You earned the Faithful Sister badge!", html=_add_sis(_faithful_html(name.split(" ")[0] or "friend", tok), await _sis_link(em)))
         except Exception as ex:
             logging.error(f"Faithful badge email failed: {ex}")
     return awarded
@@ -5603,15 +5624,187 @@ async def admin_waitlist_speed(user=Depends(require_admin)):
         xs = sorted(xs)
         return round(xs[len(xs) // 2] if len(xs) % 2 else (xs[len(xs) // 2 - 1] + xs[len(xs) // 2]) / 2, 1) if xs else None
 
+    windows = {p["id"]: p.get("offer_hours") or OFFER_HOURS for p in await db.programs.find({}, {"_id": 0, "id": 1, "offer_hours": 1}).to_list(500)}
     rows = []
     for pid, r in per.items():
         decided = r["claimed"] + r["expired"]
-        rows.append({"program_id": pid, "title": titles.get(pid, "(deleted program)"), **{k: v for k, v in r.items() if k != "hours"},
+        fast = sum(1 for h in r["hours"] if h <= 12)
+        win = windows.get(pid, OFFER_HOURS)
+        tip = f"{round(100 * fast / len(r['hours']))}% of claims happen within 12 hours. Try a 24-hour window so seats move faster." if len(r["hours"]) >= 5 and fast / len(r["hours"]) >= 0.8 and win > 24 else ""
+        rows.append({"program_id": pid, "title": titles.get(pid, "(deleted program)"), **{k: v for k, v in r.items() if k != "hours"}, "offer_hours": win, "tip": tip,
                      "claim_rate": round(100 * r["claimed"] / decided) if decided else None, "median_hours": med(r["hours"])})
     tot = {k: sum(r[k] for r in rows) for k in ("offers", "claimed", "expired", "pending", "auto_moved")}
     decided = tot["claimed"] + tot["expired"]
     return {"summary": {**tot, "claim_rate": round(100 * tot["claimed"] / decided) if decided else None, "median_hours": med(all_hours)},
             "items": sorted(rows, key=lambda r: -r["offers"])}
+
+
+# ---------- Sisterhood badges page ----------
+async def _sis_link(email: str) -> str:
+    em = (email or "").strip().lower()
+    doc = await db.sisterhood_links.find_one_and_update({"email": em}, {"$setOnInsert": {"token": secrets.token_urlsafe(16), "at": _now_iso()}},
+                                                        upsert=True, return_document=True)
+    return f"{PUBLIC_APP_URL}/sisterhood/{doc['token']}"
+
+
+def _add_sis(html: str, link: str) -> str:
+    marker = '</td></tr><tr><td style="background:#29061F'
+    return html.replace(marker, f'<p style="margin:18px 0 0;text-align:center"><a href="{link}" style="color:#B4247E;font-weight:bold;font-size:13px">See all my badges in one place</a></p>' + marker, 1)
+
+
+async def _sisterhood(token: str) -> dict:
+    link = await db.sisterhood_links.find_one({"token": token[:64]}, {"_id": 0}) if token else None
+    if link is None:
+        raise HTTPException(status_code=404, detail="Page not found")
+    em = link["email"]
+    badges = []
+    async for m in db.volunteer_milestones.find({"email": em}, {"_id": 0}).sort("awarded_at", 1):
+        badges.append({"label": m.get("label") or f"{m['threshold']} Hours", "seal": f"{m['threshold']}h", "kind": "volunteer", "awarded_at": m["awarded_at"], "share_token": m.get("share_token")})
+    async for b in db.participant_badges.find({"email": em}, {"_id": 0}).sort("awarded_at", 1):
+        badges.append({"label": b["label"], "seal": b["seal"], "kind": "participant", "awarded_at": b["awarded_at"], "share_token": b.get("share_token")})
+    last = await db.volunteer_hours.find_one({"email": em}, {"_id": 0, "name": 1}, sort=[("created_at", -1)])
+    name = (last or {}).get("name") or (await db.participant_badges.find_one({"email": em}, {"_id": 0, "name": 1}) or {}).get("name") or ""
+    return {"name": _short_name(name), "badges": badges}
+
+
+@api_router.get("/sisterhood/{token}")
+async def public_sisterhood(token: str, request: Request):
+    _rate_limit(request, "sisterhood", max_hits=60, window_s=60)
+    return await _sisterhood(token)
+
+
+def _sis_card_png(d: dict) -> bytes:
+    from PIL import Image, ImageDraw, ImageFont
+    W, H = 1200, 630
+    img = Image.new("RGB", (W, H), "#3B0A2E")
+    dr = ImageDraw.Draw(img)
+    f = lambda n, sz: ImageFont.truetype(str(_FONT_DIR / n), sz)  # noqa: E731
+    dr.rectangle((0, 0, W, 10), fill="#CBA24B")
+    try:
+        logo = Image.open(ROOT_DIR / "brand_logo.png").convert("RGBA")
+        logo.thumbnail((90, 90))
+        img.paste(logo, (70, 50), logo)
+    except Exception:
+        pass
+    dr.text((180, 72), "THE CARING SISTERS CLUB", font=f("LiberationSans-Bold.ttf", 24), fill="#CBA24B")
+    dr.text((70, 175), d["name"] or "A proud sister", font=f("LiberationSerif-Bold.ttf", 68), fill="#F7EFE9")
+    n = len(d["badges"])
+    dr.text((70, 265), f"has earned {n} badge{'s' if n != 1 else ''} with our sisterhood", font=f("LiberationSans-Regular.ttf", 30), fill="#F7EFE9")
+    x, r = 70, 62
+    for b in d["badges"][:7]:
+        cx, cy = x + r, 420
+        dr.ellipse((cx - r, cy - r, cx + r, cy + r), fill="#29061F", outline="#CBA24B", width=6)
+        fnt = f("LiberationSerif-Bold.ttf", 40 if len(b["seal"]) <= 3 else 32)
+        dr.text((cx - dr.textlength(b["seal"], font=fnt) / 2, cy - 24), b["seal"], font=fnt, fill="#CBA24B")
+        x += 2 * r + 24
+    dr.text((70, 545), "Join us and make a difference", font=f("LiberationSans-Bold.ttf", 24), fill="#D14FA0")
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
+@api_router.get("/share/sisterhood/{token}/card.png")
+async def sisterhood_card(token: str):
+    png = await asyncio.to_thread(_sis_card_png, await _sisterhood(token))
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "public, max-age=900"})
+
+
+@api_router.get("/share/sisterhood/{token}")
+async def sisterhood_share_page(token: str):
+    d = await _sisterhood(token)
+    e = _esc
+    page, img = f"{PUBLIC_APP_URL}/sisterhood/{token}", f"{PUBLIC_APP_URL}/api/share/sisterhood/{token}/card.png"
+    title = f"{d['name']}'s badges | The Caring Sisters Club"
+    desc = f"{len(d['badges'])} badges earned volunteering and growing with The Caring Sisters Club."
+    return HTMLResponse(
+        f'<!doctype html><html><head><meta charset="utf-8"><title>{e(title)}</title>'
+        f'<meta property="og:type" content="website"><meta property="og:title" content="{e(title)}"><meta property="og:description" content="{e(desc)}">'
+        f'<meta property="og:image" content="{e(img)}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">'
+        f'<meta property="og:url" content="{e(page)}"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="{e(img)}">'
+        f'<link rel="canonical" href="{e(page)}"><meta http-equiv="refresh" content="0; url={e(page)}"></head><body><a href="{e(page)}">View badges</a></body></html>')
+
+
+# ---------- Comeback tracking ----------
+COMEBACK_DAYS = 60
+
+
+async def _family_ids(pid: str) -> list:
+    p = await db.programs.find_one({"id": pid}, {"_id": 0, "id": 1, "cloned_from": 1}) or {"id": pid}
+    root = p.get("cloned_from") or p["id"]
+    return [x["id"] for x in await db.programs.find({"$or": [{"id": root}, {"cloned_from": root}]}, {"_id": 0, "id": 1}).to_list(100)] or [pid]
+
+
+@api_router.get("/admin/reports/comebacks")
+async def admin_comebacks(user=Depends(require_admin)):
+    out = []
+    for pid in await db.noshow_emails.distinct("program_id"):
+        p = await db.programs.find_one({"id": pid}, {"_id": 0, "title": 1}) or {"title": "(deleted program)"}
+        sent = await db.noshow_emails.count_documents({"program_id": pid})
+        back = await db.noshow_emails.count_documents({"program_id": pid, "comeback_at": {"$exists": True}})
+        out.append({"program_id": pid, "title": p["title"], "sent": sent, "comebacks": back, "rate": round(100 * back / sent) if sent else None})
+    tot_s, tot_b = sum(r["sent"] for r in out), sum(r["comebacks"] for r in out)
+    return {"window_days": COMEBACK_DAYS, "summary": {"sent": tot_s, "comebacks": tot_b, "rate": round(100 * tot_b / tot_s) if tot_s else None},
+            "items": sorted(out, key=lambda r: -r["sent"])}
+
+
+# ---------- Review feature requests ----------
+def _review_request_html(first: str, quote: str, tok: str) -> str:
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Share Your Words") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 12px">Thank you for the 5 stars, {_esc(first)}!</h1>'
+        '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 16px">Your words touched us. May we feature them on our Home page to encourage other sisters?</p>'
+        f'<div style="background:#faf2f7;border-left:4px solid #B4247E;border-radius:8px;padding:14px 18px;margin:0 0 20px;font-style:italic;color:#3B0A2E;font-size:14px">&ldquo;{_esc(quote[:400])}&rdquo;</div>'
+        + _btn(f"{PUBLIC_APP_URL}/feature-my-words?token={tok}", "Yes, Feature My Words", primary=True) +
+        '<p style="font-size:12.5px;color:#6b5560;margin:16px 0 0">You can add a photo if you like. We show only your first name and last initial, and our team reviews everything before it goes live. No reply needed if you would rather not.</p></td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you left 5-star feedback for one of our programs.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _send_review_request(f: dict):
+    try:
+        await send_email(to=f["email"], subject="May we feature your words?", html=_review_request_html((f.get("name") or "friend").split(" ")[0], f.get("comment") or "", f["token"]))
+    except Exception as ex:
+        logging.error(f"Review request failed: {ex}")
+
+
+@api_router.get("/feature-consent")
+async def feature_consent_info(token: str, request: Request):
+    _rate_limit(request, "feedback", max_hits=30, window_s=60)
+    f = await db.session_feedback.find_one({"token": token[:64], "rating": 5}, {"_id": 0}) if token else None
+    if f is None or not f.get("comment"):
+        raise HTTPException(status_code=404, detail="This link is invalid.")
+    p = await db.programs.find_one({"id": f["program_id"]}, {"_id": 0, "title": 1}) or {}
+    return {"name": (f.get("name") or "").split(" ")[0], "quote": f["comment"], "program": p.get("title", ""), "consented": bool(f.get("feature_consent_at"))}
+
+
+class ConsentIn(BaseModel):
+    token: str
+    photo_url: str = ""
+
+
+@api_router.post("/feature-consent")
+async def feature_consent(payload: ConsentIn, request: Request, background: BackgroundTasks):
+    _rate_limit(request, "feedback-post", max_hits=10, window_s=60)
+    photo = payload.photo_url.strip()
+    if photo and not re.match(r"^/api/media/file/[A-Za-z0-9-]+$", photo):
+        raise HTTPException(status_code=400, detail="Please upload your photo with the button.")
+    f = await db.session_feedback.find_one_and_update({"token": payload.token[:64], "rating": 5, "comment": {"$nin": [None, ""]}, "feature_consent_at": {"$exists": False}},
+                                                      {"$set": {"feature_consent_at": _now_iso()}})
+    if f is None:
+        if await db.session_feedback.find_one({"token": payload.token[:64], "feature_consent_at": {"$exists": True}}, {"_id": 1}):
+            return {"ok": True}
+        raise HTTPException(status_code=404, detail="This link is invalid.")
+    p = await db.programs.find_one({"id": f["program_id"]}, {"_id": 0, "id": 1, "title": 1}) or {}
+    doc = {"id": str(uuid.uuid4()), "name": (f.get("name") or "")[:80], "email": f.get("email", ""), "role": f"{p.get('title', 'Program')} participant"[:80],
+           "quote": f["comment"][:1500], "photo_url": photo, "program_id": p.get("id"), "program_title": p.get("title"), "source": "feedback",
+           "status": "pending", "created_at": _now_iso()}
+    await db.story_submissions.insert_one(dict(doc))
+    background.add_task(_notify_staff, "story", {"name": doc["name"], "email": doc["email"], "program": doc["program_title"] or "General", "story": doc["quote"]})
+    return {"ok": True}
 
 
 @api_router.get("/volunteer-hours/leaderboard")

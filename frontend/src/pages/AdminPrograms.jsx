@@ -10,7 +10,7 @@ import { CloneProgramDialog } from '../components/CloneProgram';
 import { AttendancePanel } from '../components/Attendance';
 import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, X, UploadCloud, Tags, ExternalLink, ListOrdered, Copy, Megaphone, ClipboardCheck } from 'lucide-react';
 
-const EMPTY = { title: '', category: '', image_url: '', summary: '', body: '', goals: [], impact: [], cta_text: 'Get Involved', cta_link: '/volunteer', published: true, gallery: [], testimonials: [], home_testimonial_ids: [], capacity: 0, waitlist_mode: 'claim', start_date: '', end_date: '', schedule: '' };
+const EMPTY = { title: '', category: '', image_url: '', summary: '', body: '', goals: [], impact: [], cta_text: 'Get Involved', cta_link: '/volunteer', published: true, gallery: [], testimonials: [], home_testimonial_ids: [], capacity: 0, waitlist_mode: 'claim', offer_hours: 48, start_date: '', end_date: '', schedule: '' };
 const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E] bg-white';
 const Field = ({ label, children }) => <div><label className="text-[13px] font-semibold text-[#3B0A2E]">{label}</label>{children}</div>;
 
@@ -116,9 +116,14 @@ function ProgramForm({ initial, categories, onClose, onSaved }) {
           <Field label='Meeting schedule (e.g. "Tuesdays 6–8pm")'>
             <input value={form.schedule || ''} onChange={set('schedule')} maxLength={80} data-testid="program-schedule-input" className={input} />
           </Field>
+          <Field label="Claim window for waitlist offers">
+            <select value={form.offer_hours || 48} onChange={(e) => setForm({ ...form, offer_hours: Number(e.target.value) })} data-testid="program-offer-hours-select" className={input}>
+              {[12, 24, 48, 72].map((h) => <option key={h} value={h}>{h} hours</option>)}
+            </select>
+          </Field>
           <Field label="When a seat opens up">
             <select value={form.waitlist_mode || 'claim'} onChange={set('waitlist_mode')} data-testid="program-waitlist-mode-select" className={input}>
-              <option value="claim">Email next in line a 48-hour claim link</option>
+              <option value="claim">Email next in line a claim link</option>
               <option value="auto">Move next in line in automatically</option>
               <option value="broadcast">Email everyone waiting, first to claim wins</option>
             </select>
