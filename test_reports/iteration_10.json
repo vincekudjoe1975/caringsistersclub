@@ -1,0 +1,53 @@
+{
+  "summary": "E2E tested the iteration-10 features: (1) Volunteer thank-yous (one/day/email) + leaderboard opt-in with short-name, (2) Signup stage transitions + invalid-stage 400, (3) Signup report contacted_pct/enrolled_pct columns + CSV, (4) Story-request results report with seeded invites/submissions/approved. Backend: 9/9 pytest PASS (new file /app/backend/tests/test_thanks_leaderboard_stages.py). Frontend: hours-leaderboard-checkbox, leaderboard section, leaderboard-row/name/hours all render; admin approval flow works end-to-end. Discovered one minor FRONTEND state-reset bug: the Log-My-Hours 'leaderboard' opt-in flag is NOT reset by log-more-hours-btn ('again()' resets only hours/note/date) - a user who opts in once and logs another entry in the same session is silently re-opted in. Confirmed via DB: a second submission after unchecking in UI still persisted leaderboard:true (because again() keeps the previous checkbox state).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "VolunteerHours.LogHours", "issue": "again() handler (log-more-hours-btn) does not reset form.leaderboard - previous opt-in sticks across subsequent submissions in the same session. Users may be unintentionally re-opted-in to Top Volunteers. Add `leaderboard: false` to the setForm spread on line 25.", "selector": "[data-testid=\"log-more-hours-btn\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": [
+    {"case": "POST /api/volunteer-hours x2 (opted-in + non-opted) then approve x2 -> volunteer_thanks has 1 doc per email, both entries thanked:true", "status": "PASS"},
+    {"case": "Second approval for same email same day -> no new volunteer_thanks doc; 2nd entry thanked stays != true", "status": "PASS"},
+    {"case": "GET /api/volunteer-hours/leaderboard returns opted-in only with short-name 'Adaeze N.' + hours (non-opted volunteer excluded)", "status": "PASS"},
+    {"case": "POST /api/programs/wellness-workshops/signup creates program_signup; PUT /admin/submissions/<id>/stage new->contacted->enrolled persists", "status": "PASS"},
+    {"case": "PUT /admin/submissions/<id>/stage with stage='bogus' -> 400", "status": "PASS"},
+    {"case": "GET /admin/reports/program-signups includes contacted_pct and enrolled_pct per row (1 enrolled / 1 total -> 100% / 100%)", "status": "PASS"},
+    {"case": "GET /admin/reports/story-requests returns {invites,submitted,approved,rate} shape", "status": "PASS"},
+    {"case": "Seeded program_signup+story_submission -> invites>=1 submitted>=1 approved>=1 rate>0; cleaned up after", "status": "PASS"},
+    {"case": "GET /volunteer-hours/summary + /admin/volunteer-hours regression", "status": "PASS"},
+    {"case": "UI /volunteer: hours-leaderboard-checkbox rendered; submits 2 entries", "status": "PASS"},
+    {"case": "UI /admin reports: hours-approve-btn moves both entries to approved", "status": "PASS"},
+    {"case": "UI /volunteer: volunteer-leaderboard visible with leaderboard-row + leaderboard-name 'Adaeze N.'", "status": "PASS"},
+    {"case": "UI leaderboard with zero opted-in hours hidden (component returns null)", "status": "PASS - verified by code: Leaderboard returns null when d.items is empty"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_thanks_leaderboard_stages.py",
+    "/app/test_reports/pytest/thanks_leaderboard_stages.xml"
+  ],
+  "action_items": [
+    "(Minor) In /app/frontend/src/components/VolunteerHours.jsx line 25, reset `leaderboard: false` inside `again()` so the opt-in checkbox resets after 'Log more hours'. Current code only resets hours/note/date."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~3920 lines; the newly added _send_volunteer_thanks + hours_leaderboard + report_story_requests + set_signup_stage block fits the existing growing-file concern. Split into volunteer_hours.py / reports.py routers.",
+    "_send_volunteer_thanks aggregates `name` using $first ordering by date 1, but inserts volunteer_thanks before send_email: if send_email throws, the thanks doc still exists blocking future retries today. Consider only inserting the thanks doc after a successful send (currently try/except swallows the error and leaves no retry window).",
+    "hours_leaderboard uses $first on 'name' and 'opt' after $sort:{created_at:-1}. If a volunteer logged two entries where the earliest had opt=true and later had opt=false (or vice-versa), the latest value wins (correct), but $first on `name` picks the most recent spelling - OK.",
+    "report_story_requests performs a per-invite story_submissions.find_one in a loop (N+1 lookup). For small invite counts fine, but should aggregate via $lookup / batched $in.",
+    "set_signup_stage validates against a hard-coded tuple ('new','contacted','enrolled','not_fit'). Consider pulling into module-level constant used by both backend validator and frontend STAGES array for DRY."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_thanks_leaderboard_stages.py"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100% of specified flows; 1 minor state-reset bug noted"},
+  "test_credentials": "Temp admin via qa_session.py up/down (session_token=qa_tok_123). Session torn down at end.",
+  "seed_data_creation": "Created & cleaned: ~5 volunteer_hours (@example.com), ~5 volunteer_thanks (@example.com), 2 program_signup submissions (@example.com), 1 story_submission + 1 program_signup seed for story-request test. Final DB verified clean (0 remaining @example.com docs in volunteer_hours / volunteer_thanks / story_submissions / submissions).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New endpoints to retest: GET /api/volunteer-hours/leaderboard (returns {year, items:[{name:short, hours}]} filtered by opt=True approved this year, max 10); POST /api/admin/volunteer-hours/{id}/approve now triggers background _send_volunteer_thanks which (a) is idempotent per email per day via unique index on volunteer_thanks (email,day), (b) marks entries thanked:true, (c) uses year-start cutoff for year_total; PUT /api/admin/submissions/{sid}/stage accepts only new|contacted|enrolled|not_fit; GET /api/admin/reports/program-signups rows now include contacted_pct (reached = contacted+enrolled+not_fit) and enrolled_pct; GET /api/admin/reports/story-requests scans submissions type=program_signup with story_request_sent:True and matches story_submissions by email+created_at>=story_request_at. Test file runs with -o addopts=\"\" to bypass xdist/pytest.ini addopts. Env vars: load from both /app/backend/.env and /app/frontend/.env.",
+  "rca of the issue": "Minor UI reset bug in VolunteerHours.LogHours.again(): spreads previous form state when resetting after a successful submission, which keeps `leaderboard: true` from a prior opt-in. Fix: `setForm((f) => ({ ...f, hours: '', note: '', date: today(), leaderboard: false }))`. Also optional: send_email success-gating for volunteer_thanks insert so a transient SMTP failure doesn't permanently suppress today's thank-you."
+}

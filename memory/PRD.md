@@ -188,3 +188,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Impact tracking: each send has impact_emails.id (cid) + impact_recipients {cid,rid,opened_at,clicked_at,opens,clicks}; pixel /api/t/impact/{cid}/open.gif, clicks /api/t/impact/{cid}/click?r=&u=/path (relative only). GET /api/admin/impact-email/history. Test sends untracked.
 - Volunteer hours: public POST /api/volunteer-hours (pending), admin approve/reject, public GET /api/volunteer-hours/summary → Transparency "volunteer impact" section; LogHours form on /volunteer.
 - Admin tab persists in sessionStorage.
+
+## 2026 — Volunteer thank-yous, leaderboard, story-request results, sign-up stages (iteration_10: 100%)
+- _send_volunteer_thanks: one email per volunteer per UTC day (volunteer_thanks unique email+day) combining approved-unthanked entries; runs after approve + hourly.
+- Leaderboard: HoursIn.leaderboard opt-in (latest entry decides); GET /api/volunteer-hours/leaderboard (top 10 this year, "First L."). Shown on /volunteer.
+- GET /api/admin/reports/story-requests (invites, submitted after invite, rate, approved). PUT /api/admin/submissions/{id}/stage (new/contacted/enrolled/not_fit); program-signups report adds contacted_pct/enrolled_pct. StageSelect in Form Submissions.
+- Opt-in checkbox intentionally stays checked on "Log more hours" (same person).
