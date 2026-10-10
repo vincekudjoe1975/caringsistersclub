@@ -1,0 +1,60 @@
+{
+  "summary": "Reviewed and tested the batch of 5 new feature sets: (1) Programs & Initiatives admin CRUD + reorder + categories + detail page + public filtering, (2) Admin bootstrap owner-email allowlist + CSV formula injection safety, (3) Site URL banner (missing->saved->gone), (4) Single-use donor_manage_tokens (receipt kind) via /api/donor/portal, (5) Cancellation thank-you page with prefilled note, undeliverable-email 424 revert, invalid-token 404, empty-subject 400. Added /app/backend/tests/test_programs_cancel.py (16 tests, 16/16 PASS). UI verified via Playwright on preview URL: /initiatives shows 6 program cards + 4 category filter buttons + 'All', Learn More -> /initiatives/<slug> program-detail with program-title/body/goals/impact/cta, unknown slug -> program-not-found, Admin -> Programs tab shows all 6 seeded admin-program-row with reorder/edit/toggle/delete controls, New Program form validates javascript: link via error toast and saves with valid link, Site URL banner flow (missing->click use-site-url-btn->site-url-banner-saved->reload hides banner), /cancel-thanks?token=QA renders cancel-thanks-page + cancel-thanks-summary + prefilled subject/message, send attempt to @example.com yields 424 cancel-thanks-error 'Note not sent: Email provider rejected the message.' and server reverts thanked=false (verified in DB), invalid token -> 'This link is invalid.' error. Regression smoke pages (/events, /transparency, /contact) load without errors. Cleanup complete.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_results": [
+    {"case": "GET /api/admin/programs requires auth (401/403)", "status": "PASS"},
+    {"case": "GET /api/admin/programs returns 6+ seeded items with slug + categories", "status": "PASS"},
+    {"case": "GET /api/programs returns published only, strips body field, ordered asc", "status": "PASS"},
+    {"case": "POST /api/admin/programs creates program (title/slug persist)", "status": "PASS"},
+    {"case": "POST /api/admin/programs rejects javascript: link with 400", "status": "PASS"},
+    {"case": "POST /api/admin/programs rejects non-https image_url with 400", "status": "PASS"},
+    {"case": "PUT /api/admin/programs toggles published; public detail 404 when unpublished; unknown slug 404", "status": "PASS"},
+    {"case": "POST /api/admin/programs/reorder persists new order", "status": "PASS"},
+    {"case": "DELETE /api/admin/programs removes and returns {deleted:true}; second delete 404", "status": "PASS"},
+    {"case": "PUT /api/admin/program-categories updates categories list; empty list -> 400", "status": "PASS"},
+    {"case": "GET /api/cancellations/token/{t} returns donor info + prefilled subject/message", "status": "PASS"},
+    {"case": "GET /api/cancellations/token/{invalid} -> 404", "status": "PASS"},
+    {"case": "POST /api/cancellations/token/{t} empty subject -> 400", "status": "PASS"},
+    {"case": "POST /api/cancellations/token/{t} undeliverable email -> 424 and thanked reverted to false in DB", "status": "PASS"},
+    {"case": "Donor manage-token single-use: GET valid=true, POST portal -> billing.stripe.com, 2nd POST -> 410, GET -> valid=false", "status": "PASS"},
+    {"case": "GET /api/admin/donations/export prefixes formula cells (donor_name '=1+1' -> \"'=1+1\", email '+csv@...' -> \"'+csv@...\")", "status": "PASS"},
+    {"case": "UI /initiatives: 6 program-card rendered, 5 filter buttons [All, Professional, Philanthropy, Housing, Community]", "status": "PASS"},
+    {"case": "UI program-learn-more -> /initiatives/<slug> -> program-detail with program-title + program-cta visible", "status": "PASS"},
+    {"case": "UI /initiatives/<unknown-slug> -> program-not-found rendered with 'All Programs' link", "status": "PASS"},
+    {"case": "UI Admin site-url-banner visible when site_url empty; clicking use-site-url-btn -> site-url-banner-saved; reload -> banner gone", "status": "PASS"},
+    {"case": "UI Admin Programs tab: admin-view-programs -> admin-programs, 6+ admin-program-row rows with ordering/edit/toggle/delete controls", "status": "PASS"},
+    {"case": "UI New Program form validates javascript: link -> error toast 'Save failed - Button link must be a site path...'; fix to /volunteer -> saves + row count +1", "status": "PASS"},
+    {"case": "UI /cancel-thanks?token=QA renders cancel-thanks-page + cancel-thanks-summary '$25 / month ... qa.donor@example.com' with prefilled thanks-subject-input + thanks-message-input", "status": "PASS"},
+    {"case": "UI send-thanks-btn on @example.com -> cancel-thanks-error 'Note not sent: Email provider rejected the message.' (424); DB thanked remains false", "status": "PASS"},
+    {"case": "UI /cancel-thanks?token=invalid -> cancel-thanks-error 'This link is invalid.'", "status": "PASS"},
+    {"case": "Regression smoke /events /transparency /contact load without JS errors", "status": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_programs_cancel.py",
+    "/app/test_reports/pytest/programs_cancel.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 3153 lines (prev 2853) - the file-size guideline (<700 lines) is heavily violated. Programs section (~140 lines), cancellation section (~130 lines), and donor manage-token section should be split into dedicated modules (programs.py, cancellations.py, donor_portal.py).",
+    "_handle_cancellation stores an idempotency guard via existence check on sub_id, but the cancellation token is only generated once; if a cancellation is re-sent via webhook before the staff-alert email delivery completes, the token exists but staff never received it. Consider decoupling token creation (always upsert) from staff-alert send with retry.",
+    "/api/programs/{slug} input length cap is slug[:100] but response is unmemoized and re-reads Mongo on each hit. Consider a simple in-process TTL cache (programs are rarely edited) to reduce DB load on /initiatives/<slug> pages.",
+    "_clean_program's image_url validator allows only /api/media/file/ or https://, but public cards also reference images.unsplash.com / images.pexels.com - these are allowed via https:// but there is no allowlist (admins could enter arbitrary https hosts). Low risk, but consider a whitelist for consistency.",
+    "The ADMIN_OWNER_EMAILS env var is only honored at startup/import time (constant at module load). If the owner-email list is changed in .env, the backend must be restarted - no runtime refresh. Document this ops requirement or move to a settings doc.",
+    "Site URL banner uses window.location.origin as the suggested value, but this is a preview URL in staging - admins must remember to re-save on production. Consider showing current effective PUBLIC_APP_URL alongside the banner.",
+    "Cancellation thank-you page: on 424 send failure, server reverts thanked=false (correct), but client state remains with 'sent' not toggled - user can retry safely, which is correct. However the error message leaks the provider rejection reason ('Email provider rejected the message.') - acceptable for staff-only link but worth reviewing.",
+    "donor_manage_tokens single-use is enforced via atomic update_one({used:false},{used:true}) in donor_portal (good), but there is no TTL index on expires_at - expired tokens accumulate forever. Add TTL index.",
+    "AdminPrograms.jsx 'Toast after invalid link' flow does NOT clear the form or restore cursor focus - minor UX miss. The toast dismisses, user has to click the field again.",
+    "Initiatives.jsx CtaLink only treats 'https://' as external; relative paths like /donate work, but 'http://...' or 'mailto:' would be routed as internal Link and 404. Backend already blocks these, so defense-in-depth is fine."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_programs_cancel.py"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% (10/10 flows)"},
+  "test_credentials": "Temp admin seeded via qa_session.py up (user_id=qa_user, email=qa@example.com, role=admin, session_token=qa_tok_123). Deleted via qa_session.py down at end. Owner emails from .env: vincekudjoe@gmail.com, caringsistersclub@gmail.com, admin@caringsistersclub.org (verified present, used only for code review - cannot test Google OAuth flow directly).",
+  "seed_data_creation": "Created & deleted: 1 QA cancellation {sub_id:'sub_qa_1', token:qa_cancel_tok_7kdoLJY13kI, qa.donor@example.com, $25/mo}; 2 QA programs ('QA UITest Program' via UI, 'QA Mentorship ...' via API); 1 QA payment_transaction (session_id qa_csv_injection_* for CSV test); 1 QA donor_manage_token (receipt kind for markj@testme.com real monthly donor). Post-test state verified clean: 0 QA artefacts remaining; site settings site_url='' as required by review (user must save on live site); staff_notify_email restored to caringsistersclub@gmail.com; QA session+user deleted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Programs backend endpoints: /api/programs (public list, hides body), /api/programs/{slug} (public detail, 404 if unpublished), /api/admin/programs (admin list+categories), POST/PUT/DELETE /api/admin/programs/{pid}, POST /api/admin/programs/reorder {ids:[]}, PUT /api/admin/program-categories {categories:[]}. _clean_program rejects: empty title, javascript: link, non-https/non-/api/media image_url, non-slash-starting cta_link, protocol-relative //links. Programs are auto-seeded (6 defaults) on first call via _seed_programs with programs_seeded flag in settings. Cancellation flow: cancellations collection {sub_id (unique), token, thanked, thanked_at}; /api/cancellations/token/{t} (GET returns info+prefilled note; POST sends thanks). Site URL banner reads /api/admin/settings site_url and shows banner when empty. CSRF requires 'X-Requested-With: XMLHttpRequest' header on POST/PUT/DELETE for admin tests. ADMIN_OWNER_EMAILS loaded only at import - restart backend if changing. Rate limits: cancel-thanks 20/60s; donor/portal 10/60s; donor/manage-link 3/300s.",
+  "rca of the issue": "No issues found. All 16 backend tests + 10 UI flow checks pass. One minor initial run failure due to missing CSRF header (X-Requested-With) in test fixture — fixed in test file. The 424 status for undeliverable cancellation email is intentional per main agent (Cloudflare rewrites 502 bodies)."
+}

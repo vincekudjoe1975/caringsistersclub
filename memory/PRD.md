@@ -160,3 +160,12 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Calendar: Google Calendar link + /api/events/{id}/calendar.ics (times assumed ET, 2h duration, all-day if time unparseable) in confirm/reminder/promoted emails and on site.
 - Donor self-service: /manage-gift page → POST /api/donor/manage-link (generic reply, 1h one-time token) → POST /api/donor/portal → Stripe Billing Portal (card update, cancel at period end, invoices; config auto-created per test/live key). Monthly receipts include reusable 60-day "Manage your gift" link. Footer + Donate (monthly) links.
 - QA helper: backend/tests/qa_session.py up|down (temp admin cookie qa_tok_123).
+
+## 2026 — Programs editor, audit fixes, locked email links, single-use manage links, cancellation alerts (iteration_6: 100%)
+- Programs: `programs` collection (seeded once from old mock list; flag settings.programs_seeded), categories in settings.program_categories. Public GET /api/programs, /api/programs/{slug}; admin CRUD /api/admin/programs, POST /admin/programs/reorder, PUT /admin/program-categories. Pages: Initiatives.jsx (API), ProgramDetail.jsx (/initiatives/:slug), AdminPrograms.jsx (Admin → Programs). Media category 'program'.
+- Audit: donations CSV + client donors CSV sanitize formula prefixes. Admin bootstrap: only ADMIN_OWNER_EMAILS (backend .env: vincekudjoe@gmail.com, caringsistersclub@gmail.com, admin@caringsistersclub.org) or allowed_emails become admin; owners auto-promoted on login; first-user auto-admin removed.
+- Email links: PUBLIC_APP_URL = settings.site_url or env fallback only (detected host is a suggestion). Admin SiteUrlBanner with one-click "Use <origin>".
+- Manage-gift tokens all single-use (atomically claimed); receipt tokens 30 days.
+- Cancellations: webhook customer.subscription.updated/deleted + daily _check_cancellations → `cancellations` (unique sub_id) → staff email with /cancel-thanks?token= page (editable note, one send; reverts on provider failure).
+- App error statuses use 424 instead of 502 (Cloudflare replaces 502 bodies).
+- Don't write scratch files under /app/backend (uvicorn reload).
