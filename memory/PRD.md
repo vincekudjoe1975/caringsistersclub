@@ -210,3 +210,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Leaderboard items include badge (highest all-time milestone).
 - YIR share: /api/share/year-in-review/{year}/card.png (Pillow, fonts in backend/fonts; admin can view unpublished), /api/share/year-in-review/{year} OG HTML + redirect (share buttons use this). settings.site.yir_images[year] optional uploaded override (media category 'share').
 - YIR email: GET /api/admin/year-in-review/{y}/email (preview, recipients, history), POST .../email/test, POST .../email/send {force} (requires published; 409 if sent before). settings.site.yir_autosend → sends once on publish. Log in db.yir_emails; 0.6s spacing between sends.
+
+## 2026 — Waitlist position & staff panel, YIR "Help us do it again", volunteer certificates (iteration_13: 100%)
+- Waitlisted sign-ups get status_token; signup response returns position/total; confirmation email shows "You're #N" + Check My Position link (/waitlist/status?token → GET /api/waitlist/status: waiting|offer(claim_token)|in|removed).
+- Staff: GET /api/admin/programs/{pid}/waitlist; POST /api/admin/waitlist/{sid}/offer|move-in|remove (staff offers set offer_override → claim skips seat check). WaitlistPanel.jsx via "Waitlist" button on program rows (capacity>0).
+- YIR: settings.site.yir_ask_amount (default 50); public YIR returns ask_amount; email "Help Us Do It Again" → /donate?amount= (recipient's last gift or default). Donate.jsx reads ?amount=.
+- Certificates: milestones >=50 (CERT_MIN) store cert_token; GET /api/certificates/{token}.pdf (Pillow PDF, letter landscape); badge email links it; public POST /api/certificates/request {email} (3/10min) emails links; CertificateRequest form on /volunteer.
