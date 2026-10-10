@@ -111,6 +111,15 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
   panel on the Donors tab. Note: email *open* tracking is not available via the managed email
   provider, so history shows delivered/sent counts only. Route placed at `/admin/appeals` to
   avoid shadowing `/admin/donors/{email}`. Verified.
+- **Appeal templates**: `appeal_templates` collection + CRUD (`GET/POST /api/admin/appeal-templates`,
+  `DELETE /api/admin/appeal-templates/{id}`). Compose modal shows saved templates as clickable
+  chips (apply/delete) and a "Save as template" action. Verified.
+- **Scheduled appeals**: `scheduled_appeals` collection + `GET/POST /api/admin/scheduled-appeals`,
+  `DELETE /api/admin/scheduled-appeals/{id}` (cancel). Compose modal has a date picker that
+  switches the primary button to "Schedule"; the daily scheduler (`_run_scheduled_appeals`)
+  dispatches due appeals via the shared `_dispatch_segment_appeal` helper and logs them to
+  appeal history. Scheduled Appeals panel on the Donors tab shows status + cancel. Verified
+  (past-date 400, not-due→0, due→sent with counts, cancel-after-sent 404).
 
 ## Known issues / notes
 - **Email delivery works** via the Emergent platform-verified domain (202 + id for real

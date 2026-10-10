@@ -46,6 +46,11 @@ export default function AdminDonors() {
   const [sendingTestCopy, setSendingTestCopy] = useState(false);
   const [appeals, setAppeals] = useState([]);
   const [showAppeals, setShowAppeals] = useState(false);
+  const [templates, setTemplates] = useState([]);
+  const [scheduled, setScheduled] = useState([]);
+  const [showScheduled, setShowScheduled] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduling, setScheduling] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,7 +75,21 @@ export default function AdminDonors() {
     }
   }, []);
 
-  useEffect(() => { load(); loadAppeals(); }, [load, loadAppeals]);
+  const loadTemplates = useCallback(async () => {
+    try {
+      const { data } = await api.get('/admin/appeal-templates');
+      setTemplates(data.items || []);
+    } catch (e) { console.error('AdminDonors: failed to load templates', e); }
+  }, []);
+
+  const loadScheduled = useCallback(async () => {
+    try {
+      const { data } = await api.get('/admin/scheduled-appeals');
+      setScheduled(data.items || []);
+    } catch (e) { console.error('AdminDonors: failed to load scheduled', e); }
+  }, []);
+
+  useEffect(() => { load(); loadAppeals(); loadTemplates(); loadScheduled(); }, [load, loadAppeals, loadTemplates, loadScheduled]);
 
   const openDonor = async (d) => {
     if (!d.email) return;
@@ -233,6 +252,62 @@ export default function AdminDonors() {
     }
   };
 
+  const applyTemplate = (id) => {
+    const t = templates.find((x) => x.id === id);
+    if (t) { setSegSubject(t.subject); setSegMessage(t.message); }
+  };
+
+  const saveTemplate = async () => {
+    if (!segSubject.trim() || !segMessage.trim()) {
+      toast({ title: 'Nothing to save', description: 'Add a subject and message first.', variant: 'destructive' });
+      return;
+    }
+    const name = window.prompt('Name this template (e.g. "Year-End Appeal"):');
+    if (!name || !name.trim()) return;
+    try {
+      await api.post('/admin/appeal-templates', { name: name.trim(), subject: segSubject, message: segMessage });
+      toast({ title: 'Template saved', description: `"${name.trim()}" is ready to reuse.` });
+      loadTemplates();
+    } catch (e) {
+      toast({ title: 'Save failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
+    }
+  };
+
+  const deleteTemplate = async (id) => {
+    try { await api.delete(`/admin/appeal-templates/${id}`); loadTemplates(); }
+    catch (e) { toast({ title: 'Delete failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' }); }
+  };
+
+  const scheduleAppeal = async () => {
+    if (!segSubject.trim() || !segMessage.trim()) {
+      toast({ title: 'Missing fields', description: 'Please add a subject and a message.', variant: 'destructive' });
+      return;
+    }
+    if (!scheduleDate) {
+      toast({ title: 'Pick a date', description: 'Choose a date to schedule this appeal.', variant: 'destructive' });
+      return;
+    }
+    setScheduling(true);
+    try {
+      await api.post('/admin/scheduled-appeals', { segment: quickFilter, subject: segSubject, message: segMessage, send_on: scheduleDate });
+      toast({ title: 'Appeal scheduled', description: `Will send to ${currentFilterLabel} donors on ${new Date(scheduleDate).toLocaleDateString()}.` });
+      setSegModal(false); setSegSubject(''); setSegMessage(''); setScheduleDate('');
+      loadScheduled();
+    } catch (e) {
+      toast({ title: 'Schedule failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
+    } finally {
+      setScheduling(false);
+    }
+  };
+
+  const cancelScheduled = async (id) => {
+    if (!window.confirm('Cancel this scheduled appeal?')) return;
+    try { await api.delete(`/admin/scheduled-appeals/${id}`); loadScheduled(); }
+    catch (e) { toast({ title: 'Cancel failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' }); }
+  };
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+
   if (loading) {
     return <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-[#B4247E]" size={32} /></div>;
   }
@@ -369,6 +444,53 @@ export default function AdminDonors() {
         )}
       </div>
 
+      <div className="mt-4">
+        <button onClick={() => setShowScheduled((v) => !v)} data-testid="toggle-scheduled-appeals"
+          className="flex items-center gap-2 text-[13.5px] font-semibold text-[#3B0A2E] hover:text-[#B4247E] transition-colors">
+          <Clock size={15} /> Scheduled Appeals {scheduled.filter((s) => s.status === 'scheduled').length > 0 && <span className="opacity-60">({scheduled.filter((s) => s.status === 'scheduled').length})</span>}
+          {showScheduled ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+        </button>
+        {showScheduled && (
+          <div className="mt-3 bg-white rounded-2xl border border-[#3B0A2E]/8 overflow-hidden" data-testid="scheduled-appeals-panel">
+            {scheduled.length === 0 ? (
+              <p className="text-[#241019]/50 text-[13px] p-6 text-center">No scheduled appeals. Pick a date in the "Email" composer to schedule one.</p>
+            ) : (
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-[#241019]/55 text-[12px] uppercase tracking-wide" style={{ background: '#faf2f7' }}>
+                    <th className="px-5 py-3 font-semibold">Send On</th>
+                    <th className="px-5 py-3 font-semibold">Segment</th>
+                    <th className="px-5 py-3 font-semibold">Subject</th>
+                    <th className="px-5 py-3 font-semibold">Status</th>
+                    <th className="px-5 py-3 font-semibold text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scheduled.map((s) => (
+                    <tr key={s.id} className="border-t border-[#3B0A2E]/8 text-[13px]" data-testid="scheduled-appeal-row">
+                      <td className="px-5 py-3 text-[#241019]/70 whitespace-nowrap">{s.send_on ? new Date(s.send_on).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                      <td className="px-5 py-3"><span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full capitalize" style={{ background: '#f2e6ee', color: '#B4247E' }}>{s.segment}</span></td>
+                      <td className="px-5 py-3 text-[#3B0A2E] font-medium max-w-[200px] truncate">{s.subject}</td>
+                      <td className="px-5 py-3">
+                        <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full capitalize" style={s.status === 'scheduled' ? { background: '#eef6ec', color: '#3c7a2f' } : s.status === 'sent' ? { background: '#eef1f5', color: '#53657d' } : { background: '#fdeae3', color: '#c1431f' }}>
+                          {s.status === 'sent' && s.result ? `Sent (${s.result.sent}/${s.result.recipients})` : s.status}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        {s.status === 'scheduled' && (
+                          <button onClick={() => cancelScheduled(s.id)} data-testid="cancel-scheduled-btn"
+                            className="text-[12px] font-semibold text-[#c1431f] hover:underline">Cancel</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
+
       {selected && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(41,6,31,0.6)' }} onClick={() => setSelected(null)}>
           <div className="bg-white rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -470,24 +592,58 @@ export default function AdminDonors() {
             </div>
             <div className="p-6">
               <p className="text-[13px] text-[#241019]/60 mb-4">This appeal will be sent to <strong className="text-[#B4247E]">{segmentCount}</strong> {currentFilterLabel.toLowerCase()} donor{segmentCount === 1 ? '' : 's'} with an email on file, wrapped in your branded template with a "Make a Gift" button.</p>
+
+              {templates.length > 0 && (
+                <div className="mb-4">
+                  <label className="text-[13px] font-semibold text-[#3B0A2E]">Load a saved template</label>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {templates.map((t) => (
+                      <span key={t.id} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full" style={{ background: '#f2e6ee', color: '#B4247E' }}>
+                        <button onClick={() => applyTemplate(t.id)} data-testid="apply-template" title="Use this template">{t.name}</button>
+                        <button onClick={() => deleteTemplate(t.id)} data-testid="delete-template" title="Delete template" className="hover:text-[#c1431f]"><X size={11} /></button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <label className="text-[13px] font-semibold text-[#3B0A2E]">Subject</label>
               <input value={segSubject} onChange={(e) => setSegSubject(e.target.value)} data-testid="segment-subject-input"
                 placeholder="A heartfelt update from The Caring Sisters Club"
                 className="w-full mt-1.5 mb-4 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
               <label className="text-[13px] font-semibold text-[#3B0A2E]">Message</label>
-              <textarea value={segMessage} onChange={(e) => setSegMessage(e.target.value)} rows={6} data-testid="segment-message-input"
+              <textarea value={segMessage} onChange={(e) => setSegMessage(e.target.value)} rows={5} data-testid="segment-message-input"
                 placeholder="Write a warm, personal appeal to this group of supporters…"
                 className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-3 text-[14px] focus:outline-none focus:border-[#B4247E] resize-none" />
-              <div className="flex justify-end gap-2 mt-5">
-                <button onClick={() => setSegModal(false)} disabled={segSending || sendingTestCopy} className="px-5 py-2.5 rounded-full text-[13.5px] font-semibold bg-white text-[#3B0A2E]" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>Cancel</button>
-                <button onClick={sendTestCopy} disabled={segSending || sendingTestCopy} data-testid="segment-test-copy-btn"
+
+              <div className="flex flex-wrap items-end gap-3 mt-4 pt-4 border-t border-[#3B0A2E]/10">
+                <button onClick={saveTemplate} data-testid="save-template-btn"
+                  className="text-[12.5px] font-semibold text-[#3B0A2E] flex items-center gap-1.5 hover:text-[#B4247E]"><Save size={14} /> Save as template</button>
+                <div className="flex-1" />
+                <div>
+                  <label className="text-[12px] font-semibold text-[#3B0A2E] block mb-1">Schedule for</label>
+                  <input type="date" min={todayStr} value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} data-testid="schedule-date-input"
+                    className="rounded-lg border border-[#3B0A2E]/15 px-3 py-2 text-[13px] focus:outline-none focus:border-[#B4247E]" />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-2 mt-5">
+                <button onClick={() => setSegModal(false)} disabled={segSending || sendingTestCopy || scheduling} className="px-5 py-2.5 rounded-full text-[13.5px] font-semibold bg-white text-[#3B0A2E]" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>Cancel</button>
+                <button onClick={sendTestCopy} disabled={segSending || sendingTestCopy || scheduling} data-testid="segment-test-copy-btn"
                   className="px-5 py-2.5 rounded-full text-[13.5px] font-semibold bg-white text-[#B4247E] flex items-center gap-2 disabled:opacity-60" style={{ border: '1px solid rgba(180,36,126,0.4)' }}>
-                  {sendingTestCopy ? <><Loader2 size={15} className="animate-spin" /> Sending…</> : <><Mail size={15} /> Send me a test copy</>}
+                  {sendingTestCopy ? <><Loader2 size={15} className="animate-spin" /> Sending…</> : <><Mail size={15} /> Test copy</>}
                 </button>
-                <button onClick={sendSegmentEmail} disabled={segSending || sendingTestCopy} data-testid="segment-send-btn"
-                  className="btn-magenta px-6 py-2.5 rounded-full text-[13.5px] font-semibold flex items-center gap-2 disabled:opacity-60">
-                  {segSending ? <><Loader2 size={15} className="animate-spin" /> Sending…</> : <><Send size={15} /> Send to {segmentCount}</>}
-                </button>
+                {scheduleDate ? (
+                  <button onClick={scheduleAppeal} disabled={scheduling || segSending} data-testid="segment-schedule-btn"
+                    className="btn-magenta px-6 py-2.5 rounded-full text-[13.5px] font-semibold flex items-center gap-2 disabled:opacity-60">
+                    {scheduling ? <><Loader2 size={15} className="animate-spin" /> Scheduling…</> : <><Clock size={15} /> Schedule</>}
+                  </button>
+                ) : (
+                  <button onClick={sendSegmentEmail} disabled={segSending || sendingTestCopy} data-testid="segment-send-btn"
+                    className="btn-magenta px-6 py-2.5 rounded-full text-[13.5px] font-semibold flex items-center gap-2 disabled:opacity-60">
+                    {segSending ? <><Loader2 size={15} className="animate-spin" /> Sending…</> : <><Send size={15} /> Send to {segmentCount}</>}
+                  </button>
+                )}
               </div>
             </div>
           </div>

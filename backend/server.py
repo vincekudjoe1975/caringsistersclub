@@ -1435,16 +1435,10 @@ async def donor_segment_count(segment: str, user=Depends(require_admin)):
     return {"segment": segment, "count": len(recipients)}
 
 
-@api_router.post("/admin/donors/segment-email")
-async def send_segment_email(payload: SegmentEmail, user=Depends(require_admin)):
-    seg = (payload.segment or "all").strip().lower()
-    subject = (payload.subject or "").strip()
-    message = (payload.message or "").strip()
-    if not subject or not message:
-        raise HTTPException(status_code=400, detail="Subject and message are required")
+async def _dispatch_segment_appeal(seg: str, subject: str, message: str, sent_by: str, sent_by_name: str) -> dict:
     recipients = await _donor_segment_recipients(seg)
     if not recipients:
-        raise HTTPException(status_code=400, detail="No donors match this segment")
+        return {"recipients": 0, "sent": 0, "empty": True}
     message_html = _esc(message).replace("\n", "<br/>")
     sent = 0
     for p in recipients:
@@ -1453,11 +1447,23 @@ async def send_segment_email(payload: SegmentEmail, user=Depends(require_admin))
             sent += 1
     await db.segment_emails.insert_one({
         "segment": seg, "subject": subject, "recipients": len(recipients),
-        "sent": sent, "sent_by": user.get("user_id"),
-        "sent_by_name": user.get("name") or user.get("email") or "Admin",
+        "sent": sent, "sent_by": sent_by, "sent_by_name": sent_by_name,
         "sent_at": datetime.now(timezone.utc).isoformat(),
     })
-    return {"segment": seg, "recipients": len(recipients), "sent": sent}
+    return {"recipients": len(recipients), "sent": sent}
+
+
+@api_router.post("/admin/donors/segment-email")
+async def send_segment_email(payload: SegmentEmail, user=Depends(require_admin)):
+    seg = (payload.segment or "all").strip().lower()
+    subject = (payload.subject or "").strip()
+    message = (payload.message or "").strip()
+    if not subject or not message:
+        raise HTTPException(status_code=400, detail="Subject and message are required")
+    result = await _dispatch_segment_appeal(seg, subject, message, user.get("user_id"), user.get("name") or user.get("email") or "Admin")
+    if result.get("empty"):
+        raise HTTPException(status_code=400, detail="No donors match this segment")
+    return {"segment": seg, "recipients": result["recipients"], "sent": result["sent"]}
 
 
 @api_router.post("/admin/donors/segment-email/test")
@@ -1481,6 +1487,112 @@ async def send_segment_email_test(payload: SegmentEmail, user=Depends(require_ad
 async def donor_appeal_history(user=Depends(require_admin)):
     items = await db.segment_emails.find({}, {"_id": 0}).sort("sent_at", -1).to_list(50)
     return {"items": items}
+
+
+# ---------- Appeal templates (reusable) ----------
+class AppealTemplate(BaseModel):
+    name: str
+    subject: str
+    message: str
+
+
+@api_router.get("/admin/appeal-templates")
+async def list_appeal_templates(user=Depends(require_admin)):
+    items = await db.appeal_templates.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return {"items": items}
+
+
+@api_router.post("/admin/appeal-templates")
+async def create_appeal_template(payload: AppealTemplate, user=Depends(require_admin)):
+    name = (payload.name or "").strip()
+    subject = (payload.subject or "").strip()
+    message = (payload.message or "").strip()
+    if not name or not subject or not message:
+        raise HTTPException(status_code=400, detail="Name, subject and message are required")
+    doc = {
+        "id": str(uuid.uuid4()), "name": name, "subject": subject, "message": message,
+        "created_at": datetime.now(timezone.utc).isoformat(), "created_by": user.get("user_id"),
+    }
+    await db.appeal_templates.insert_one(dict(doc))
+    return doc
+
+
+@api_router.delete("/admin/appeal-templates/{tid}")
+async def delete_appeal_template(tid: str, user=Depends(require_admin)):
+    res = await db.appeal_templates.delete_one({"id": tid})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"deleted": True}
+
+
+# ---------- Scheduled appeals (sent by the daily scheduler) ----------
+class ScheduledAppeal(BaseModel):
+    segment: str
+    subject: str
+    message: str
+    send_on: str  # YYYY-MM-DD
+
+
+@api_router.get("/admin/scheduled-appeals")
+async def list_scheduled_appeals(user=Depends(require_admin)):
+    items = await db.scheduled_appeals.find({}, {"_id": 0}).sort("send_on", 1).to_list(100)
+    return {"items": items}
+
+
+@api_router.post("/admin/scheduled-appeals")
+async def create_scheduled_appeal(payload: ScheduledAppeal, user=Depends(require_admin)):
+    seg = (payload.segment or "all").strip().lower()
+    subject = (payload.subject or "").strip()
+    message = (payload.message or "").strip()
+    send_on = (payload.send_on or "").strip()
+    if not subject or not message:
+        raise HTTPException(status_code=400, detail="Subject and message are required")
+    try:
+        day = datetime.strptime(send_on, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="send_on must be a valid date (YYYY-MM-DD)")
+    if day < datetime.now(timezone.utc).date():
+        raise HTTPException(status_code=400, detail="Scheduled date cannot be in the past")
+    doc = {
+        "id": str(uuid.uuid4()), "segment": seg, "subject": subject, "message": message,
+        "send_on": send_on, "status": "scheduled",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": user.get("user_id"),
+        "created_by_name": user.get("name") or user.get("email") or "Admin",
+        "sent_at": None, "result": None,
+    }
+    await db.scheduled_appeals.insert_one(dict(doc))
+    return doc
+
+
+@api_router.delete("/admin/scheduled-appeals/{sid}")
+async def delete_scheduled_appeal(sid: str, user=Depends(require_admin)):
+    res = await db.scheduled_appeals.delete_one({"id": sid, "status": "scheduled"})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Scheduled appeal not found or already sent")
+    return {"deleted": True}
+
+
+async def _run_scheduled_appeals() -> dict:
+    """Daily: dispatch any scheduled appeals whose send date has arrived."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    due = await db.scheduled_appeals.find({"status": "scheduled", "send_on": {"$lte": today}}, {"_id": 0}).to_list(100)
+    processed = 0
+    for a in due:
+        result = await _dispatch_segment_appeal(
+            a["segment"], a["subject"], a["message"],
+            a.get("created_by"), a.get("created_by_name") or "Scheduled",
+        )
+        await db.scheduled_appeals.update_one(
+            {"id": a["id"]},
+            {"$set": {
+                "status": "empty" if result.get("empty") else "sent",
+                "sent_at": datetime.now(timezone.utc).isoformat(),
+                "result": {"recipients": result.get("recipients", 0), "sent": result.get("sent", 0)},
+            }},
+        )
+        processed += 1
+    return {"processed": processed}
 
 
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------
@@ -1618,6 +1730,8 @@ async def _daily_scheduler():
             await _send_renewal_reminders()
             # Daily lapsed-donor reactivation emails (with cooldown)
             await _send_lapsed_reactivations()
+            # Daily: dispatch any scheduled segment appeals that are now due
+            await _run_scheduled_appeals()
         except Exception as e:
             logging.error(f"Daily scheduler error: {e}")
         await asyncio.sleep(24 * 60 * 60)  # once per day
