@@ -15,6 +15,16 @@ export const RatingBadge = ({ p, className = '', dark = false }) => {
   );
 };
 
+export const ReviewHighlight = ({ p, className = '', dark = false }) => {
+  const h = p.review_highlight;
+  if (!p.rating_count || !h) return null;
+  return (
+    <blockquote className={`text-[13px] italic leading-relaxed ${dark ? 'text-[#F7EFE9]/80' : 'text-[#241019]/70'} ${className}`} data-testid="program-review-highlight">
+      "{h.quote}" <span className={`not-italic font-semibold ${dark ? 'text-[#CBA24B]' : 'text-[#B4247E]'}`}>— {h.name}</span>
+    </blockquote>
+  );
+};
+
 export const SeatsBadge = ({ p, className = '' }) => {
   if (!p.capacity) return null;
   return p.full ? (

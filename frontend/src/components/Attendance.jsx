@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Loader2, X, Check, UserX, CheckCheck } from 'lucide-react';
+import { Loader2, X, Check, UserX, CheckCheck, HeartHandshake } from 'lucide-react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 
@@ -7,7 +7,18 @@ export const AttendancePanel = ({ program, onClose }) => {
   const { toast } = useToast();
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState(false);
-  const load = useCallback(() => api.get(`/admin/programs/${program.id}/attendance`).then(({ data }) => setD(data)).catch(() => setD({ items: [] })), [program.id]);
+  const [ns, setNs] = useState(null);
+  const load = useCallback(() => Promise.all([
+    api.get(`/admin/programs/${program.id}/attendance`).then(({ data }) => setD(data)).catch(() => setD({ items: [] })),
+    api.get(`/admin/programs/${program.id}/noshow-followup`).then(({ data }) => setNs(data)).catch(() => {}),
+  ]), [program.id]);
+  const followUp = async () => {
+    if (!window.confirm(`Send a "we missed you" email to ${ns.pending} sister(s) marked No-show?`)) return;
+    setBusy(true);
+    try { const { data } = await api.post(`/admin/programs/${program.id}/noshow-followup`); toast({ title: `"We missed you" sent to ${data.sent}` }); await load(); }
+    catch (err) { toast({ title: 'Send failed', description: err?.response?.data?.detail, variant: 'destructive' }); }
+    finally { setBusy(false); }
+  };
   useEffect(() => { load(); }, [load]);
   const save = async (body) => {
     setBusy(true);
@@ -32,7 +43,14 @@ export const AttendancePanel = ({ program, onClose }) => {
         </div>
         {!d ? <Loader2 className="animate-spin text-[#B4247E] mx-auto" /> : d.items.length === 0 ? <p className="text-[13.5px] text-[#241019]/55 text-center py-8" data-testid="attendance-empty">No seated sisters for this session.</p> : (
           <>
-            <button disabled={busy} onClick={() => save({ all: 'attended' })} data-testid="attendance-mark-all-btn" className="mb-4 text-[12.5px] font-semibold px-4 py-2 rounded-full text-white bg-[#3B0A2E] flex items-center gap-1.5 disabled:opacity-50"><CheckCheck size={14} /> Mark all attended</button>
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <button disabled={busy} onClick={() => save({ all: 'attended' })} data-testid="attendance-mark-all-btn" className="text-[12.5px] font-semibold px-4 py-2 rounded-full text-white bg-[#3B0A2E] flex items-center gap-1.5 disabled:opacity-50"><CheckCheck size={14} /> Mark all attended</button>
+              {ns && ns.no_shows > 0 && (
+                <button disabled={busy || !ns.pending} onClick={followUp} data-testid="noshow-followup-btn" className="text-[12.5px] font-semibold px-4 py-2 rounded-full text-[#B4247E] flex items-center gap-1.5 disabled:opacity-50" style={{ border: '1px solid rgba(180,36,126,0.3)' }}>
+                  <HeartHandshake size={14} /> {ns.pending ? `Send we-missed-you (${ns.pending})` : `We-missed-you sent (${ns.emailed})`}
+                </button>
+              )}
+            </div>
             <div className="divide-y divide-[#3B0A2E]/8">
               {d.items.map((it) => (
                 <div key={it.id} className="flex items-center justify-between gap-3 py-2.5" data-testid="attendance-row">
@@ -44,7 +62,7 @@ export const AttendancePanel = ({ program, onClose }) => {
                 </div>
               ))}
             </div>
-            <p className="text-[11.5px] text-[#241019]/50 mt-4">Once attendance is taken, feedback emails go only to sisters marked Attended.</p>
+            <p className="text-[11.5px] text-[#241019]/50 mt-4">Once attendance is taken, feedback emails go only to sisters marked Attended. No-shows get a "we missed you" email automatically the day after the session ends.</p>
           </>
         )}
       </div>

@@ -5,7 +5,7 @@ import { useToast } from '../hooks/use-toast';
 
 const fmt = (v, s = '') => (v === null || v === undefined ? '—' : `${v}${s}`);
 
-function Session({ r, onFeature }) {
+function Session({ r, onFeature, onHide }) {
   return (
     <div className="border-t border-[#3B0A2E]/8 py-4" data-testid="feedback-session">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
@@ -23,8 +23,11 @@ function Session({ r, onFeature }) {
               <p className="text-[#241019]/80 mb-2">"{c.comment}"</p>
               <div className="flex items-center justify-between text-[11.5px]">
                 <span className="text-[#B4247E] font-semibold">{c.name} · {c.rating}★</span>
+                <span className="flex items-center gap-3">
+                <button onClick={() => onHide(c)} data-testid="feedback-hide-quote-btn" className="font-semibold text-[#241019]/50 hover:text-[#B4247E]">{c.quote_hidden ? 'Show in highlights' : 'Hide from highlights'}</button>
                 {c.featured ? <span className="font-semibold text-[#3c7a2f]" data-testid="feedback-featured-label">Featured on program page</span>
                   : <button onClick={() => onFeature(c)} data-testid="feedback-feature-btn" className="font-semibold text-[#3B0A2E] flex items-center gap-1 hover:text-[#B4247E]"><Quote size={11} /> Feature as testimonial</button>}
+                </span>
               </div>
             </div>
           ))}
@@ -63,6 +66,10 @@ export const SessionFeedback = () => {
     try { await api.post(`/admin/feedback/${c.id}/feature`); toast({ title: 'Added to program testimonials' }); load(); }
     catch (err) { toast({ title: 'Could not feature', description: err?.response?.data?.detail, variant: 'destructive' }); }
   };
+  const hide = async (c) => {
+    try { const { data } = await api.post(`/admin/feedback/${c.id}/hide-quote`); toast({ title: data.quote_hidden ? 'Hidden from public review highlights' : 'Can appear in review highlights' }); load(); }
+    catch (err) { toast({ title: 'Update failed', description: err?.response?.data?.detail, variant: 'destructive' }); }
+  };
   return (
     <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 p-6 mb-6" data-testid="session-feedback">
       <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold flex items-center gap-2 mb-1"><Star size={18} className="text-[#B4247E]" /> Session feedback</h3>
@@ -70,7 +77,7 @@ export const SessionFeedback = () => {
         <p className="text-[12.5px] text-[#241019]/55">Sisters with a seat (or marked Attended) get a short feedback email the day after a session ends.</p>
         <AlertSetting />
       </div>
-      {!items ? <Loader2 className="animate-spin text-[#B4247E] mt-4" /> : items.length === 0 ? <p className="text-[13px] text-[#241019]/55 mt-4" data-testid="session-feedback-empty">No feedback requests sent yet.</p> : items.map((r) => <Session key={r.program_id} r={r} onFeature={feature} />)}
+      {!items ? <Loader2 className="animate-spin text-[#B4247E] mt-4" /> : items.length === 0 ? <p className="text-[13px] text-[#241019]/55 mt-4" data-testid="session-feedback-empty">No feedback requests sent yet.</p> : items.map((r) => <Session key={r.program_id} r={r} onFeature={feature} onHide={hide} />)}
     </div>
   );
 };

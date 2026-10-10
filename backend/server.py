@@ -4411,10 +4411,15 @@ async def admin_send_forecast(user=Depends(require_admin)):
 async def _badge(token: str) -> dict:
     m = await db.volunteer_milestones.find_one({"share_token": token[:64]}, {"_id": 0}) if token else None
     if not m:
-        raise HTTPException(status_code=404, detail="Badge not found")
+        pb = await db.participant_badges.find_one({"share_token": token[:64]}, {"_id": 0}) if token else None
+        if not pb:
+            raise HTTPException(status_code=404, detail="Badge not found")
+        return {"name": _short_name(pb.get("name", "")), "label": pb["label"], "threshold": None, "seal": pb["seal"], "kind": "participant",
+                "awarded_at": pb["awarded_at"]}
     last = await db.volunteer_hours.find_one({"email": m["email"], "status": "approved"}, {"_id": 0, "name": 1}, sort=[("created_at", -1)])
     label = m.get("label") or (f"{m['threshold']} Hours All-Time" if m["scope"] == "all" else f"{m['threshold']} Hours in {m['scope'][5:]}")
-    return {"name": _short_name((last or {}).get("name", "")), "label": label, "threshold": m["threshold"], "awarded_at": m["awarded_at"]}
+    return {"name": _short_name((last or {}).get("name", "")), "label": label, "threshold": m["threshold"], "seal": f"{m['threshold']}h", "kind": "volunteer",
+            "awarded_at": m["awarded_at"]}
 
 
 @api_router.get("/badges/{token}")
@@ -4433,7 +4438,7 @@ def _badge_card_png(b: dict) -> bytes:
     dr.rectangle((0, 0, W, 10), fill="#CBA24B")
     cx, cy, r = 920, 330, 170
     dr.ellipse((cx - r, cy - r, cx + r, cy + r), fill="#29061F", outline="#CBA24B", width=12)
-    t = f"{b['threshold']}h"
+    t = b.get("seal") or f"{b['threshold']}h"
     fnt = f("LiberationSerif-Bold.ttf", 110)
     dr.text((cx - dr.textlength(t, font=fnt) / 2, cy - 70), t, font=fnt, fill="#CBA24B")
     try:
@@ -4446,8 +4451,9 @@ def _badge_card_png(b: dict) -> bytes:
     dr.text((70, 210), b["name"], font=f("LiberationSerif-Bold.ttf", 72), fill="#F7EFE9")
     dr.text((70, 310), "earned the", font=f("LiberationSans-Regular.ttf", 30), fill="#F7EFE9")
     dr.text((70, 355), b["label"], font=f("LiberationSerif-Bold.ttf", 50), fill="#D14FA0")
-    dr.text((70, 430), "volunteer badge", font=f("LiberationSans-Regular.ttf", 30), fill="#F7EFE9")
-    dr.text((70, 545), "Volunteer with us and make a difference", font=f("LiberationSans-Bold.ttf", 24), fill="#CBA24B")
+    vol = b.get("kind") != "participant"
+    dr.text((70, 430), "volunteer badge" if vol else "badge for showing up again and again", font=f("LiberationSans-Regular.ttf", 30), fill="#F7EFE9")
+    dr.text((70, 545), "Volunteer with us and make a difference" if vol else "Join a program and grow with us", font=f("LiberationSans-Bold.ttf", 24), fill="#CBA24B")
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
     return buf.getvalue()
@@ -5195,7 +5201,8 @@ async def admin_session_feedback(user=Depends(require_admin)):
                     "response_rate": round(100 * len(done) / len(rows), 1) if rows else None,
                     "avg_rating": round(sum(r["rating"] for r in done) / len(done), 2) if done else None,
                     "recommend_pct": round(100 * sum(1 for r in rec if r["recommend"]) / len(rec)) if rec else None,
-                    "comments": [{"id": r["id"], "rating": r["rating"], "comment": r["comment"], "name": _short_name(r["name"]), "featured": bool(r.get("featured"))}
+                    "comments": [{"id": r["id"], "rating": r["rating"], "comment": r["comment"], "name": _short_name(r["name"]), "featured": bool(r.get("featured")),
+                                  "quote_hidden": bool(r.get("quote_hidden"))}
                                  for r in done if r.get("comment")][:8]})
     return {"items": sorted(out, key=lambda r: r.get("end") or "", reverse=True)}
 
@@ -5248,13 +5255,28 @@ async def _program_ratings() -> dict:
         a = agg.setdefault(root, [0, 0])
         a[0] += r["n"]
         a[1] += r["sum"]
-    return {pid: agg.get(root) for pid, root in roots.items() if agg.get(root)}
+    since = (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()
+    best = {}
+    async for f in db.session_feedback.find({"submitted_at": {"$gte": since}, "comment": {"$nin": [None, ""]}, "quote_hidden": {"$ne": True}},
+                                            {"_id": 0, "program_id": 1, "rating": 1, "comment": 1, "name": 1, "submitted_at": 1}):
+        root = roots.get(f["program_id"], f["program_id"])
+        cur = best.get(root)
+        if not cur or (f["rating"], f["submitted_at"]) > (cur["rating"], cur["submitted_at"]):
+            best[root] = f
+    out = {}
+    for pid, root in roots.items():
+        if agg.get(root):
+            h = best.get(root)
+            out[pid] = (*agg[root], {"quote": h["comment"][:280], "name": _short_name(h["name"]), "rating": h["rating"]} if h else None)
+    return out
 
 
 def _with_rating(p: dict, ratings: dict) -> dict:
     r = ratings.get(p["id"])
     if r and r[0] >= RATING_MIN_REVIEWS:
         p["rating_avg"], p["rating_count"] = round(r[1] / r[0], 1), r[0]
+        if r[2]:
+            p["review_highlight"] = r[2]
     return p
 
 
@@ -5275,7 +5297,7 @@ class AttendanceIn(BaseModel):
 
 
 @api_router.post("/admin/programs/{pid}/attendance")
-async def admin_set_attendance(pid: str, payload: AttendanceIn, user=Depends(require_admin)):
+async def admin_set_attendance(pid: str, payload: AttendanceIn, background: BackgroundTasks, user=Depends(require_admin)):
     p = await db.programs.find_one({"id": pid}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="Program not found")
@@ -5284,12 +5306,18 @@ async def admin_set_attendance(pid: str, payload: AttendanceIn, user=Depends(req
         if payload.all not in ok:
             raise HTTPException(status_code=400, detail="Invalid attendance value")
         res = await db.submissions.update_many(_seats_q(p), {"$set": {"attendance": payload.all, "attendance_at": _now_iso()}})
+        if payload.all == "attended":
+            emails = [x["data"].get("email") async for x in db.submissions.find(_seats_q(p), {"_id": 0, "data.email": 1})]
+            background.add_task(_check_streaks, emails)
         return {"updated": res.modified_count}
     n = 0
     for sid, v in list(payload.updates.items())[:2000]:
         if v not in ok:
             raise HTTPException(status_code=400, detail="Invalid attendance value")
         n += (await db.submissions.update_one({**_seats_q(p), "id": sid}, {"$set": {"attendance": v, "attendance_at": _now_iso()}})).modified_count
+    ids = [sid for sid, v in payload.updates.items() if v == "attended"]
+    if ids:
+        background.add_task(_check_streaks, [x["data"].get("email") async for x in db.submissions.find({"id": {"$in": ids}}, {"_id": 0, "data.email": 1})])
     return {"updated": n}
 
 
@@ -5408,6 +5436,182 @@ async def admin_set_fb_alert(payload: FbAlertIn, user=Depends(require_admin)):
         raise HTTPException(status_code=400, detail="Threshold must be 2 or 3 stars")
     await db.settings.update_one({"key": "site"}, {"$set": {"fb_alert_threshold": payload.threshold}}, upsert=True)
     return {"threshold": payload.threshold}
+
+
+# ---------- No-show follow-ups ----------
+async def _next_session(p: dict):
+    root = p.get("cloned_from") or p["id"]
+    today = datetime.now(timezone.utc).date().isoformat()
+    nxt = await db.programs.find_one({"$or": [{"id": root}, {"cloned_from": root}], "published": True, "start_date": {"$gt": today}}, {"_id": 0}, sort=[("start_date", 1)])
+    return await _with_seats(nxt) if nxt else None
+
+
+def _noshow_html(name: str, p: dict, nxt) -> str:
+    if nxt:
+        dates = datetime.strptime(nxt["start_date"], "%Y-%m-%d").strftime("%A, %B %-d")
+        seats = "" if not nxt.get("capacity") else (" The session is full, but you can join the waitlist." if nxt.get("full") else f" {nxt['seats_left']} seat{'s' if nxt['seats_left'] != 1 else ''} left.")
+        block = (f'<div style="background:#faf2f7;border-radius:12px;padding:18px 20px;margin:0 0 20px"><p style="font-size:12px;color:#B4247E;font-weight:bold;margin:0 0 6px;text-transform:uppercase;letter-spacing:1px">Next session</p>'
+                 f'<p style="font-family:Georgia,serif;font-size:19px;color:#3B0A2E;font-weight:bold;margin:0 0 4px">{_esc(nxt["title"])}</p>'
+                 f'<p style="font-size:13.5px;color:#4a3340;margin:0">Starts {dates}{(" · " + _esc(nxt["schedule"])) if nxt.get("schedule") else ""}.{seats}</p></div>'
+                 + _btn(f"{PUBLIC_APP_URL}/initiatives/{nxt['slug']}#join", "Save My Spot", primary=True))
+    else:
+        block = ('<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">We don\'t have the next session on the calendar yet, but you can see everything coming up here:</p>'
+                 + _btn(f"{PUBLIC_APP_URL}/sessions", "See Upcoming Sessions", primary=True))
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("We Missed You") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 12px">We missed you, {_esc(name)}!</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">We saved a seat for you at <strong>{_esc(p["title"])}</strong> and noticed you couldn\'t make it. Life gets busy, and that\'s okay. Your sisters would love to see you next time.</p>'
+        + block +
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:20px 0 0">With warmth,<br/>The Caring Sisters Club</p></td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you had a seat in this program. Just reply if anything is getting in the way; we are here to help.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _noshow_for_program(p: dict) -> int:
+    nxt = await _next_session(p)
+    sent = 0
+    for s in await db.submissions.find({**_seats_q(p), "attendance": "no_show"}, {"_id": 0, "id": 1, "data": 1}).to_list(2000):
+        r = await db.noshow_emails.update_one({"submission_id": s["id"]}, {"$setOnInsert": {"program_id": p["id"], "at": _now_iso()}}, upsert=True)
+        if r.upserted_id is None:
+            continue
+        try:
+            await send_email(to=s["data"].get("email"), subject=f"We missed you at {p['title']}"[:150], html=_noshow_html((s["data"].get("name") or "friend").split(" ")[0], p, nxt))
+            sent += 1
+        except Exception as ex:
+            logging.error(f"No-show email failed: {ex}")
+    return sent
+
+
+async def _send_noshow_followups(today=None) -> int:
+    today = today or datetime.now(timezone.utc).date()
+    lo, hi = (today - timedelta(days=7)).isoformat(), (today - timedelta(days=1)).isoformat()
+    n = 0
+    for p in await db.programs.find({"start_date": {"$nin": [None, ""]}}, {"_id": 0}).to_list(300):
+        if lo <= _session_end(p) <= hi:
+            n += await _noshow_for_program(p)
+    return n
+
+
+@api_router.post("/admin/programs/{pid}/noshow-followup")
+async def admin_noshow_followup(pid: str, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return {"sent": await _noshow_for_program(p)}
+
+
+@api_router.get("/admin/programs/{pid}/noshow-followup")
+async def admin_noshow_status(pid: str, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    ids = [x["id"] async for x in db.submissions.find({**_seats_q(p), "attendance": "no_show"}, {"_id": 0, "id": 1})]
+    done = await db.noshow_emails.count_documents({"submission_id": {"$in": ids}})
+    return {"no_shows": len(ids), "emailed": done, "pending": len(ids) - done}
+
+
+# ---------- Faithful Sister badge ----------
+async def _check_streaks(emails: list) -> int:
+    awarded = 0
+    progs = {p["id"]: p for p in await db.programs.find({"start_date": {"$nin": [None, ""]}}, {"_id": 0, "id": 1, "start_date": 1}).to_list(500)}
+    for em in {(e or "").strip().lower() for e in emails if e}:
+        if await db.participant_badges.find_one({"email": em, "kind": "faithful"}):
+            continue
+        subs = await db.submissions.find({"type": "program_signup", "attendance": {"$in": ["attended", "no_show"]},
+                                          "data.email": {"$regex": f"^{re.escape(em)}$", "$options": "i"}}, {"_id": 0, "program_id": 1, "attendance": 1, "data.name": 1}).to_list(500)
+        seq = sorted([(progs[x["program_id"]]["start_date"], x) for x in subs if x.get("program_id") in progs], key=lambda t: t[0])
+        run = 0
+        for _, x in seq:
+            run = run + 1 if x["attendance"] == "attended" else 0
+            if run >= 3:
+                break
+        if run < 3:
+            continue
+        name = seq[-1][1]["data"].get("name") or ""
+        tok = secrets.token_urlsafe(12)
+        r = await db.participant_badges.update_one({"email": em, "kind": "faithful"}, {"$setOnInsert": {"name": name, "label": "Faithful Sister", "seal": "3x",
+                                                                                                         "share_token": tok, "awarded_at": _now_iso()}}, upsert=True)
+        if r.upserted_id is None:
+            continue
+        awarded += 1
+        try:
+            await send_email(to=em, subject="You earned the Faithful Sister badge!", html=_faithful_html(name.split(" ")[0] or "friend", tok))
+        except Exception as ex:
+            logging.error(f"Faithful badge email failed: {ex}")
+    return awarded
+
+
+def _faithful_html(first: str, tok: str) -> str:
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Faithful Sister") +
+        '<tr><td style="padding:36px 32px;font-family:Arial,sans-serif;color:#241019;text-align:center">'
+        '<div style="display:inline-block;width:120px;height:120px;border-radius:50%;background:#3B0A2E;border:5px solid #CBA24B;color:#CBA24B;font-family:Georgia,serif;font-size:38px;font-weight:bold;line-height:120px;margin:0 0 18px">3x</div>'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:26px;margin:0 0 10px">Congratulations, {_esc(first)}!</h1>'
+        '<p style="font-size:15px;line-height:1.7;color:#4a3340;margin:0 0 22px">You showed up for three sessions in a row, and you have earned the <strong>Faithful Sister</strong> badge. Your commitment inspires our whole sisterhood.</p>'
+        + _btn(f"{PUBLIC_APP_URL}/badge/{tok}", "See & Share My Badge", primary=True) + "&nbsp; "
+        + _btn(f"{PUBLIC_APP_URL}/sessions", "Upcoming Sessions") +
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">Your badge page shows only your first name and last initial.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+# ---------- Review quote moderation ----------
+@api_router.post("/admin/feedback/{fid}/hide-quote")
+async def admin_hide_quote(fid: str, user=Depends(require_admin)):
+    f = await db.session_feedback.find_one({"id": fid}, {"_id": 0, "quote_hidden": 1})
+    if not f:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    hidden = not f.get("quote_hidden")
+    await db.session_feedback.update_one({"id": fid}, {"$set": {"quote_hidden": hidden}})
+    return {"quote_hidden": hidden}
+
+
+# ---------- Waitlist speed ----------
+@api_router.get("/admin/reports/waitlist-speed")
+async def admin_waitlist_speed(user=Depends(require_admin)):
+    now = _now_iso()
+    titles = {p["id"]: p["title"] for p in await db.programs.find({}, {"_id": 0, "id": 1, "title": 1}).to_list(500)}
+    per, all_hours = {}, []
+    async for s in db.submissions.find({"type": "program_signup", "$or": [{"offer_sent_at": {"$exists": True}}, {"moved_at": {"$exists": True}}]},
+                                       {"_id": 0, "program_id": 1, "offer_status": 1, "offer_sent_at": 1, "offer_expires": 1, "claimed_at": 1, "moved_at": 1}):
+        r = per.setdefault(s.get("program_id"), {"offers": 0, "claimed": 0, "expired": 0, "pending": 0, "auto_moved": 0, "hours": []})
+        if not s.get("offer_sent_at"):
+            r["auto_moved"] += 1
+            continue
+        r["offers"] += 1
+        st = s.get("offer_status")
+        if st == "claimed":
+            r["claimed"] += 1
+            done = s.get("claimed_at") or s.get("moved_at")
+            if done:
+                h = max(0.0, (datetime.fromisoformat(done) - datetime.fromisoformat(s["offer_sent_at"])).total_seconds() / 3600)
+                r["hours"].append(h)
+                all_hours.append(h)
+        elif st == "expired" or (st == "open" and (s.get("offer_expires") or "") <= now):
+            r["expired"] += 1
+        elif st == "open":
+            r["pending"] += 1
+
+    def med(xs):
+        xs = sorted(xs)
+        return round(xs[len(xs) // 2] if len(xs) % 2 else (xs[len(xs) // 2 - 1] + xs[len(xs) // 2]) / 2, 1) if xs else None
+
+    rows = []
+    for pid, r in per.items():
+        decided = r["claimed"] + r["expired"]
+        rows.append({"program_id": pid, "title": titles.get(pid, "(deleted program)"), **{k: v for k, v in r.items() if k != "hours"},
+                     "claim_rate": round(100 * r["claimed"] / decided) if decided else None, "median_hours": med(r["hours"])})
+    tot = {k: sum(r[k] for r in rows) for k in ("offers", "claimed", "expired", "pending", "auto_moved")}
+    decided = tot["claimed"] + tot["expired"]
+    return {"summary": {**tot, "claim_rate": round(100 * tot["claimed"] / decided) if decided else None, "median_hours": med(all_hours)},
+            "items": sorted(rows, key=lambda r: -r["offers"])}
 
 
 @api_router.get("/volunteer-hours/leaderboard")
@@ -5620,6 +5824,7 @@ async def _hourly_scheduler():
             await _celebrate_badge_wall()
             await _send_session_reminders()
             await _send_session_feedback()
+            await _send_noshow_followups()
             for p in await db.programs.find({"capacity": {"$gt": 0}}, {"_id": 0, "id": 1}).to_list(200):
                 await _fill_seats(p["id"])
         except Exception as e:
