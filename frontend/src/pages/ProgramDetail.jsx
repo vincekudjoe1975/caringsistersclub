@@ -4,7 +4,10 @@ import { api } from '../lib/api';
 import { eventImg } from './Events';
 import { CtaLink } from './Initiatives';
 import Reveal from '../components/Reveal';
-import { ArrowLeft, CheckCircle2, Loader2, Heart } from 'lucide-react';
+import { TestimonialCard } from '../components/TestimonialCard';
+import { imgSrc } from '../lib/useHomeContent';
+import { Dialog, DialogContent } from '../components/ui/dialog';
+import { ArrowLeft, CheckCircle2, Loader2, Heart, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export default function ProgramDetail() {
   const { slug } = useParams();
@@ -83,6 +86,54 @@ export default function ProgramDetail() {
           </Reveal>
         </div>
       </section>
+
+      <Gallery items={p.gallery || []} />
+
+      {p.testimonials?.length > 0 && (
+        <section className="py-16 lg:py-20" data-testid="program-testimonials">
+          <div className="max-w-6xl mx-auto px-5 lg:px-8">
+            <h2 className="font-serif text-[30px] lg:text-[38px] text-[#3B0A2E] font-semibold mb-10 text-center">Voices from the program</h2>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-7">
+              {p.testimonials.map((t, i) => <Reveal key={t.id || i} delay={(i % 3) * 100}><TestimonialCard t={t} /></Reveal>)}
+            </div>
+          </div>
+        </section>
+      )}
     </div>
+  );
+}
+
+function Gallery({ items }) {
+  const [idx, setIdx] = useState(null);
+  if (!items.length) return null;
+  const go = (d) => setIdx((i) => (i + d + items.length) % items.length);
+  const cur = idx !== null ? items[idx] : null;
+  return (
+    <section className="py-16 lg:py-20" style={{ background: '#F7EFE9' }} data-testid="program-gallery">
+      <div className="max-w-6xl mx-auto px-5 lg:px-8">
+        <h2 className="font-serif text-[30px] lg:text-[38px] text-[#3B0A2E] font-semibold mb-8">In pictures</h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          {items.map((g, i) => (
+            <button key={g.url} onClick={() => setIdx(i)} className="img-zoom rounded-xl overflow-hidden aspect-[4/3] block" data-testid="program-gallery-photo">
+              <img src={imgSrc(g.url)} alt={g.caption || ''} className="w-full h-full object-cover" />
+            </button>
+          ))}
+        </div>
+      </div>
+      <Dialog open={idx !== null} onOpenChange={(o) => !o && setIdx(null)}>
+        <DialogContent className="max-w-4xl p-3 bg-[#29061F] border-0" data-testid="program-gallery-lightbox">
+          {cur && (
+            <div className="relative">
+              <img src={imgSrc(cur.url)} alt={cur.caption || ''} className="w-full max-h-[75vh] object-contain rounded-lg" />
+              {cur.caption && <p className="text-[#F7EFE9]/85 text-[14px] text-center mt-3">{cur.caption}</p>}
+              {items.length > 1 && <>
+                <button onClick={() => go(-1)} className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/85 flex items-center justify-center" data-testid="gallery-prev-btn"><ChevronLeft size={20} /></button>
+                <button onClick={() => go(1)} className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/85 flex items-center justify-center" data-testid="gallery-next-btn"><ChevronRight size={20} /></button>
+              </>}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </section>
   );
 }

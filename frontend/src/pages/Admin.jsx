@@ -11,9 +11,10 @@ import AdminDonors from './AdminDonors';
 import AdminEvents from './AdminEvents';
 import AdminTransparency from './AdminTransparency';
 import AdminPrograms from './AdminPrograms';
+import AdminHome from './AdminHome';
 import { SiteUrlBanner } from '../components/SiteUrlBanner';
 import { useToast } from '../hooks/use-toast';
-import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart, Layers } from 'lucide-react';
+import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate } from 'lucide-react';
 
 const TABS = [
   { key: 'gallery', label: 'Gallery Photos', icon: ImageIcon, accept: 'image/*', titleLabel: 'Caption', subLabel: '' },
@@ -141,6 +142,7 @@ export default function Admin() {
           {[
             { k: 'media', l: 'Media Library', icon: Images },
             { k: 'inbox', l: 'Form Submissions', icon: Inbox },
+            { k: 'home', l: 'Home Page', icon: LayoutTemplate },
             { k: 'programs', l: 'Programs', icon: Layers },
             { k: 'events', l: 'Events', icon: CalendarHeart },
             { k: 'transparency', l: 'Transparency', icon: PieChart },
@@ -162,6 +164,8 @@ export default function Admin() {
 
         {view === 'inbox' ? (
           <AdminSubmissions />
+        ) : view === 'home' ? (
+          <AdminHome />
         ) : view === 'programs' ? (
           <AdminPrograms />
         ) : view === 'transparency' ? (

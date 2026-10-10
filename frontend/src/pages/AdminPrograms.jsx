@@ -2,9 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 import { eventImg } from './Events';
+import { TestimonialsEditor } from './AdminHome';
+import { uploadImage, imgSrc } from '../lib/useHomeContent';
 import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, X, UploadCloud, Tags, ExternalLink } from 'lucide-react';
 
-const EMPTY = { title: '', category: '', image_url: '', summary: '', body: '', goals: [], impact: [], cta_text: 'Get Involved', cta_link: '/volunteer', published: true };
+const EMPTY = { title: '', category: '', image_url: '', summary: '', body: '', goals: [], impact: [], cta_text: 'Get Involved', cta_link: '/volunteer', published: true, gallery: [], testimonials: [], home_testimonial_ids: [] };
 const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E] bg-white';
 const Field = ({ label, children }) => <div><label className="text-[13px] font-semibold text-[#3B0A2E]">{label}</label>{children}</div>;
 
@@ -87,6 +89,12 @@ function ProgramForm({ initial, categories, onClose, onSaved }) {
             </div>
           ))}
         </div>
+        <GalleryEditor items={form.gallery || []} onChange={(gallery) => setForm((f) => ({ ...f, gallery }))} />
+        <div>
+          <label className="text-[13px] font-semibold text-[#3B0A2E] block mb-2">Member testimonials</label>
+          <TestimonialsEditor items={form.testimonials || []} onChange={(testimonials) => setForm((f) => ({ ...f, testimonials }))} max={6} prefix="program" />
+          <HomePicks selected={form.home_testimonial_ids || []} onChange={(ids) => setForm((f) => ({ ...f, home_testimonial_ids: ids }))} />
+        </div>
         <div className="grid sm:grid-cols-2 gap-4">
           <Field label="Button text"><input value={form.cta_text} onChange={set('cta_text')} data-testid="program-cta-text-input" className={input} /></Field>
           <Field label="Button link (e.g. /volunteer, /donate or https://…)"><input value={form.cta_link} onChange={set('cta_link')} data-testid="program-cta-link-input" className={input} /></Field>
@@ -101,6 +109,65 @@ function ProgramForm({ initial, categories, onClose, onSaved }) {
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function GalleryEditor({ items, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const { toast } = useToast();
+  const add = async (files) => {
+    const list = Array.from(files || []).slice(0, 24 - items.length);
+    if (!list.length) return;
+    setBusy(true);
+    const urls = [];
+    for (const file of list) {
+      try { urls.push(await uploadImage(file, 'program')); }
+      catch (err) { toast({ title: `Upload failed: ${file.name}`, description: err?.response?.data?.detail || 'Try again', variant: 'destructive' }); }
+    }
+    onChange([...items, ...urls.map((url) => ({ url, caption: '' }))]);
+    setBusy(false);
+  };
+  return (
+    <div data-testid="program-gallery-editor">
+      <label className="text-[13px] font-semibold text-[#3B0A2E] block mb-2">Photo gallery ({items.length}/24)</label>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {items.map((g, i) => (
+          <div key={g.url} className="relative" data-testid="program-gallery-item">
+            <img src={imgSrc(g.url)} alt="" className="w-full h-24 rounded-lg object-cover" />
+            <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} data-testid={`program-gallery-del-${i}`}
+              className="absolute top-1 right-1 w-6 h-6 rounded-full bg-white/90 text-red-500 flex items-center justify-center"><X size={13} /></button>
+            <input value={g.caption} onChange={(e) => onChange(items.map((x, j) => (j === i ? { ...x, caption: e.target.value } : x)))}
+              placeholder="Caption" className="w-full mt-1 rounded border border-[#3B0A2E]/15 px-2 py-1 text-[12px]" data-testid={`program-gallery-caption-${i}`} />
+          </div>
+        ))}
+        {items.length < 24 && (
+          <label className="h-24 rounded-lg border-2 border-dashed border-[#3B0A2E]/15 flex flex-col items-center justify-center text-[12px] font-semibold text-[#B4247E] cursor-pointer hover:bg-[#faf2f7]">
+            {busy ? <Loader2 size={18} className="animate-spin" /> : <UploadCloud size={18} />} Add photos
+            <input type="file" accept="image/*" multiple className="hidden" data-testid="program-gallery-input" onChange={(e) => { add(e.target.files); e.target.value = ''; }} />
+          </label>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HomePicks({ selected, onChange }) {
+  const [list, setList] = useState([]);
+  useEffect(() => { api.get('/home-content').then(({ data }) => setList(data.testimonials || [])).catch(() => {}); }, []);
+  if (!list.length) return null;
+  const toggle = (id) => onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id].slice(0, 6));
+  return (
+    <div className="mt-4 rounded-xl p-4" style={{ background: '#faf2f7' }} data-testid="program-home-picks">
+      <p className="text-[12.5px] font-semibold text-[#3B0A2E] mb-2">Also feature testimonials from the Home page</p>
+      <div className="space-y-1.5">
+        {list.map((t) => (
+          <label key={t.id} className="flex items-start gap-2 text-[12.5px] text-[#241019]/80 cursor-pointer">
+            <input type="checkbox" checked={selected.includes(t.id)} onChange={() => toggle(t.id)} className="accent-[#B4247E] mt-0.5" data-testid={`program-home-pick-${t.id}`} />
+            <span><strong>{t.name}</strong>: &ldquo;{t.quote.slice(0, 80)}{t.quote.length > 80 ? '…' : ''}&rdquo;</span>
+          </label>
+        ))}
+      </div>
     </div>
   );
 }

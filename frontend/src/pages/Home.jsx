@@ -1,7 +1,10 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { hero, mission, pillars, testimonials } from '../mock/mock';
+import { hero } from '../mock/mock';
+import { useHomeContent, imgSrc, DEFAULT_MISSION_IMAGE } from '../lib/useHomeContent';
+import { TestimonialCard } from '../components/TestimonialCard';
 import { useTransparency } from '../lib/useTransparency';
+import { CtaLink } from './Initiatives';
 import Reveal from '../components/Reveal';
 import Marquee from '../components/Marquee';
 import * as Icons from 'lucide-react';
@@ -9,6 +12,7 @@ import { ArrowRight, Quote, Heart } from 'lucide-react';
 
 export default function Home() {
   const { stats: impactStats = [] } = useTransparency();
+  const home = useHomeContent();
   return (
     <div>
       {/* HERO */}
@@ -50,17 +54,19 @@ export default function Home() {
       <section className="py-20 lg:py-28">
         <div className="max-w-7xl mx-auto px-5 lg:px-8 grid lg:grid-cols-2 gap-14 items-center">
           <Reveal className="img-zoom rounded-[24px] overflow-hidden order-2 lg:order-1">
-            <img src={mission.image} alt="A member of the Caring Sisters Club smiling with confidence" className="w-full h-[440px] object-cover" />
+            <img src={imgSrc(home.mission_image, DEFAULT_MISSION_IMAGE)} alt="A member of the Caring Sisters Club smiling with confidence" className="w-full h-[440px] object-cover" />
           </Reveal>
           <Reveal delay={120} className="order-1 lg:order-2">
-            <p className="eyebrow text-[#B4247E] mb-4">{mission.heading}</p>
+            <p className="eyebrow text-[#B4247E] mb-4">{home.mission_heading}</p>
             <h2 className="font-serif text-[34px] lg:text-[44px] leading-tight text-[#3B0A2E] font-semibold mb-6">
-              Bridging the distance for women in the Diaspora
+              {home.mission_title}
             </h2>
-            <p className="text-[#241019]/75 text-[16px] leading-relaxed mb-6">{mission.body}</p>
-            <blockquote className="border-l-4 pl-5 py-1 italic font-serif text-[19px] text-[#3B0A2E]" style={{ borderColor: '#CBA24B' }}>
-              <Quote size={20} className="text-[#CBA24B] inline mr-1 -mt-2" />{mission.quote}
-            </blockquote>
+            <p className="text-[#241019]/75 text-[16px] leading-relaxed mb-6">{home.mission_body}</p>
+            {home.mission_quote && (
+              <blockquote className="border-l-4 pl-5 py-1 italic font-serif text-[19px] text-[#3B0A2E]" style={{ borderColor: '#CBA24B' }}>
+                <Quote size={20} className="text-[#CBA24B] inline mr-1 -mt-2" />{home.mission_quote}
+              </blockquote>
+            )}
             <Link to="/about" className="inline-flex items-center gap-2 mt-8 text-[#B4247E] font-semibold link-underline">
               Discover Our Mission <ArrowRight size={17} />
             </Link>
@@ -76,7 +82,7 @@ export default function Home() {
             <h2 className="font-serif text-[34px] lg:text-[44px] text-[#3B0A2E] font-semibold">How we empower every sister</h2>
           </div>
           <div className="grid md:grid-cols-3 gap-7">
-            {pillars.map((p, i) => {
+            {home.pillars.map((p, i) => {
               const Icon = Icons[p.icon] || Icons.Sparkles;
               return (
                 <Reveal key={p.title} delay={i * 120}>
@@ -86,9 +92,9 @@ export default function Home() {
                     </span>
                     <h3 className="font-serif text-[23px] text-[#3B0A2E] font-semibold mb-3">{p.title}</h3>
                     <p className="text-[#241019]/70 text-[15px] leading-relaxed mb-6">{p.text}</p>
-                    <Link to={p.to} className="inline-flex items-center gap-2 text-[#B4247E] font-semibold text-[14px] link-underline">
+                    <CtaLink to={p.to} className="inline-flex items-center gap-2 text-[#B4247E] font-semibold text-[14px] link-underline">
                       {p.cta} <ArrowRight size={16} />
-                    </Link>
+                    </CtaLink>
                   </div>
                 </Reveal>
               );
@@ -117,14 +123,9 @@ export default function Home() {
             <h2 className="font-serif text-[34px] lg:text-[44px] text-[#3B0A2E] font-semibold">Stories of shared strength</h2>
           </div>
           <div className="grid md:grid-cols-3 gap-7">
-            {testimonials.map((t, i) => (
-              <Reveal key={t.name} delay={i * 120}>
-                <div className="card-hover rounded-2xl p-8 h-full" style={{ background: 'linear-gradient(160deg,#fff,#faf2f7)', border: '1px solid rgba(59,10,46,0.08)' }}>
-                  <Quote size={30} className="text-[#CBA24B] mb-4" />
-                  <p className="text-[#241019]/80 text-[15.5px] leading-relaxed italic mb-6">&ldquo;{t.quote}&rdquo;</p>
-                  <p className="font-serif text-[#3B0A2E] font-semibold text-[17px]">{t.name}</p>
-                  <p className="text-[#B4247E] text-[13px]">{t.role}</p>
-                </div>
+            {home.testimonials.map((t, i) => (
+              <Reveal key={t.id || t.name} delay={(i % 3) * 120}>
+                <TestimonialCard t={t} />
               </Reveal>
             ))}
           </div>

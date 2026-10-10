@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
+import { WinBacks } from '../components/WinBacks';
 import { Loader2, Search, X, Repeat, Calendar, AlertTriangle, Tag, Save, HeartHandshake, ChevronUp, ChevronDown, ChevronsUpDown, Download, Mail, Send, Clock } from 'lucide-react';
 
 const SortTh = ({ label, k, sort, onSort, align }) => {
@@ -319,6 +320,7 @@ export default function AdminDonors() {
 
   return (
     <div>
+      <WinBacks />
       {lapsedCount > 0 && (
         <div className="flex items-center justify-between gap-3 rounded-2xl p-4 mb-5 border" style={{ background: '#fdf1ed', borderColor: '#e8b4a0' }} data-testid="lapsed-alert-banner">
           <div className="flex items-center gap-3">

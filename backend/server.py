@@ -2660,7 +2660,39 @@ class ImpactItem(BaseModel):
     label: str
 
 
+class GalleryItem(BaseModel):
+    url: str
+    caption: str = ""
+
+
+class TestimonialItem(BaseModel):
+    id: Optional[str] = None
+    quote: str
+    name: str
+    role: str = ""
+    photo_url: str = ""
+
+
+def _ok_img(url: str) -> bool:
+    return not url or url.startswith("/api/media/file/") or url.startswith("https://")
+
+
+def _clean_testimonials(items: list, limit: int) -> list:
+    out = []
+    for t in items[:limit]:
+        if not t.quote.strip() or not t.name.strip():
+            raise HTTPException(status_code=400, detail="Each testimonial needs a quote and a name.")
+        if not _ok_img(t.photo_url.strip()):
+            raise HTTPException(status_code=400, detail="Testimonial photo must be an uploaded image or https URL")
+        out.append({"id": t.id or str(uuid.uuid4()), "quote": t.quote.strip()[:600], "name": t.name.strip()[:80],
+                    "role": t.role.strip()[:80], "photo_url": t.photo_url.strip()})
+    return out
+
+
 class ProgramIn(BaseModel):
+    gallery: List[GalleryItem] = []
+    testimonials: List[TestimonialItem] = []
+    home_testimonial_ids: List[str] = []
     title: str
     category: str = ""
     image_url: str = ""
@@ -2694,6 +2726,16 @@ async def _unique_slug(title: str, exclude_id: str = None) -> str:
     return slug
 
 
+def _clean_gallery(items: list) -> list:
+    out = []
+    for g in items[:24]:
+        url = g.url.strip()
+        if not url or not _ok_img(url):
+            raise HTTPException(status_code=400, detail="Gallery photos must be uploaded images or https URLs")
+        out.append({"url": url, "caption": g.caption.strip()[:150]})
+    return out
+
+
 def _clean_program(p: ProgramIn) -> dict:
     title = p.title.strip()
     if not title:
@@ -2709,6 +2751,8 @@ def _clean_program(p: ProgramIn) -> dict:
         "body": p.body.strip()[:10000], "goals": [g.strip()[:200] for g in p.goals if g.strip()][:12],
         "impact": [{"value": i.value.strip()[:20], "label": i.label.strip()[:60]} for i in p.impact if i.value.strip() and i.label.strip()][:6],
         "cta_text": p.cta_text.strip()[:40] or "Get Involved", "cta_link": link, "published": bool(p.published),
+        "gallery": _clean_gallery(p.gallery), "testimonials": _clean_testimonials(p.testimonials, 6),
+        "home_testimonial_ids": [i[:64] for i in p.home_testimonial_ids][:6],
     }
 
 
@@ -2756,6 +2800,10 @@ async def public_program(slug: str):
     p = await db.programs.find_one({"slug": slug[:100], "published": True}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="Program not found")
+    ids = p.get("home_testimonial_ids") or []
+    if ids:
+        home = {t["id"]: t for t in (await _get_home_content())["testimonials"]}
+        p["testimonials"] = (p.get("testimonials") or []) + [home[i] for i in ids if i in home]
     return p
 
 
@@ -2813,6 +2861,111 @@ async def admin_program_categories(payload: CategoriesIn, user=Depends(require_a
         raise HTTPException(status_code=400, detail="Add between 1 and 12 categories.")
     await db.settings.update_one({"key": "site"}, {"$set": {"program_categories": cats}}, upsert=True)
     return {"categories": cats}
+
+
+# ---------- Home page content (editable) ----------
+HOME_ICONS = ("Briefcase", "HeartHandshake", "Home", "Users", "GraduationCap", "Sparkles", "HandHeart", "Globe", "Heart", "Star", "Crown", "Sprout")
+DEFAULT_HOME = {
+    "mission_heading": "Our Mission",
+    "mission_title": "Bridging the distance for women in the Diaspora",
+    "mission_body": ("Caring Sisters Club, Inc. is dedicated to bridging the distance for women in the Diaspora. We provide a powerhouse platform "
+                     "for professional business elevation, comprehensive housing assistance, and targeted philanthropic outreach. Through shared "
+                     "strength, we transform collective vision into lasting community change."),
+    "mission_quote": "Through shared strength, we transform collective vision into lasting community change.",
+    "mission_image": "",
+    "pillars": [
+        {"icon": "Briefcase", "title": "Professional Empowerment", "text": "Connect with high-achieving women from the Diaspora to scale your business, share professional insights, and foster mutual growth in a supportive hub designed for excellence.", "cta": "Explore Opportunities", "to": "/initiatives"},
+        {"icon": "HeartHandshake", "title": "Philanthropy", "text": "Join our collective mission to solve the evolving challenges women face and spearhead philanthropic endeavors that empower communities while building lifelong bonds of friendship.", "cta": "Join the Cause", "to": "/donate"},
+        {"icon": "Home", "title": "Housing Assistance", "text": "We provide comprehensive housing navigation, emergency support, and resource connection so every sister has a stable foundation to build her future upon.", "cta": "Learn More", "to": "/initiatives"},
+    ],
+    "testimonials": [
+        {"id": "t-adaeze", "quote": "The Caring Sisters Club gave me a mentor, a grant, and a sisterhood. My business tripled in a year.", "name": "Adaeze N.", "role": "Elevation Lab Graduate", "photo_url": ""},
+        {"id": "t-louise", "quote": "When I needed housing support, my sisters showed up. This community is family.", "name": "Louise M.", "role": "Member since 2022", "photo_url": ""},
+        {"id": "t-chantal", "quote": "I found my leadership voice here. Now I mentor five other women.", "name": "Chantal B.", "role": "Chapter Lead, Brooklyn", "photo_url": ""},
+    ],
+    "updated_at": None,
+}
+
+
+class PillarItem(BaseModel):
+    icon: str = "Sparkles"
+    title: str
+    text: str = ""
+    cta: str = "Learn More"
+    to: str = "/initiatives"
+
+
+class HomeContentIn(BaseModel):
+    mission_heading: str = ""
+    mission_title: str = ""
+    mission_body: str = ""
+    mission_quote: str = ""
+    mission_image: str = ""
+    pillars: List[PillarItem] = []
+    testimonials: List[TestimonialItem] = []
+
+
+async def _get_home_content() -> dict:
+    doc = await db.settings.find_one({"key": "home"}, {"_id": 0, "key": 0}) or {}
+    return {k: doc.get(k, v) for k, v in DEFAULT_HOME.items()}
+
+
+@api_router.get("/home-content")
+async def public_home_content():
+    return await _get_home_content()
+
+
+@api_router.put("/admin/home-content")
+async def admin_update_home_content(payload: HomeContentIn, user=Depends(require_admin)):
+    if not payload.mission_title.strip() or not payload.mission_body.strip():
+        raise HTTPException(status_code=400, detail="Mission title and paragraph are required.")
+    if not _ok_img(payload.mission_image.strip()):
+        raise HTTPException(status_code=400, detail="Mission image must be an uploaded image or https URL")
+    if not 1 <= len(payload.pillars) <= 6:
+        raise HTTPException(status_code=400, detail="Add between 1 and 6 mission cards.")
+    pillars = []
+    for c in payload.pillars:
+        if not c.title.strip():
+            raise HTTPException(status_code=400, detail="Each mission card needs a title.")
+        to = c.to.strip() or "/"
+        if not (re.match(r"^/[A-Za-z0-9/_\-?=&#.]*$", to) or to.startswith("https://")) or to.startswith("//"):
+            raise HTTPException(status_code=400, detail="Card links must be a site path like /donate or an https:// URL")
+        pillars.append({"icon": c.icon if c.icon in HOME_ICONS else "Sparkles", "title": c.title.strip()[:80],
+                        "text": c.text.strip()[:500], "cta": c.cta.strip()[:40] or "Learn More", "to": to})
+    doc = {
+        "mission_heading": payload.mission_heading.strip()[:60] or "Our Mission",
+        "mission_title": payload.mission_title.strip()[:150], "mission_body": payload.mission_body.strip()[:2000],
+        "mission_quote": payload.mission_quote.strip()[:300], "mission_image": payload.mission_image.strip(),
+        "pillars": pillars, "testimonials": _clean_testimonials(payload.testimonials, 12),
+        "updated_at": _now_iso(), "updated_by": user.get("email"),
+    }
+    await db.settings.update_one({"key": "home"}, {"$set": doc}, upsert=True)
+    return await _get_home_content()
+
+
+# ---------- Win-back tracking ----------
+@api_router.get("/admin/winbacks")
+async def admin_winbacks(user=Depends(require_admin)):
+    cancels = await db.cancellations.find({}, {"_id": 0, "token": 0}).sort("created_at", -1).to_list(1000)
+    rows, returned, recovered = [], 0, 0.0
+    for c in cancels:
+        row = {k: c.get(k) for k in ("name", "email", "amount", "ends_on", "reason", "thanked", "thanked_at", "created_at")}
+        row.update({"returned": False, "returned_at": None, "recovered": 0.0})
+        if c.get("thanked") and c.get("thanked_at"):
+            gifts = await db.payment_transactions.find({
+                "donor_email": {"$regex": f"^{re.escape(c['email'])}$", "$options": "i"}, "payment_status": "paid",
+                "$or": [{"created_at": {"$gt": c["thanked_at"]}}, {"updated_at": {"$gt": c["thanked_at"]}}],
+            }, {"_id": 0, "amount": 1, "created_at": 1, "updated_at": 1}).to_list(500)
+            if gifts:
+                row["returned"] = True
+                row["returned_at"] = min(g.get("updated_at") or g.get("created_at") for g in gifts)
+                row["recovered"] = round(sum(float(g.get("amount") or 0) for g in gifts), 2)
+                returned += 1
+                recovered += row["recovered"]
+        rows.append(row)
+    notes = sum(1 for c in cancels if c.get("thanked"))
+    return {"cancellations": len(cancels), "notes_sent": notes, "returned": returned,
+            "rate": round(returned / notes * 100, 1) if notes else 0, "recovered": round(recovered, 2), "items": rows}
 
 
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------
