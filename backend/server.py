@@ -3363,12 +3363,23 @@ async def report_program_signups(months: int = 6, user=Depends(require_admin)):
         {"$group": {"_id": {"p": "$data.program", "m": {"$substr": ["$created_at", 0, 7]}}, "n": {"$sum": 1}}},
     ]):
         counts.setdefault(row["_id"]["p"] or "Unknown", {})[row["_id"]["m"]] = row["n"]
+    stages = {}
+    async for row in db.submissions.aggregate([
+        {"$match": {"type": "program_signup", "created_at": {"$gte": keys[0]}}},
+        {"$group": {"_id": {"p": "$data.program", "s": {"$ifNull": ["$stage", "new"]}}, "n": {"$sum": 1}}},
+    ]):
+        stages.setdefault(row["_id"]["p"] or "Unknown", {})[row["_id"]["s"]] = row["n"]
     titles = [p["title"] async for p in db.programs.find({}, {"_id": 0, "title": 1}).sort("order", 1)]
     rows = []
     for t in titles + [t for t in counts if t not in titles]:
         c = [counts.get(t, {}).get(k, 0) for k in keys]
         trend = "up" if len(c) > 1 and c[-1] > c[-2] else "down" if len(c) > 1 and c[-1] < c[-2] else "flat"
-        rows.append({"program": t, "counts": c, "total": sum(c), "trend": trend})
+        st = stages.get(t, {})
+        total = sum(c)
+        reached = st.get("contacted", 0) + st.get("enrolled", 0) + st.get("not_fit", 0)
+        rows.append({"program": t, "counts": c, "total": total, "trend": trend, "stages": st,
+                     "contacted_pct": round(reached / total * 100) if total else 0,
+                     "enrolled_pct": round(st.get("enrolled", 0) / total * 100) if total else 0})
     return {"months": keys, "rows": rows, "totals": [sum(r["counts"][i] for r in rows) for i in range(len(keys))]}
 
 
@@ -3416,6 +3427,7 @@ class HoursIn(BaseModel):
     date: str
     hours: float
     note: str = ""
+    leaderboard: bool = False
 
 
 @api_router.post("/volunteer-hours")
@@ -3435,7 +3447,8 @@ async def log_hours(payload: HoursIn, request: Request, background: BackgroundTa
     if not prog:
         raise HTTPException(status_code=400, detail="Please choose a program.")
     doc = {"id": str(uuid.uuid4()), "name": name[:80], "email": email.lower(), "program_id": prog["id"], "program": prog["title"],
-           "date": payload.date, "hours": round(payload.hours, 2), "note": payload.note.strip()[:500], "status": "pending", "created_at": _now_iso()}
+           "date": payload.date, "hours": round(payload.hours, 2), "note": payload.note.strip()[:500], "status": "pending",
+           "leaderboard": bool(payload.leaderboard), "created_at": _now_iso()}
     await db.volunteer_hours.insert_one(dict(doc))
     return {"id": doc["id"], "message": "Thank you! Your hours were submitted for review."}
 
@@ -3454,14 +3467,117 @@ async def admin_hours(user=Depends(require_admin)):
 
 
 @api_router.post("/admin/volunteer-hours/{hid}/{action}")
-async def admin_review_hours(hid: str, action: str, user=Depends(require_admin)):
+async def admin_review_hours(hid: str, action: str, background: BackgroundTasks, user=Depends(require_admin)):
     if action not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="Invalid action")
     res = await db.volunteer_hours.update_one({"id": hid, "status": "pending"}, {"$set": {
         "status": "approved" if action == "approve" else "rejected", "reviewed_at": _now_iso(), "reviewed_by": user.get("email")}})
     if not res.modified_count:
         raise HTTPException(status_code=404, detail="Pending entry not found")
+    if action == "approve":
+        background.add_task(_send_volunteer_thanks)
     return {"ok": True}
+
+
+# ---------- Volunteer thank-yous, leaderboard ----------
+def _short_name(name: str) -> str:
+    parts = (name or "").split()
+    return f"{parts[0]} {parts[-1][0]}." if len(parts) > 1 else (parts[0] if parts else "Sister")
+
+
+async def _hours_total(email: str, since: str = "") -> float:
+    q = {"email": email, "status": "approved"}
+    if since:
+        q["date"] = {"$gte": since}
+    rows = await db.volunteer_hours.find(q, {"_id": 0, "hours": 1}).to_list(10000)
+    return round(sum(h["hours"] for h in rows), 2)
+
+
+def _vol_thanks_html(name: str, entries: list, year_total: float, all_total: float) -> str:
+    rows = "".join(f'<tr><td style="padding:7px 16px;font-size:13px;color:#4a3340">{_esc(e["date"])} &middot; {_esc(e["program"])}</td>'
+                   f'<td style="padding:7px 16px;font-size:14px;color:#3B0A2E;font-weight:bold;text-align:right">{e["hours"]:g}h</td></tr>' for e in entries)
+    stat = lambda v, l: (f'<td width="50%" style="padding:14px;text-align:center"><p style="font-family:Georgia,serif;font-size:30px;color:#B4247E;font-weight:bold;margin:0">{v:g}</p>'  # noqa: E731
+                         f'<p style="font-size:12px;color:#6b5560;margin:4px 0 0">{l}</p></td>')
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Thank You, Volunteer") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 14px">Thank you, {_esc(name)}!</h1>'
+        '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 16px">Your volunteer hours have been confirmed. Every hour you give strengthens our sisterhood.</p>'
+        f'<table role="presentation" width="100%" style="background:#faf2f7;border-radius:12px;margin:0 0 16px">{rows}</table>'
+        f'<table role="presentation" width="100%" style="border:1px solid #eadfe6;border-radius:12px;margin:0 0 20px"><tr>{stat(year_total, "hours this year")}{stat(all_total, "hours all-time")}</tr></table>'
+        + _btn(f"{PUBLIC_APP_URL}/volunteer#log-hours", "Log More Hours", primary=True) +
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">With gratitude,<br/>The Caring Sisters Club</p></td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you logged volunteer hours on our website. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _send_volunteer_thanks() -> int:
+    """At most one thank-you per volunteer per day, combining all approved-but-unthanked entries."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    year_start = f"{today[:4]}-01-01"
+    sent = 0
+    for email in await db.volunteer_hours.distinct("email", {"status": "approved", "thanked": {"$ne": True}}):
+        if await db.volunteer_thanks.find_one({"email": email, "day": today}):
+            continue
+        entries = await db.volunteer_hours.find({"email": email, "status": "approved", "thanked": {"$ne": True}}, {"_id": 0}).sort("date", 1).to_list(100)
+        try:
+            await db.volunteer_thanks.insert_one({"email": email, "day": today, "entries": len(entries), "sent_at": _now_iso()})
+        except Exception:
+            continue
+        await db.volunteer_hours.update_many({"id": {"$in": [e["id"] for e in entries]}}, {"$set": {"thanked": True, "thanked_at": _now_iso()}})
+        try:
+            if await send_email(to=email, subject="Thank you for volunteering with The Caring Sisters Club",
+                                html=_vol_thanks_html(entries[-1]["name"].split()[0], entries, await _hours_total(email, year_start), await _hours_total(email))) is not None:
+                sent += 1
+        except Exception as e:
+            logging.error(f"Volunteer thank-you failed: {e}")
+    return sent
+
+
+@api_router.get("/volunteer-hours/leaderboard")
+async def hours_leaderboard():
+    year = datetime.now(timezone.utc).strftime("%Y")
+    out = []
+    async for r in db.volunteer_hours.aggregate([
+        {"$match": {"status": "approved", "date": {"$gte": f"{year}-01-01"}}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {"_id": "$email", "hours": {"$sum": "$hours"}, "name": {"$first": "$name"}, "opt": {"$first": "$leaderboard"}}},
+        {"$match": {"opt": True}}, {"$sort": {"hours": -1}}, {"$limit": 10},
+    ]):
+        out.append({"name": _short_name(r["name"]), "hours": round(r["hours"], 1)})
+    return {"year": year, "items": out}
+
+
+# ---------- Story request results & sign-up stages ----------
+@api_router.get("/admin/reports/story-requests")
+async def report_story_requests(user=Depends(require_admin)):
+    invites = await db.submissions.find({"type": "program_signup", "story_request_sent": True}, {"_id": 0, "data.email": 1, "story_request_at": 1}).to_list(5000)
+    submitted = approved = 0
+    for inv in invites:
+        em = ((inv.get("data") or {}).get("email") or "").lower()
+        st = await db.story_submissions.find_one({"email": em, "created_at": {"$gte": inv.get("story_request_at") or ""}}, {"_id": 0, "status": 1}, sort=[("created_at", 1)]) if em else None
+        if st:
+            submitted += 1
+            approved += 1 if st["status"] == "approved" else 0
+    n = len(invites)
+    return {"invites": n, "submitted": submitted, "approved": approved, "rate": round(submitted / n * 100, 1) if n else 0}
+
+
+class StageIn(BaseModel):
+    stage: str
+
+
+@api_router.put("/admin/submissions/{sid}/stage")
+async def set_signup_stage(sid: str, payload: StageIn, user=Depends(require_admin)):
+    if payload.stage not in ("new", "contacted", "enrolled", "not_fit"):
+        raise HTTPException(status_code=400, detail="Invalid stage")
+    res = await db.submissions.update_one({"id": sid, "type": "program_signup"}, {"$set": {"stage": payload.stage, "stage_at": _now_iso(), "read": True}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Sign-up not found")
+    return {"stage": payload.stage}
 
 
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------
@@ -3618,6 +3734,7 @@ async def _hourly_scheduler():
         await asyncio.sleep(3600)
         try:
             await _process_all_waitlists()
+            await _send_volunteer_thanks()
         except Exception as e:
             logging.error(f"Hourly waitlist job failed: {e}")
 
@@ -3754,6 +3871,7 @@ async def startup_indexes():
     try:
         await db.users.create_index("email", unique=True)
         await db.cancellations.create_index("sub_id", unique=True)
+        await db.volunteer_thanks.create_index([("email", 1), ("day", 1)], unique=True)
         await db.users.create_index("user_id", unique=True)
         await db.user_sessions.create_index("session_token")
         await db.media.create_index("category")

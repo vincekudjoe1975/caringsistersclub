@@ -12,6 +12,23 @@ const TYPES = [
   { key: 'donation', label: 'Donations', icon: Heart },
 ];
 
+const STAGES = [['new', 'New', '#eef1f5', '#53657d'], ['contacted', 'Contacted', '#fdf3e1', '#8a6a2c'], ['enrolled', 'Enrolled', '#e9f3e6', '#3c7a2f'], ['not_fit', 'Not a fit', '#f5e9ec', '#9b3b4f']];
+
+function StageSelect({ it, onChange }) {
+  const cur = STAGES.find((s) => s[0] === (it.stage || 'new'));
+  const change = async (e) => {
+    const stage = e.target.value;
+    try { await api.put(`/admin/submissions/${it.id}/stage`, { stage }); onChange(stage); }
+    catch (err) { console.error('Stage update failed', err); }
+  };
+  return (
+    <select value={cur[0]} onChange={change} data-testid="signup-stage-select" className="text-[12px] font-semibold rounded-full px-3 py-1 border-0 cursor-pointer"
+      style={{ background: cur[2], color: cur[3] }}>
+      {STAGES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  );
+}
+
 function fieldLabel(k) {
   return k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' ');
 }
@@ -105,6 +122,7 @@ export default function AdminSubmissions() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    {it.type === 'program_signup' && <StageSelect it={it} onChange={(stage) => setItems((prev) => prev.map((i) => (i.id === it.id ? { ...i, stage, read: true } : i)))} />}
                     <span className="text-[11.5px] text-[#241019]/45">{new Date(it.created_at).toLocaleString()}</span>
                     <button onClick={() => markRead(it.id)} title={it.read ? 'Read' : 'Mark read'} className="text-[#B4247E] hover:text-[#D14FA0] p-1.5">
                       {it.read ? <MailOpen size={16} /> : <Mail size={16} />}
@@ -114,7 +132,7 @@ export default function AdminSubmissions() {
                 </div>
                 <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2">
                   {Object.entries(it.data || {}).map(([k, v]) => (
-                    v !== '' && v != null && (
+                    v !== '' && v != null && k !== 'program_slug' && (
                       <div key={k} className="text-[13.5px]">
                         <span className="text-[#241019]/45">{fieldLabel(k)}: </span>
                         <span className="text-[#3B0A2E]">{String(v)}</span>

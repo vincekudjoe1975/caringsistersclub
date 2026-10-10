@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, Clock3, CheckCircle2 } from 'lucide-react';
+import { Loader2, Clock3, CheckCircle2, Trophy } from 'lucide-react';
 import { api } from '../lib/api';
 import { errMsg } from '../pages/Events';
 
@@ -8,7 +8,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 export const LogHours = () => {
   const [programs, setPrograms] = useState([]);
-  const [form, setForm] = useState({ name: '', email: '', program_id: '', date: today(), hours: '', note: '' });
+  const [form, setForm] = useState({ name: '', email: '', program_id: '', date: today(), hours: '', note: '', leaderboard: false });
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState('');
@@ -54,6 +54,10 @@ export const LogHours = () => {
                 </div>
               </div>
               <div className="mt-4"><label className="text-[13px] font-semibold text-[#3B0A2E]">What did you do? (optional)</label><input value={form.note} onChange={set('note')} className={inp} data-testid="hours-note-input" /></div>
+              <label className="flex items-center gap-2 mt-4 text-[13px] text-[#3B0A2E] cursor-pointer">
+                <input type="checkbox" checked={form.leaderboard} onChange={(e) => setForm({ ...form, leaderboard: e.target.checked })} className="accent-[#B4247E] w-4 h-4" data-testid="hours-leaderboard-checkbox" />
+                Show me on the "Top Volunteers" list (first name and last initial only)
+              </label>
               {error && <p className="text-[13px] text-red-600 mt-3" data-testid="hours-error">{error}</p>}
               <button type="submit" disabled={busy} data-testid="hours-submit-btn" className="btn-magenta rounded-full px-8 py-3 font-semibold text-[14px] mt-5 flex items-center gap-2 disabled:opacity-60">
                 {busy && <Loader2 size={16} className="animate-spin" />} Submit Hours
@@ -61,6 +65,29 @@ export const LogHours = () => {
             </form>
           )}
         </div>
+      </div>
+    </section>
+  );
+};
+
+export const Leaderboard = () => {
+  const [d, setD] = useState(null);
+  useEffect(() => { api.get('/volunteer-hours/leaderboard').then(({ data }) => setD(data)).catch(() => {}); }, []);
+  if (!d || !d.items.length) return null;
+  return (
+    <section className="py-16 lg:py-20" data-testid="volunteer-leaderboard">
+      <div className="max-w-3xl mx-auto px-5 lg:px-8">
+        <h2 className="font-serif text-[30px] lg:text-[36px] text-[#3B0A2E] font-semibold mb-2 flex items-center gap-3"><Trophy size={28} className="text-[#CBA24B]" /> Top Volunteers {d.year}</h2>
+        <p className="text-[#241019]/65 text-[14.5px] mb-7">Celebrating the sisters who give their time. Thank you!</p>
+        <ol className="bg-white rounded-2xl border border-[#3B0A2E]/8 divide-y divide-[#3B0A2E]/8">
+          {d.items.map((v, i) => (
+            <li key={`${v.name}-${i}`} className="flex items-center gap-4 px-6 py-4" data-testid="leaderboard-row">
+              <span className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-[14px]" style={i < 3 ? { background: ['#CBA24B', '#c0c4cc', '#c98a5a'][i], color: '#fff' } : { background: '#faf2f7', color: '#3B0A2E' }}>{i + 1}</span>
+              <span className="flex-1 font-semibold text-[#3B0A2E] text-[15px]" data-testid="leaderboard-name">{v.name}</span>
+              <span className="font-serif text-[20px] font-bold text-[#B4247E]" data-testid="leaderboard-hours">{v.hours}h</span>
+            </li>
+          ))}
+        </ol>
       </div>
     </section>
   );

@@ -18,7 +18,7 @@ function SignupReport() {
   const data = useSignupReport(6);
   if (!data) return <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#B4247E]" /></div>;
   const exportCsv = () => {
-    const lines = [['Program', ...data.months, 'Total'], ...data.rows.map((r) => [r.program, ...r.counts, r.total]), ['All programs', ...data.totals, data.totals.reduce((a, b) => a + b, 0)]];
+    const lines = [['Program', ...data.months, 'Total', 'Contacted %', 'Enrolled %'], ...data.rows.map((r) => [r.program, ...r.counts, r.total, r.contacted_pct, r.enrolled_pct]), ['All programs', ...data.totals, data.totals.reduce((a, b) => a + b, 0)]];
     const blob = new Blob([lines.map((l) => l.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'program-signups.csv'; a.click(); URL.revokeObjectURL(a.href);
   };
@@ -33,6 +33,7 @@ function SignupReport() {
           <thead><tr className="text-[11.5px] uppercase tracking-wide text-[#241019]/50">
             <th className="px-3 py-2 font-semibold">Program</th>{data.months.map((m) => <th key={m} className="px-3 py-2 font-semibold text-right">{monthLabel(m)}</th>)}
             <th className="px-3 py-2 font-semibold text-right">Total</th><th className="px-3 py-2 font-semibold text-center">Trend</th>
+            <th className="px-3 py-2 font-semibold text-right">Contacted</th><th className="px-3 py-2 font-semibold text-right">Enrolled</th>
           </tr></thead>
           <tbody>
             {data.rows.map((r) => (
@@ -41,11 +42,37 @@ function SignupReport() {
                 {r.counts.map((c, i) => <td key={i} className={`px-3 py-2.5 text-right ${c ? 'text-[#3B0A2E]' : 'text-[#241019]/30'}`}>{c}</td>)}
                 <td className="px-3 py-2.5 text-right font-bold text-[#B4247E]">{r.total}</td>
                 <td className="px-3 py-2.5"><span className="flex justify-center" data-testid="signup-report-trend"><Trend t={r.trend} /></span></td>
+                <td className="px-3 py-2.5 text-right" data-testid="signup-report-contacted">{r.total ? `${r.contacted_pct}%` : '—'}</td>
+                <td className="px-3 py-2.5 text-right font-semibold text-[#3c7a2f]" data-testid="signup-report-enrolled">{r.total ? `${r.enrolled_pct}%` : '—'}</td>
               </tr>
             ))}
-            <tr className="border-t-2 border-[#3B0A2E]/15 font-semibold"><td className="px-3 py-2.5">All programs</td>{data.totals.map((c, i) => <td key={i} className="px-3 py-2.5 text-right">{c}</td>)}<td className="px-3 py-2.5 text-right">{data.totals.reduce((a, b) => a + b, 0)}</td><td /></tr>
+            <tr className="border-t-2 border-[#3B0A2E]/15 font-semibold"><td className="px-3 py-2.5">All programs</td>{data.totals.map((c, i) => <td key={i} className="px-3 py-2.5 text-right">{c}</td>)}<td className="px-3 py-2.5 text-right">{data.totals.reduce((a, b) => a + b, 0)}</td><td /><td /><td /></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+function StoryRequestResults() {
+  const [d, setD] = useState(null);
+  useEffect(() => { api.get('/admin/reports/story-requests').then(({ data }) => setD(data)).catch(() => {}); }, []);
+  if (!d) return null;
+  const cell = (label, v, id, color) => (
+    <div className="rounded-xl px-4 py-3" style={{ background: '#faf2f7' }}>
+      <p className="text-[11px] uppercase tracking-wide text-[#241019]/55 font-semibold">{label}</p>
+      <p className="font-serif text-[24px] font-bold" style={{ color: color || '#3B0A2E' }} data-testid={id}>{v}</p>
+    </div>
+  );
+  return (
+    <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 p-6 mb-6" data-testid="story-request-results">
+      <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold mb-1">Story Request Results</h3>
+      <p className="text-[12.5px] text-[#241019]/55 mb-4">Invites emailed 60 days after a program sign-up, and how many led to a submitted story.</p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {cell('Invites sent', d.invites, 'story-req-invites')}
+        {cell('Stories submitted', d.submitted, 'story-req-submitted', '#B4247E')}
+        {cell('Response rate', `${d.rate}%`, 'story-req-rate', '#B4247E')}
+        {cell('Approved & featured', d.approved, 'story-req-approved', '#3c7a2f')}
       </div>
     </div>
   );
@@ -99,6 +126,7 @@ export default function AdminReports() {
   return (
     <div data-testid="admin-reports">
       <h2 className="font-serif text-[24px] text-[#3B0A2E] font-semibold mb-5">Reports</h2>
+      <StoryRequestResults />
       <SignupReport />
       <HoursReview />
     </div>
