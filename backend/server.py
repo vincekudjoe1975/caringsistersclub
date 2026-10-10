@@ -2954,7 +2954,7 @@ async def admin_winbacks(user=Depends(require_admin)):
         if c.get("thanked") and c.get("thanked_at"):
             gifts = await db.payment_transactions.find({
                 "donor_email": {"$regex": f"^{re.escape(c['email'])}$", "$options": "i"}, "payment_status": "paid",
-                "$or": [{"created_at": {"$gt": c["thanked_at"]}}, {"updated_at": {"$gt": c["thanked_at"]}}],
+                "created_at": {"$gt": c["thanked_at"]}, "stripe_subscription_id": {"$ne": c.get("sub_id")},
             }, {"_id": 0, "amount": 1, "created_at": 1, "updated_at": 1}).to_list(500)
             if gifts:
                 row["returned"] = True

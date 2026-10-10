@@ -6,7 +6,7 @@ import { CtaLink } from './Initiatives';
 import Reveal from '../components/Reveal';
 import { TestimonialCard } from '../components/TestimonialCard';
 import { imgSrc } from '../lib/useHomeContent';
-import { Dialog, DialogContent } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
 import { ArrowLeft, CheckCircle2, Loader2, Heart, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export default function ProgramDetail() {
@@ -122,6 +122,7 @@ function Gallery({ items }) {
       </div>
       <Dialog open={idx !== null} onOpenChange={(o) => !o && setIdx(null)}>
         <DialogContent className="max-w-4xl p-3 bg-[#29061F] border-0" data-testid="program-gallery-lightbox">
+          <DialogTitle className="sr-only">{cur?.caption || 'Program photo'}</DialogTitle>
           {cur && (
             <div className="relative">
               <img src={imgSrc(cur.url)} alt={cur.caption || ''} className="w-full max-h-[75vh] object-contain rounded-lg" />

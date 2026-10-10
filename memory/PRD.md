@@ -169,3 +169,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Cancellations: webhook customer.subscription.updated/deleted + daily _check_cancellations → `cancellations` (unique sub_id) → staff email with /cancel-thanks?token= page (editable note, one send; reverts on provider failure).
 - App error statuses use 424 instead of 502 (Cloudflare replaces 502 bodies).
 - Don't write scratch files under /app/backend (uvicorn reload).
+
+## 2026 — Program galleries/testimonials, Win-Backs, Home content editor (iteration_7: 100%)
+- Programs gain gallery[{url,caption}] (≤24), testimonials (≤6, custom) and home_testimonial_ids (picked from Home list; merged on GET /api/programs/{slug}). ProgramDetail has gallery grid + lightbox + "Voices from the program".
+- Home content: settings key 'home' (mission heading/title/body/quote/image, pillars ≤6 with icon allowlist, testimonials ≤12 with photo). GET /api/home-content, PUT /api/admin/home-content; Admin → Home Page tab (AdminHome.jsx, reusable ImageUpload/TestimonialsEditor); Home.jsx reads via lib/useHomeContent.js.
+- Win-backs: GET /api/admin/winbacks — returned = paid txn created after thanked_at not from the cancelled sub; WinBacks card on Admin → Donors.
+- Save Live Address is a user action on production (Admin banner button).

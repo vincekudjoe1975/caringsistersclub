@@ -1,0 +1,64 @@
+{
+  "summary": "Tested the 3 new feature sets: (1) Admin → Home Page content editor (mission heading/title/body/quote, pillars incl. icon/text/CTA/link + add card + invalid-link toast, testimonials editor + add row), publish → public Home reflects all edits (testimonial-card count went from 3 → 4, new pillar visible, mission title/body/quote updated). (2) Admin → Programs: edit program with program-gallery-editor (gallery items + caption edits + delete), program-add-testimonial-btn + custom testimonial, program-home-picks tick for t-louise (Louise M.), save → public /initiatives/qa-ui-gallery shows program-gallery with program-gallery-photo items, clicking opens program-gallery-lightbox with caption + gallery-next-btn/prev-btn cycling captions, program-testimonials shows custom + merged home testimonial. (3) Win-Backs card on Admin → Donors with seeded data (2 cancellations, 1 note sent, 1 returned via $35 paid txn): winbacks-cancellations=2, winbacks-notes=1, winbacks-returned=1, winbacks-rate=100%, winbacks-recovered=$35, winbacks-toggle-btn expands to 2 winback-row items with statuses ['Returned','No note yet']. Added /app/backend/tests/test_home_winbacks_gallery.py (14 tests, 14/14 PASS). All QA artefacts cleaned up (home settings doc, QA program, qa_c1/qa_c2 cancellations, qa_wb_txn payment_transaction, QA admin session).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Program detail lightbox", "issues": ["DialogContent missing DialogTitle - console warning 'DialogContent requires a DialogTitle for the component to be accessible for screen reader users.' (Radix a11y). Wrap in VisuallyHidden component to resolve."]}
+    ]
+  },
+  "test_results": [
+    {"case": "GET /api/home-content returns 3 default pillars + 3 testimonials (t-adaeze, t-louise, t-chantal)", "status": "PASS"},
+    {"case": "PUT /api/admin/home-content requires admin", "status": "PASS"},
+    {"case": "PUT /api/admin/home-content rejects javascript: card link (400)", "status": "PASS"},
+    {"case": "PUT /api/admin/home-content rejects empty title (400)", "status": "PASS"},
+    {"case": "PUT /api/admin/home-content rejects 0 pillars (400)", "status": "PASS"},
+    {"case": "PUT /api/admin/home-content persists edits; public reflects testimonials + pillars", "status": "PASS"},
+    {"case": "POST /api/admin/programs with gallery + testimonials + home_testimonial_ids persists; GET /api/programs/{slug} merges home testimonial by id", "status": "PASS"},
+    {"case": "POST /api/admin/programs rejects http:// gallery URL (400)", "status": "PASS"},
+    {"case": "POST /api/admin/programs rejects testimonial with empty name (400)", "status": "PASS"},
+    {"case": "PUT /api/admin/programs/{id} removes gallery + home_testimonial_ids; public no longer shows Louise M.", "status": "PASS"},
+    {"case": "DELETE /api/admin/programs/{id} removes QA program", "status": "PASS"},
+    {"case": "GET /api/admin/winbacks empty structure (keys: cancellations/notes_sent/returned/rate/recovered/items)", "status": "PASS"},
+    {"case": "GET /api/admin/winbacks with seeded 2 cancellations + 1 paid gift post thanked_at returns cancel+2, notes+1, returned+1, recovered+$35; row for qa.wb returned=true, qa.wb2 returned=false/thanked=false", "status": "PASS"},
+    {"case": "UI Admin → Home: edit mission title/body/quote + pillar-0 + add pillar + add testimonial + Publish → home-status shows 'Last published …'", "status": "PASS"},
+    {"case": "UI Home public: QA mission title/body/quote visible, QA pillar + new pillar visible, QA testimonial appears (4 testimonial-card total)", "status": "PASS"},
+    {"case": "UI invalid card link 'javascript:x' triggers Save failed toast (400 response surfaces 'site path or https://')", "status": "PASS"},
+    {"case": "UI Admin → Programs → edit QA UI Gallery: gallery editor shows 2 items, caption-0 prefilled, program-gallery-del-1 removes item, program-home-pick-t-louise is checked", "status": "PASS"},
+    {"case": "UI program-add-testimonial-btn adds row; program-testimonial-quote-1/name-1 editable; save closes form", "status": "PASS"},
+    {"case": "UI public /initiatives/qa-ui-gallery after edit: 1 program-gallery-photo (was 2), new QA testimonial + Louise M. + Custom Tester visible in program-testimonials", "status": "PASS"},
+    {"case": "UI program-gallery-lightbox opens on photo click with caption; gallery-next-btn / gallery-prev-btn cycle Caption A ↔ Caption B", "status": "PASS"},
+    {"case": "UI Admin → Donors winbacks-card: counters 2/1/1/100%/$35 match seeded scenario", "status": "PASS"},
+    {"case": "UI winbacks-toggle-btn expands table with 2 winback-row and winback-status chips 'Returned' + 'No note yet'", "status": "PASS"},
+    {"case": "Regression smoke /initiatives /events /transparency load without JS errors", "status": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_home_winbacks_gallery.py",
+    "/app/test_reports/pytest/home_winbacks.xml"
+  ],
+  "action_items": [
+    "Minor a11y: /app/frontend/src/pages/ProgramDetail.jsx Gallery lightbox DialogContent is missing a DialogTitle. Wrap a hidden DialogTitle via Radix's VisuallyHidden (or import from components/ui) to silence the console warning and improve screen-reader support."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 3307 lines (prev 3153) - file-size guideline (<700 lines) still heavily violated. The new Home-content (~80 lines), Win-backs (~25 lines), and expanded Programs section (gallery/testimonials/home-pick ~70 extra lines) continue to compound. Split into dedicated modules (home.py, winbacks.py, programs.py).",
+    "DEFAULT_HOME testimonial IDs (t-adaeze, t-louise, t-chantal) are hardcoded constants referenced by program home_testimonial_ids. If an admin deletes/renames one of these from the Home editor, saved program picks silently stop merging (no warning). Consider either (a) preserving testimonial IDs across edits, or (b) warning when a program's picked IDs no longer resolve.",
+    "/api/admin/winbacks performs N+1 queries (one payment_transactions.find per thanked cancellation). On sites with 100+ cancellations this is slow. Batch with a single $in on emails + $gt on thanked_at using aggregation.",
+    "Win-back 'returned' detection matches any paid payment_transaction created after thanked_at regardless of whether it is a new subscription/one-time or reactivation of the same sub. If a donor's existing one-time gift webhook arrives late (created_at pre-thanked but updated_at post-thanked), it could be miscounted as a win-back. Consider restricting to new session_ids distinct from the cancelled sub_id.",
+    "_clean_testimonials assigns new uuid4 when id is missing, but there is no uniqueness enforcement across the testimonials list - admin could paste a duplicate id manually. Low risk.",
+    "ProgramDetail Gallery lightbox: Dialog missing DialogTitle emits Radix console warning (a11y regression).",
+    "AdminHome ImageUpload supports photo_url for testimonials but there is no size/dimension cap enforced client-side; server trusts upload path.",
+    "GalleryEditor uploads files sequentially in a for-loop instead of Promise.all; batch upload of 10 photos is slower than necessary.",
+    "HomePicks fetches /home-content on every ProgramForm open; could use the already-cached home-content from useHomeContent.js to avoid an extra request."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_home_winbacks_gallery.py"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% (10/10 flows)"},
+  "test_credentials": "Temp admin via qa_session.py up/down (cookie session_token=qa_tok_123). Deleted at end.",
+  "seed_data_creation": "Created & deleted: settings doc {key:'home'} (1), QA program 'QA UI Gallery' (1), QA cancellations qa_c1/qa_c2 (2), QA payment_transaction session_id='qa_wb_txn' (1). Post-test verified clean (0 QA artefacts remaining). QA admin session also removed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Endpoints: GET /api/home-content (public), PUT /api/admin/home-content (admin, validates mission_title/body required, pillars 1-6, card to:/path|https://, testimonial quote+name required, photo _ok_img allows '' | '/api/media/file/…' | 'https://…'). GET /api/admin/winbacks aggregates db.cancellations + payments where donor_email matches (case-insensitive regex, escaped) and created_at|updated_at > thanked_at, requires thanked=true to count notes_sent & attempt returned detection. Program model gained gallery:[{url,caption}], testimonials:[{id?,quote,name,role,photo_url}], home_testimonial_ids:[str] (capped 6, 6, 24 respectively, _clean_* enforced). Public /api/programs/{slug} merges home testimonials by id into testimonials list. Admin pages: AdminHome testids prefix 'home-' (home-mission-*, home-pillar-N-*, home-testimonial-N-*, home-add-*, save-home-btn, home-status). AdminPrograms ProgramForm has prefix 'program-' (program-gallery-*, program-testimonial-*, program-home-picks + program-home-pick-{id}, program-add-testimonial-btn, program-save-btn). Public ProgramDetail: program-gallery, program-gallery-photo, program-gallery-lightbox, gallery-next-btn, gallery-prev-btn, program-testimonials. WinBacks component in Admin Donors: winbacks-card, winbacks-cancellations/notes/returned/rate/recovered, winbacks-toggle-btn, winback-row, winback-status.",
+  "rca of the issue": "No functional issues. One a11y console warning (Dialog without DialogTitle) in ProgramDetail Gallery lightbox - cosmetic only."
+}
