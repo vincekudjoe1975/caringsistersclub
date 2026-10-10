@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Loader2, TrendingUp, TrendingDown, Minus, Download, Clock3, Check, X, BarChart3, Sparkles, ExternalLink } from 'lucide-react';
-import { api } from '../lib/api';
+import { Loader2, TrendingUp, TrendingDown, Minus, Download, Clock3, Check, X, BarChart3, Sparkles, ExternalLink, UploadCloud, Eye, Send } from 'lucide-react';
+import { api, BACKEND_URL, mediaSrc } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 
 const monthLabel = (k) => new Date(`${k}-01T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
@@ -122,6 +122,78 @@ function HoursReview() {
   );
 }
 
+function YirShareImage({ year, d, onSaved }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const save = async (image_url) => {
+    try { const { data } = await api.put(`/admin/year-in-review/${year}`, { image_url }); onSaved({ image_url: data.image_url }); toast({ title: image_url ? 'Share image updated' : 'Using the auto-generated card' }); }
+    catch (err) { toast({ title: 'Save failed', description: err?.response?.data?.detail, variant: 'destructive' }); }
+  };
+  const upload = async (file) => {
+    if (!file) return;
+    const fd = new FormData(); fd.append('file', file); fd.append('category', 'share'); fd.append('title', `Year in Review ${year} share image`);
+    setBusy(true);
+    try { const { data } = await api.post('/media', fd, { headers: { 'Content-Type': 'multipart/form-data' } }); await save(data.url); }
+    catch (err) { toast({ title: 'Upload failed', description: err?.response?.data?.detail, variant: 'destructive' }); }
+    finally { setBusy(false); }
+  };
+  const src = d.image_url ? mediaSrc(d.image_url) : `${BACKEND_URL}/api/share/year-in-review/${year}/card.png?v=${d.donations_total}-${d.volunteer_hours}-${d.signups}`;
+  return (
+    <div className="mt-5 grid md:grid-cols-[320px_1fr] gap-5 items-start" data-testid="yir-share-image">
+      <img src={src} alt="Share preview" className="w-full rounded-xl border border-[#3B0A2E]/10" data-testid="yir-share-image-preview" />
+      <div>
+        <p className="text-[13.5px] font-semibold text-[#3B0A2E] mb-1">Social share image</p>
+        <p className="text-[12.5px] text-[#241019]/60 mb-3">{d.image_url ? 'Using your uploaded image.' : 'Auto-generated from this year\'s numbers; it updates as the data changes.'} Shown when the page is shared on Facebook, X, LinkedIn or WhatsApp.</p>
+        <div className="flex flex-wrap gap-2">
+          <label className="text-[12.5px] font-semibold px-4 py-2 rounded-full text-[#B4247E] flex items-center gap-1.5 cursor-pointer" style={{ border: '1px solid rgba(180,36,126,0.3)' }}>
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />} {d.image_url ? 'Replace image' : 'Upload my own'}
+            <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" data-testid="yir-share-image-upload" onChange={(e) => upload(e.target.files?.[0])} />
+          </label>
+          {d.image_url && <button onClick={() => save('')} data-testid="yir-share-image-reset" className="text-[12.5px] font-semibold px-4 py-2 rounded-full text-[#3B0A2E]" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>Use auto card</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function YirEmail({ year, d, onSaved }) {
+  const { toast } = useToast();
+  const [info, setInfo] = useState(null);
+  const [testTo, setTestTo] = useState('');
+  const [busy, setBusy] = useState('');
+  const [preview, setPreview] = useState(false);
+  const load = useCallback(() => api.get(`/admin/year-in-review/${year}/email`).then(({ data }) => setInfo(data)).catch(() => setInfo(null)), [year]);
+  useEffect(() => { load(); }, [load]);
+  const run = async (key, fn, ok) => {
+    setBusy(key);
+    try { await fn(); toast({ title: ok }); load(); }
+    catch (err) {
+      if (err?.response?.status === 409 && key === 'send' && window.confirm(`${err.response.data.detail}`)) { await run('send', () => api.post(`/admin/year-in-review/${year}/email/send`, { force: true }), ok); return; }
+      toast({ title: 'Something went wrong', description: err?.response?.data?.detail, variant: 'destructive' });
+    } finally { setBusy(''); }
+  };
+  const toggleAuto = (e) => api.put(`/admin/year-in-review/${year}`, { autosend: e.target.checked }).then(({ data }) => onSaved({ autosend: data.autosend }));
+  if (!info) return null;
+  const last = info.history?.[0];
+  return (
+    <div className="mt-5 pt-5 border-t border-[#3B0A2E]/8" data-testid="yir-email">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[13.5px] text-[#3B0A2E]"><strong>Email the Year in Review</strong> to <strong data-testid="yir-email-recipients">{info.recipients}</strong> donors &amp; volunteers from {year} (deduplicated).</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setPreview(!preview)} data-testid="yir-email-preview-btn" className="text-[12.5px] font-semibold px-4 py-2 rounded-full text-[#3B0A2E] flex items-center gap-1.5" style={{ border: '1px solid rgba(59,10,46,0.15)' }}><Eye size={13} /> {preview ? 'Hide preview' : 'Preview'}</button>
+          <input value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="test@email.com" data-testid="yir-email-test-input" className="text-[12.5px] rounded-full px-3 py-2 border border-[#3B0A2E]/15 w-44" />
+          <button disabled={!testTo || !!busy} onClick={() => run('test', () => api.post(`/admin/year-in-review/${year}/email/test`, { email: testTo }), 'Test email sent')} data-testid="yir-email-test-btn" className="text-[12.5px] font-semibold px-4 py-2 rounded-full text-[#B4247E] disabled:opacity-50" style={{ border: '1px solid rgba(180,36,126,0.3)' }}>{busy === 'test' ? 'Sending…' : 'Send test'}</button>
+          <button disabled={!d.public || !info.recipients || !!busy} title={d.public ? '' : 'Publish the page first'} onClick={() => window.confirm(`Email the ${year} Year in Review to ${info.recipients} people?`) && run('send', () => api.post(`/admin/year-in-review/${year}/email/send`, { force: false }), 'Year in Review email is sending')} data-testid="yir-email-send-btn" className="btn-magenta text-[12.5px] font-semibold px-4 py-2 rounded-full flex items-center gap-1.5 disabled:opacity-50"><Send size={13} /> {busy === 'send' ? 'Queuing…' : 'Send to all'}</button>
+        </div>
+      </div>
+      <label className="mt-3 flex items-center gap-2 text-[12.5px] text-[#3B0A2E] font-semibold"><input type="checkbox" checked={!!d.autosend} onChange={toggleAuto} data-testid="yir-autosend-checkbox" className="accent-[#B4247E]" /> Send automatically when a year's page is published (once per year)</label>
+      {last && <p className="text-[12px] text-[#241019]/55 mt-2" data-testid="yir-email-last">Last send: {new Date(last.started_at).toLocaleString()} · {last.status === 'done' ? `${last.sent} sent${last.failed ? `, ${last.failed} failed` : ''}` : `sending to ${last.recipients}…`} ({last.trigger})</p>}
+      {!d.public && <p className="text-[12px] text-[#9b3b4f] mt-2">Publish the page before sending so the email link works.</p>}
+      {preview && <iframe title="Year in Review email preview" srcDoc={info.html} data-testid="yir-email-preview" className="w-full h-[560px] mt-4 rounded-xl border border-[#3B0A2E]/10 bg-white" />}
+    </div>
+  );
+}
+
 function YearInReviewAdmin() {
   const now = new Date().getFullYear();
   const [year, setYear] = useState(now);
@@ -129,9 +201,10 @@ function YearInReviewAdmin() {
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
   useEffect(() => { setD(null); api.get(`/admin/year-in-review/${year}`).then(({ data }) => setD(data)).catch(() => setD({})); }, [year]);
+  const merge = (patch) => setD((cur) => ({ ...cur, ...patch }));
   const toggle = async () => {
     setBusy(true);
-    try { const { data } = await api.put(`/admin/year-in-review/${year}`, { public: !d.public }); setD({ ...d, public: data.public }); toast({ title: data.public ? 'Year in Review is now public' : 'Year in Review hidden' }); }
+    try { const { data } = await api.put(`/admin/year-in-review/${year}`, { public: !d.public }); merge({ public: data.public }); toast({ title: data.public ? 'Year in Review is now public' : 'Year in Review hidden', description: data.email_queued ? 'The Year in Review email is being sent automatically.' : undefined }); }
     catch (err) { toast({ title: 'Update failed', description: err?.response?.data?.detail, variant: 'destructive' }); }
     finally { setBusy(false); }
   };
@@ -149,11 +222,15 @@ function YearInReviewAdmin() {
         </div>
       </div>
       {!d ? <Loader2 className="animate-spin text-[#B4247E]" /> : d.year ? (
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-          {stat('Raised', `$${Math.round(d.donations_total).toLocaleString()}`, 'yir-admin-raised')}{stat('Donors', d.donors, 'yir-admin-donors')}
-          {stat('Vol. hours', d.volunteer_hours, 'yir-admin-hours')}{stat('Volunteers', d.volunteers, 'yir-admin-volunteers')}
-          {stat('Sign-ups', d.signups, 'yir-admin-signups')}{stat('Stories', d.stories, 'yir-admin-stories')}
-        </div>
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+            {stat('Raised', `$${Math.round(d.donations_total).toLocaleString()}`, 'yir-admin-raised')}{stat('Donors', d.donors, 'yir-admin-donors')}
+            {stat('Vol. hours', d.volunteer_hours, 'yir-admin-hours')}{stat('Volunteers', d.volunteers, 'yir-admin-volunteers')}
+            {stat('Sign-ups', d.signups, 'yir-admin-signups')}{stat('Stories', d.stories, 'yir-admin-stories')}
+          </div>
+          <YirShareImage year={year} d={d} onSaved={merge} />
+          <YirEmail year={year} d={d} onSaved={merge} />
+        </>
       ) : <p className="text-[13px] text-red-600">Could not load this year.</p>}
     </div>
   );

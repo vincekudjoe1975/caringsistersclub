@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Loader2, Heart, Clock3, Users, BookOpen, UserPlus, HandHeart, Link2, Check } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, BACKEND_URL } from '../lib/api';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
 import { TestimonialCard } from '../components/TestimonialCard';
@@ -22,7 +22,7 @@ function Stat({ icon: Icon, value, label, id, delay }) {
 
 export function ShareBar({ year }) {
   const [copied, setCopied] = useState(false);
-  const url = window.location.href;
+  const url = `${BACKEND_URL}/api/share/year-in-review/${year}`;
   const text = `See what The Caring Sisters Club achieved together in ${year}!`;
   const e = encodeURIComponent;
   const links = [

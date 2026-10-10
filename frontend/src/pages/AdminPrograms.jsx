@@ -7,7 +7,7 @@ import { useSignupReport, Trend } from './AdminReports';
 import { uploadImage, imgSrc } from '../lib/useHomeContent';
 import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, X, UploadCloud, Tags, ExternalLink } from 'lucide-react';
 
-const EMPTY = { title: '', category: '', image_url: '', summary: '', body: '', goals: [], impact: [], cta_text: 'Get Involved', cta_link: '/volunteer', published: true, gallery: [], testimonials: [], home_testimonial_ids: [], capacity: 0 };
+const EMPTY = { title: '', category: '', image_url: '', summary: '', body: '', goals: [], impact: [], cta_text: 'Get Involved', cta_link: '/volunteer', published: true, gallery: [], testimonials: [], home_testimonial_ids: [], capacity: 0, waitlist_mode: 'claim' };
 const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E] bg-white';
 const Field = ({ label, children }) => <div><label className="text-[13px] font-semibold text-[#3B0A2E]">{label}</label>{children}</div>;
 
@@ -100,9 +100,18 @@ function ProgramForm({ initial, categories, onClose, onSaved }) {
           <Field label="Button text"><input value={form.cta_text} onChange={set('cta_text')} data-testid="program-cta-text-input" className={input} /></Field>
           <Field label="Button link (e.g. /volunteer, /donate or https://…)"><input value={form.cta_link} onChange={set('cta_link')} data-testid="program-cta-link-input" className={input} /></Field>
         </div>
-        <Field label="Seat limit (0 = unlimited). When full, new sign-ups join a waitlist.">
-          <input type="number" min="0" value={form.capacity || 0} onChange={(e) => setForm({ ...form, capacity: Math.max(0, parseInt(e.target.value || '0', 10)) })} data-testid="program-capacity-input" className={input} />
-        </Field>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <Field label="Seat limit (0 = unlimited). When full, new sign-ups join a waitlist.">
+            <input type="number" min="0" value={form.capacity || 0} onChange={(e) => setForm({ ...form, capacity: Math.max(0, parseInt(e.target.value || '0', 10)) })} data-testid="program-capacity-input" className={input} />
+          </Field>
+          <Field label="When a seat opens up">
+            <select value={form.waitlist_mode || 'claim'} onChange={set('waitlist_mode')} data-testid="program-waitlist-mode-select" className={input}>
+              <option value="claim">Email next in line a 48-hour claim link</option>
+              <option value="auto">Move next in line in automatically</option>
+              <option value="broadcast">Email everyone waiting, first to claim wins</option>
+            </select>
+          </Field>
+        </div>
         <label className="flex items-center gap-2 text-[13.5px] text-[#3B0A2E] font-semibold">
           <input type="checkbox" checked={form.published} onChange={(e) => setForm({ ...form, published: e.target.checked })} data-testid="program-published-checkbox" className="accent-[#B4247E] w-4 h-4" /> Published (visible on the website)
         </label>

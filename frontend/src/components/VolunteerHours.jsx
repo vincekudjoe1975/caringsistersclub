@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, Clock3, CheckCircle2, Trophy } from 'lucide-react';
+import { Loader2, Clock3, CheckCircle2, Trophy, Award } from 'lucide-react';
 import { api } from '../lib/api';
 import { errMsg } from '../pages/Events';
 
 const inp = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E] bg-white';
 const today = () => new Date().toISOString().slice(0, 10);
+const BADGE_STYLE = {
+  10: { background: '#f2e6ee', color: '#B4247E' },
+  50: { background: '#fdf3e1', color: '#8a6a2c' },
+  100: { background: '#3B0A2E', color: '#CBA24B' },
+};
 
 export const LogHours = () => {
   const [programs, setPrograms] = useState([]);
@@ -83,7 +88,9 @@ export const Leaderboard = () => {
           {d.items.map((v, i) => (
             <li key={`${v.name}-${i}`} className="flex items-center gap-4 px-6 py-4" data-testid="leaderboard-row">
               <span className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-[14px]" style={i < 3 ? { background: ['#CBA24B', '#c0c4cc', '#c98a5a'][i], color: '#fff' } : { background: '#faf2f7', color: '#3B0A2E' }}>{i + 1}</span>
-              <span className="flex-1 font-semibold text-[#3B0A2E] text-[15px]" data-testid="leaderboard-name">{v.name}</span>
+              <span className="flex-1 font-semibold text-[#3B0A2E] text-[15px] flex items-center gap-2" data-testid="leaderboard-name">{v.name}
+                {v.badge && <span title={`${v.badge}-hour all-time badge`} data-testid="leaderboard-badge" className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full" style={BADGE_STYLE[v.badge]}><Award size={12} /> {v.badge}h</span>}
+              </span>
               <span className="font-serif text-[20px] font-bold text-[#B4247E]" data-testid="leaderboard-hours">{v.hours}h</span>
             </li>
           ))}
