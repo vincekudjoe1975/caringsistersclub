@@ -6133,7 +6133,7 @@ class RoleUpdate(BaseModel):
 
 @api_router.get("/admin/team")
 async def admin_team(user=Depends(require_admin)):
-    users = await db.users.find({}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    users = await db.users.find({"$or": [{"role": "admin"}, {"member_status": {"$exists": False}}]}, {"_id": 0}).sort("created_at", 1).to_list(500)
     allowed = await db.allowed_emails.find({}, {"_id": 0}).to_list(500)
     return {"users": users, "allowed_emails": [a["email"] for a in allowed], "me": user["user_id"]}
 
@@ -6188,6 +6188,370 @@ async def startup_indexes():
         await db.media.create_index("category")
     except Exception as e:
         logging.warning(f"Index creation warning: {e}")
+
+
+# ---------- Member Portal (bylaws, directory, announcements, discussion) ----------
+BYLAWS_SEED = ROOT_DIR / "assets" / "bylaws_v5.docx"
+_DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _is_member(user: dict) -> bool:
+    return user.get("role") == "admin" or user.get("member_status") == "active"
+
+
+async def require_member(request: Request):
+    user = await get_current_user(request)
+    if not _is_member(user):
+        raise HTTPException(status_code=403, detail="Members only")
+    return user
+
+
+def _parse_bylaws_docx(data: bytes) -> dict:
+    import docx
+    d = docx.Document(io.BytesIO(data))
+    intro, sections = [], []
+    for p in d.paragraphs:
+        t = p.text.strip()
+        if not t:
+            continue
+        if re.match(r"^ARTICLE\s+[IVXLC]+\b", t):
+            sections.append({"title": t, "paragraphs": []})
+        elif sections:
+            sections[-1]["paragraphs"].append(t)
+        else:
+            intro.append(t)
+    for tbl in d.tables:
+        rows = [" | ".join(c.text.strip() for c in r.cells) for r in tbl.rows]
+        if rows and sections:
+            sections[-1]["paragraphs"] += [r for r in rows if r.strip(" |")]
+    if not sections:
+        raise HTTPException(status_code=400, detail="Could not find any ARTICLE headings in this document.")
+    return {"intro": intro, "sections": sections}
+
+
+async def _save_bylaws(data: bytes, filename: str, uploader: str):
+    parsed = _parse_bylaws_docx(data)
+    fid = str(uuid.uuid4())
+    path = f"{APP_NAME}/member_doc/{fid}.docx"
+    try:
+        put_object(path, data, _DOCX_TYPE)
+    except Exception as e:
+        logging.error(f"Bylaws upload failed: {e}")
+        raise HTTPException(status_code=502, detail="File storage upload failed")
+    doc = {"key": "bylaws", "file_id": fid, "storage_path": path, "filename": filename[:120], **parsed,
+           "updated_at": _now_iso(), "updated_by": uploader}
+    await db.member_docs.update_one({"key": "bylaws"}, {"$set": doc}, upsert=True)
+
+
+@app.on_event("startup")
+async def seed_bylaws():
+    try:
+        if not await db.member_docs.find_one({"key": "bylaws"}, {"_id": 1}) and BYLAWS_SEED.exists():
+            await _save_bylaws(BYLAWS_SEED.read_bytes(), "Caring_Sisters_Club_Bylaws_Sept_2025_v5.docx", "seed")
+    except Exception as e:
+        logging.error(f"Bylaws seed failed: {e}")
+
+
+def _member_email_html(eyebrow: str, heading: str, body: str, cta_label: str, cta_path: str) -> str:
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header(eyebrow) +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:22px;margin:0 0 14px">{_esc(heading)}</h1>'
+        f'<p style="font-size:15px;line-height:1.7;color:#4a3340;margin:0 0 22px">{_esc(body).replace(chr(10), "<br/>")}</p>'
+        + _btn(f"{PUBLIC_APP_URL}{cta_path}", _esc(cta_label), primary=True) +
+        '</td></tr><tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif">'
+        '<p style="font-size:11px;color:#b79aae;margin:0">Sign in with your Google account. We never ask for your password by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _activate_invited(user: dict) -> bool:
+    inv = await db.member_invites.find_one_and_update(
+        {"email": (user.get("email") or "").lower(), "status": "pending"},
+        {"$set": {"status": "accepted", "accepted_at": _now_iso()}})
+    if not inv:
+        return False
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_status": "active", "member_since": _now_iso()}})
+    return True
+
+
+def _member_public(u: dict, viewer_admin: bool = False) -> dict:
+    p = u.get("member_profile") or {}
+    show = p.get("show_contact") or viewer_admin
+    return {"user_id": u["user_id"], "name": u.get("name") or "", "picture": u.get("picture") or "",
+            "city": p.get("city", ""), "bio": p.get("bio", ""), "member_since": u.get("member_since", ""),
+            "email": u.get("email", "") if show else "", "phone": p.get("phone", "") if show else ""}
+
+
+@api_router.get("/members/me")
+async def members_me(user=Depends(get_current_user)):
+    if user.get("member_status") != "active" and user.get("role") != "admin":
+        if await _activate_invited(user):
+            user = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    status = "active" if _is_member(user) else (user.get("member_status") or "none")
+    return {"status": status, "user_id": user["user_id"], "is_admin": user.get("role") == "admin", "name": user.get("name"), "email": user.get("email"),
+            "picture": user.get("picture"), "profile": user.get("member_profile") or {}, "application": user.get("member_application") or {},
+            "member_since": user.get("member_since", "")}
+
+
+class MemberApplication(BaseModel):
+    phone: str = ""
+    city: str
+    referred_by: str
+    why: str = ""
+    is_adult: bool
+    is_delaware: bool
+    agrees_bylaws: bool
+
+
+@api_router.post("/members/apply")
+async def members_apply(payload: MemberApplication, request: Request, background: BackgroundTasks, user=Depends(get_current_user)):
+    _rate_limit(request, "member-apply", max_hits=5, window_s=600)
+    if _is_member(user):
+        return {"status": "active"}
+    if not (payload.is_adult and payload.is_delaware and payload.agrees_bylaws):
+        raise HTTPException(status_code=400, detail="Membership is open to women 18+ living in Delaware who agree to our bylaws.")
+    if not payload.city.strip() or not payload.referred_by.strip():
+        raise HTTPException(status_code=400, detail="Please share your city and the member who referred you.")
+    app_doc = {"phone": payload.phone.strip()[:30], "city": payload.city.strip()[:80], "referred_by": payload.referred_by.strip()[:120],
+               "why": payload.why.strip()[:1500], "submitted_at": _now_iso()}
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_status": "applied", "member_application": app_doc,
+                              "member_profile": {"city": app_doc["city"], "phone": app_doc["phone"], "bio": "", "show_contact": False}}})
+    background.add_task(_notify_staff, "member", {"name": user.get("name"), "email": user.get("email"), **{k: v for k, v in app_doc.items() if k != "submitted_at"}})
+    return {"status": "applied"}
+
+
+class MemberProfile(BaseModel):
+    city: str = ""
+    phone: str = ""
+    bio: str = ""
+    show_contact: bool = False
+
+
+@api_router.put("/members/profile")
+async def members_profile(payload: MemberProfile, user=Depends(require_member)):
+    prof = {"city": payload.city.strip()[:80], "phone": payload.phone.strip()[:30], "bio": payload.bio.strip()[:600], "show_contact": payload.show_contact}
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_profile": prof}})
+    return prof
+
+
+@api_router.get("/members/bylaws")
+async def members_bylaws(user=Depends(require_member)):
+    doc = await db.member_docs.find_one({"key": "bylaws"}, {"_id": 0, "storage_path": 0})
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Bylaws have not been uploaded yet.")
+    return doc
+
+
+@api_router.get("/members/bylaws/file")
+async def members_bylaws_file(user=Depends(require_member)):
+    doc = await db.member_docs.find_one({"key": "bylaws"}, {"_id": 0})
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        data, _ = get_object(doc["storage_path"])
+    except Exception as e:
+        logging.error(f"Bylaws fetch failed: {e}")
+        raise HTTPException(status_code=404, detail="File missing")
+    return Response(content=data, media_type=_DOCX_TYPE, headers={
+        "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store",
+        "Content-Disposition": 'attachment; filename="Caring_Sisters_Club_Bylaws.docx"'})
+
+
+@api_router.get("/members/directory")
+async def members_directory(user=Depends(require_member)):
+    rows = await db.users.find({"member_status": "active"}, {"_id": 0}).sort("name", 1).to_list(2000)
+    return [_member_public(u, user.get("role") == "admin") for u in rows]
+
+
+@api_router.get("/members/announcements")
+async def members_announcements(user=Depends(require_member)):
+    return await db.member_announcements.find({}, {"_id": 0}).sort([("pinned", -1), ("created_at", -1)]).to_list(200)
+
+
+class PostIn(BaseModel):
+    title: str = ""
+    body: str
+
+
+@api_router.get("/members/threads")
+async def members_threads(user=Depends(require_member)):
+    return await db.member_threads.find({}, {"_id": 0, "replies": 0}).sort("last_activity", -1).to_list(300)
+
+
+@api_router.get("/members/threads/{tid}")
+async def members_thread(tid: str, user=Depends(require_member)):
+    t = await db.member_threads.find_one({"id": tid}, {"_id": 0})
+    if t is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return t
+
+
+def _author(user: dict) -> dict:
+    return {"author_id": user["user_id"], "author_name": user.get("name") or "Member", "author_picture": user.get("picture") or ""}
+
+
+@api_router.post("/members/threads")
+async def members_new_thread(payload: PostIn, request: Request, user=Depends(require_member)):
+    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    title, body = payload.title.strip()[:140], payload.body.strip()[:5000]
+    if not title or not body:
+        raise HTTPException(status_code=400, detail="Please add a title and a message.")
+    now = _now_iso()
+    t = {"id": str(uuid.uuid4()), "title": title, "body": body, **_author(user), "created_at": now, "last_activity": now, "reply_count": 0, "replies": []}
+    await db.member_threads.insert_one(dict(t))
+    return t
+
+
+@api_router.post("/members/threads/{tid}/replies")
+async def members_reply(tid: str, payload: PostIn, request: Request, user=Depends(require_member)):
+    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    body = payload.body.strip()[:3000]
+    if not body:
+        raise HTTPException(status_code=400, detail="Please write a reply.")
+    r = {"id": str(uuid.uuid4()), "body": body, **_author(user), "created_at": _now_iso()}
+    res = await db.member_threads.update_one({"id": tid}, {"$push": {"replies": r}, "$inc": {"reply_count": 1}, "$set": {"last_activity": r["created_at"]}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return r
+
+
+@api_router.delete("/members/threads/{tid}")
+async def members_delete_thread(tid: str, user=Depends(require_member)):
+    q = {"id": tid} if user.get("role") == "admin" else {"id": tid, "author_id": user["user_id"]}
+    if not (await db.member_threads.delete_one(q)).deleted_count:
+        raise HTTPException(status_code=403, detail="You can only delete your own conversations.")
+    return {"ok": True}
+
+
+@api_router.delete("/members/threads/{tid}/replies/{rid}")
+async def members_delete_reply(tid: str, rid: str, user=Depends(require_member)):
+    match = {"id": rid} if user.get("role") == "admin" else {"id": rid, "author_id": user["user_id"]}
+    res = await db.member_threads.update_one({"id": tid, "replies": {"$elemMatch": match}}, {"$pull": {"replies": {"id": rid}}, "$inc": {"reply_count": -1}})
+    if not res.modified_count:
+        raise HTTPException(status_code=403, detail="You can only delete your own replies.")
+    return {"ok": True}
+
+
+# --- Admin: members ---
+@api_router.get("/admin/members")
+async def admin_members(user=Depends(require_admin)):
+    rows = await db.users.find({"member_status": {"$in": ["applied", "active", "declined", "suspended"]}}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    invites = await db.member_invites.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    out = [{**_member_public(u, True), "status": u["member_status"], "application": u.get("member_application") or {}} for u in rows]
+    return {"members": out, "invites": invites}
+
+
+class MemberAction(BaseModel):
+    action: str
+
+
+@api_router.post("/admin/members/{uid}/status")
+async def admin_member_status(uid: str, payload: MemberAction, background: BackgroundTasks, user=Depends(require_admin)):
+    new = {"approve": "active", "decline": "declined", "suspend": "suspended", "reinstate": "active"}.get(payload.action)
+    if not new:
+        raise HTTPException(status_code=400, detail="Invalid action")
+    target = await db.users.find_one({"user_id": uid, "member_status": {"$exists": True}}, {"_id": 0})
+    if target is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+    upd = {"member_status": new}
+    if new == "active" and not target.get("member_since"):
+        upd["member_since"] = _now_iso()
+    await db.users.update_one({"user_id": uid}, {"$set": upd})
+    if payload.action == "approve" and target.get("email"):
+        first = (target.get("name") or "Sister").split(" ")[0]
+        background.add_task(send_email, to=target["email"], subject="Welcome to the Caring Sisters Club member portal",
+                            html=_member_email_html("Welcome, Sister", f"Welcome, {first}!",
+                                                    "Your membership has been approved. You can now read our bylaws, meet fellow members in the directory, see announcements and join the conversation.",
+                                                    "Open the member portal", "/members"))
+    return {"status": new}
+
+
+class InviteIn(BaseModel):
+    email: str
+    name: str = ""
+
+
+@api_router.post("/admin/members/invite")
+async def admin_member_invite(payload: InviteIn, background: BackgroundTasks, user=Depends(require_admin)):
+    email = payload.email.strip().lower()
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+    existing = await db.users.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0})
+    if existing and _is_member(existing):
+        raise HTTPException(status_code=400, detail="This person is already a member.")
+    await db.member_invites.update_one({"email": email}, {"$set": {"email": email, "name": payload.name.strip()[:80], "status": "pending",
+                                       "invited_by": user.get("email"), "created_at": _now_iso()}}, upsert=True)
+    if existing:
+        await _activate_invited(existing)
+    first = payload.name.strip().split(" ")[0] if payload.name.strip() else "Sister"
+    background.add_task(send_email, to=email, subject="You're invited to the Caring Sisters Club member portal",
+                        html=_member_email_html("Member Invitation", f"Hello {first},",
+                                                "You've been invited to join the Caring Sisters Club member portal. Sign in with the Google account for this email address to get started.",
+                                                "Join the member portal", "/members"))
+    return {"ok": True}
+
+
+@api_router.delete("/admin/members/invite/{email}")
+async def admin_member_invite_delete(email: str, user=Depends(require_admin)):
+    await db.member_invites.delete_one({"email": email.strip().lower(), "status": "pending"})
+    return {"ok": True}
+
+
+class AnnouncementIn(BaseModel):
+    title: str
+    body: str
+    pinned: bool = False
+    email_members: bool = False
+
+
+@api_router.post("/admin/members/announcements")
+async def admin_announce(payload: AnnouncementIn, background: BackgroundTasks, user=Depends(require_admin)):
+    title, body = payload.title.strip()[:140], payload.body.strip()[:5000]
+    if not title or not body:
+        raise HTTPException(status_code=400, detail="Please add a title and a message.")
+    a = {"id": str(uuid.uuid4()), "title": title, "body": body, "pinned": payload.pinned, "author_name": user.get("name") or "Staff", "created_at": _now_iso()}
+    await db.member_announcements.insert_one(dict(a))
+    if payload.email_members:
+        background.add_task(_email_announcement, a)
+    return a
+
+
+async def _email_announcement(a: dict):
+    rows = await db.users.find({"member_status": "active", "email": {"$nin": [None, ""]}}, {"_id": 0, "email": 1}).to_list(2000)
+    html = _member_email_html("Member Announcement", a["title"], a["body"][:1500], "Read in the member portal", "/members")
+    for r in rows:
+        await send_email(to=r["email"], subject=f"Announcement: {a['title']}"[:150], html=html)
+
+
+@api_router.delete("/admin/members/announcements/{aid}")
+async def admin_announce_delete(aid: str, user=Depends(require_admin)):
+    await db.member_announcements.delete_one({"id": aid})
+    return {"ok": True}
+
+
+@api_router.post("/admin/members/bylaws")
+async def admin_bylaws_upload(file: UploadFile = File(...), user=Depends(require_admin)):
+    if not (file.filename or "").lower().endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Please upload the bylaws as a Word (.docx) file.")
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 10 MB.")
+    try:
+        await _save_bylaws(data, file.filename, user.get("email"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Bylaws parse failed: {e}")
+        raise HTTPException(status_code=400, detail="We couldn't read that Word file.")
+    return await db.member_docs.find_one({"key": "bylaws"}, {"_id": 0, "storage_path": 0})
+
+
+@api_router.get("/admin/members/bylaws")
+async def admin_bylaws_info(user=Depends(require_admin)):
+    return await db.member_docs.find_one({"key": "bylaws"}, {"_id": 0, "filename": 1, "updated_at": 1, "updated_by": 1}) or {}
 
 
 # Include the router in the main app

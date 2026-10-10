@@ -28,7 +28,7 @@ export default function AuthCallback() {
         const { data } = await api.post('/auth/session', { session_id: sessionId });
         setUser(data);
         window.history.replaceState(null, '', window.location.pathname);
-        navigate('/admin', { state: { user: data } });
+        navigate(window.location.pathname === '/members' ? '/members' : '/admin', { state: { user: data } });
       } catch (e) {
         navigate('/login');
       }

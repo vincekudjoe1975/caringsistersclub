@@ -15,9 +15,10 @@ import AdminHome from './AdminHome';
 import AdminAbout from './AdminAbout';
 import AdminStories from './AdminStories';
 import AdminReports from './AdminReports';
+import AdminMembers from './AdminMembers';
 import { SiteUrlBanner } from '../components/SiteUrlBanner';
 import { useToast } from '../hooks/use-toast';
-import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote, BarChart3 } from 'lucide-react';
+import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote, BarChart3, HeartHandshake } from 'lucide-react';
 
 const TABS = [
   { key: 'gallery', label: 'Gallery Photos', icon: ImageIcon, accept: 'image/*', titleLabel: 'Caption', subLabel: '' },
@@ -156,6 +157,7 @@ export default function Admin() {
             { k: 'donations', l: 'Donations', icon: DollarSign },
             { k: 'donors', l: 'Donors', icon: UserSearch },
             { k: 'campaign', l: 'Campaign', icon: Target },
+            { k: 'members', l: 'Members', icon: HeartHandshake },
             { k: 'team', l: 'Team Access', icon: ShieldCheck },
           ].map((v) => {
             const Icon = v.icon;
@@ -191,6 +193,8 @@ export default function Admin() {
           <AdminDonors />
         ) : view === 'campaign' ? (
           <AdminCampaign />
+        ) : view === 'members' ? (
+          <AdminMembers />
         ) : view === 'team' ? (
           <AdminTeam currentUserId={user?.user_id} />
         ) : (

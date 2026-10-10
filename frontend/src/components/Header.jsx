@@ -50,7 +50,8 @@ export default function Header() {
 
         <div className="hidden lg:flex items-center gap-3">
           <Link
-            to="/volunteer"
+            to="/members"
+            data-testid="header-member-login"
             className="text-[13px] text-[#F7EFE9]/85 hover:text-[#F7EFE9] flex items-center gap-1.5 transition-colors"
           >
             <LogIn size={15} /> Member Login
@@ -90,7 +91,7 @@ export default function Header() {
                     {item.label}
                   </NavLink>
                 ))}
-                <Link to="/volunteer" className="py-3 text-[16px] border-b border-white/10 text-[#F7EFE9]/90 flex items-center gap-2">
+                <Link to="/members" data-testid="mobile-member-login" className="py-3 text-[16px] border-b border-white/10 text-[#F7EFE9]/90 flex items-center gap-2">
                   <LogIn size={16} /> Member Login
                 </Link>
                 <Link to="/donate" className="btn-magenta rounded-full px-6 py-3 text-center font-semibold mt-6">

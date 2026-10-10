@@ -33,6 +33,8 @@ import Feedback from './pages/Feedback';
 import SeatRelease from './pages/SeatRelease';
 import SisterhoodPage from './pages/SisterhoodPage';
 import FeatureMyWords from './pages/FeatureMyWords';
+import Members from './pages/Members';
+import Membership from './pages/Membership';
 import { Loader2 } from 'lucide-react';
 
 function ScrollToTop() {
@@ -87,6 +89,8 @@ function Shell() {
           <Route path="/release" element={<SeatRelease />} />
           <Route path="/sisterhood/:token" element={<SisterhoodPage />} />
           <Route path="/feature-my-words" element={<FeatureMyWords />} />
+          <Route path="/members" element={<Members />} />
+          <Route path="/membership" element={<Membership />} />
           <Route path="/events" element={<Events />} />
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/transparency" element={<Transparency />} />
