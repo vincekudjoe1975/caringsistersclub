@@ -153,3 +153,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 
 ## 2026 — Real contact info
 - org (mock.js): 600 Greenspring Terrace, Bear, DE 19701; (302) 414-5788; info@caringsistersclub.org; Mon–Fri 8–5 ET; socials YouTube/Facebook/Instagram/TikTok via new components/SocialLinks.jsx (footer + Contact "Follow Our Sisterhood"). Phone/email/address clickable. Sample-placeholder notes removed.
+
+## 2026 — Transparency editor, Event Waitlist, Add to Calendar, Donor Self-Service (iteration_5: 100%)
+- Transparency: settings doc key 'transparency' (breakdown must total 100%, stats, yearly financials, reports 990/annual/audit/other). Public GET /api/transparency, admin PUT /api/admin/transparency; Admin → Transparency tab; public page + Home stats read it (lib/useTransparency.js). "(Illustrative figures.)" shown until first publish. Media category 'report' accepts PDFs.
+- Waitlist: event.waitlist_mode auto|invite. POST /api/events/{id}/waitlist; _process_waitlist runs on RSVP removal/cancel, event update, hourly + daily. Invite = 24h held seat (counts against spots_left), claim at /rsvp?token=. RSVP confirmation emails include cancel link (/rsvp?token=cancel_token). Admin RSVP panel shows waitlist with statuses.
+- Calendar: Google Calendar link + /api/events/{id}/calendar.ics (times assumed ET, 2h duration, all-day if time unparseable) in confirm/reminder/promoted emails and on site.
+- Donor self-service: /manage-gift page → POST /api/donor/manage-link (generic reply, 1h one-time token) → POST /api/donor/portal → Stripe Billing Portal (card update, cancel at period end, invoices; config auto-created per test/live key). Monthly receipts include reusable 60-day "Manage your gift" link. Footer + Donate (monthly) links.
+- QA helper: backend/tests/qa_session.py up|down (temp admin cookie qa_tok_123).

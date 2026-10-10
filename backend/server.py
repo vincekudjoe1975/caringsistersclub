@@ -2152,7 +2152,7 @@ async def create_rsvp(eid: str, payload: RsvpIn, request: Request, background: B
 
 @api_router.post("/events/{eid}/waitlist")
 async def join_waitlist(eid: str, payload: RsvpIn, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "rsvp", max_hits=5, window_s=60)
+    _rate_limit(request, "waitlist", max_hits=5, window_s=60)
     name, email, guests = _validate_rsvp_input(payload)
     ev = await _open_event(eid)
     if await db.event_rsvps.find_one({"event_id": eid, "email": email}):
@@ -2657,6 +2657,7 @@ async def _daily_scheduler():
             # Daily: day-before reminders for event RSVPs
             await _send_event_reminders()
             await _process_all_waitlists()
+            await db.donor_manage_tokens.delete_many({"expires_at": {"$lt": datetime.now(timezone.utc).isoformat()}})
         except Exception as e:
             logging.error(f"Daily scheduler error: {e}")
         await asyncio.sleep(24 * 60 * 60)  # once per day

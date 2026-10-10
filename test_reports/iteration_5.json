@@ -1,0 +1,54 @@
+{
+  "summary": "Comprehensive backend + UI testing of the 4 new feature sets: Transparency editor (admin publish w/ 100% validation + public reflection + report URL validation), Event Waitlist auto-mode (RSVP fills, waitlist join+dup, auto-promote on RSVP removal), Event Waitlist invite-mode (invited status with token hold, claim-spot token flow, already-claimed state, invalid token 404), RSVP cancel token flow, Add-to-Calendar ICS endpoint (text/calendar), Donor Self-Service manage-link (generic reply, invalid email 400, bogus portal token 410, real monthly-donor portal session returning billing.stripe.com URL and token single-use enforcement). Added /app/backend/tests/test_review_features.py (17 tests, 17/17 PASS after rate-limit tuning). UI smoke tested: Admin Transparency tab publish+validation+'Last published' status, public /transparency shows 82\u00a2 headline + 3 spend rows (no 'Illustrative figures.'), /manage-gift email flow + ?token=bogus + ?done=1 + footer-manage-gift-link, donate-manage-note visible on Monthly, Events page RSVP w/ add-google-calendar + add-apple-calendar links (apple href = /api/events/{id}/calendar.ics), event-waitlist-btn appears once full, waitlist-success shows position. Cleanup done: QA session+user removed, QA events/RSVPs/waitlist/manage-tokens deleted, transparency doc restored to default, staff_notify_email restored to caringsistersclub@gmail.com, 1 real monthly donor preserved.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_results": [
+    {"case": "GET /api/transparency defaults when unset (updated_at null, 3 default breakdown rows)", "status": "PASS"},
+    {"case": "PUT /api/admin/transparency rejects breakdown sum != 100 (400 with '100' in detail)", "status": "PASS"},
+    {"case": "PUT /api/admin/transparency requires admin (401/403)", "status": "PASS"},
+    {"case": "PUT /api/admin/transparency full publish persists breakdown/stats/financials/reports; public GET reflects it; financials sorted desc", "status": "PASS"},
+    {"case": "PUT /api/admin/transparency rejects report with non-https/non-media url (400)", "status": "PASS"},
+    {"case": "RSVP capacity=1 fills last seat, returns gcal_url + ics_url", "status": "PASS"},
+    {"case": "RSVP on full event returns 409 'full/waitlist'", "status": "PASS"},
+    {"case": "GET /api/events/{id}/calendar.ics returns text/calendar with VCALENDAR/VEVENT", "status": "PASS"},
+    {"case": "POST /api/events/{id}/waitlist join (position 1); duplicate email 409", "status": "PASS"},
+    {"case": "Delete RSVP in auto-mode auto-promotes waitlister to RSVP (status=promoted + new rsvp doc)", "status": "PASS"},
+    {"case": "Invite mode: delete RSVP marks waitlister 'invited' with token (NO new rsvp); token info kind=claim state=open; POST token claims (done=claimed + ics_url); reopening -> state=claimed; invalid token 404", "status": "PASS"},
+    {"case": "RSVP cancel token: GET returns kind=cancel; POST deletes rsvp (done=cancelled)", "status": "PASS"},
+    {"case": "GET /api/donor/manage-token/{bogus} returns valid=false", "status": "PASS"},
+    {"case": "POST /api/donor/portal with bogus token => 410", "status": "PASS"},
+    {"case": "POST /api/donor/manage-link unknown email returns generic 'secure link' message (no enumeration)", "status": "PASS"},
+    {"case": "POST /api/donor/manage-link invalid email => 400", "status": "PASS"},
+    {"case": "Real monthly donor portal: inserted qa_manage_tok, GET info valid=true, POST portal => url contains billing.stripe.com; reuse => 410", "status": "PASS"},
+    {"case": "UI Admin -> admin-view-transparency -> admin-transparency panel; spend-total 100.0% initial; set pct 50 -> 68% red; save -> error toast; fix to 82 -> publish -> transparency-status 'Last published ...'; add-spend-btn/add-stat-btn/add-financial-btn present", "status": "PASS"},
+    {"case": "UI /transparency after publish: transparency-headline '82\u00a2', 3 spend-breakdown rows, no 'Illustrative figures.'", "status": "PASS"},
+    {"case": "UI /manage-gift: email -> manage-link-sent; ?token=bogus -> manage-token-invalid; ?done=1 -> manage-done; footer-manage-gift-link present", "status": "PASS"},
+    {"case": "UI /donate Monthly: donate-manage-note visible", "status": "PASS"},
+    {"case": "UI /events: event-rsvp-btn -> fills form -> rsvp-success with add-google-calendar + add-apple-calendar (href=/api/events/{id}/calendar.ics); event-waitlist-btn appears when full; waitlist-success #1", "status": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_review_features.py",
+    "/app/test_reports/pytest/review_features.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 2853 lines - violates the file-size guideline (<700). Suggest splitting into modules: transparency.py, events.py, donor_manage.py, media.py, admin_donations.py. Low risk, high maintainability win.",
+    "_rate_limit shared 'rsvp' bucket for POST /events/{id}/rsvp AND /events/{id}/waitlist at 5/min/IP: a legitimate flow where a user RSVPs, hits capacity-conflict, then is prompted to join waitlist can trip the limit in corner cases (shared counter). Consider either separate buckets or raising to 10/min.",
+    "/api/events/{eid}/calendar.ics is public (no event_id secrecy) - any guesser with event id can download the ICS. Acceptable since event listing is already public, but note: it also returns ICS for past-dated events (no date filter), unlike public /events which filters today>=. Minor.",
+    "donor_portal() stores Stripe portal configuration id in settings doc keyed by 'stripe_portal_config_{live|test}'. The fallback on InvalidRequestError re-creates and overwrites but if Stripe is temporarily down, the except catches the ORIGINAL InvalidRequestError only (not other types) - a 500 from Stripe will raise 502 (good) but the recovery branch could log the reason explicitly for ops visibility.",
+    "AdminTransparency.jsx: PDF upload uses /api/media endpoint - file size/type validation lives server-side only. Consider frontend file-size preflight (e.g., >10MB) to avoid wasted uploads.",
+    "Transparency.jsx: transparency-headline uses Math.round(headline) \u00a2 where headline is the first breakdown row's pct - if an admin reorders breakdown so Programs isn't first, the headline will reflect the first row (not necessarily Programs). Document to admins or always compute from the 'Programs & Services' label.",
+    "_claim_state treats missing invite_expires as 'expired' via string comparison with _now_iso() - safe but implicit. Consider explicit None check.",
+    "donor_manage_tokens collection lacks a TTL index; expired tokens accumulate forever. Add a MongoDB TTL index on expires_at (converted to date) or periodic cleanup."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_review_features.py"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "100% (all key testids verified)"},
+  "test_credentials": "Temp admin seeded via qa_session.py up (user_id=qa_user, session_token=qa_tok_123, email=qa@example.com, role=admin) and DELETED via qa_session.py down. Real admins untouched. Real monthly donor markj@testme.com (sub_1UMkjjLiEefNWkHqMekvrieE) preserved - verified Stripe test portal session can be created but we did NOT touch the subscription itself.",
+  "seed_data_creation": "During tests: 1 QA admin user+session, 3 QA events (deleted), QA RSVPs/waitlist entries @example.com (deleted), 1 QA donor_manage_token (deleted), 1 QA transparency settings doc (deleted after tests per review request). Post-test state verified: 0 QA artefacts remain; staff_notify_email restored to caringsistersclub@gmail.com; transparency returns to defaults.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Rate limits to pace: /events/{id}/rsvp and /events/{id}/waitlist share 'rsvp' bucket 5/min/IP; /donor/manage-link 3 per 5 min; /donor/portal 10/min; /events/token/{t} 20/min. The invite-mode flow requires >60s sleep between RSVP+waitlist+new RSVP against the same event. Admin cookie flow: qa_session.py up seeds session_token=qa_tok_123 and blanks staff_notify_email; always call qa_session.py down after. For real-donor portal tests, insert donor_manage_tokens doc manually (kind='request', used=false, expires_at=+1h) and delete afterward. Transparency settings doc at {key:'transparency'} must be deleted after any QA edits so public page shows defaults again.",
+  "rca of the issue": "No issues found - all features working as spec. One intermittent 429 during initial run of TestWaitlistInvite was due to shared RSVP rate limiter; mitigated by adding 65s sleep at start of test (and documented in context_for_next_testing_agent)."
+}
