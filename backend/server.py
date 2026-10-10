@@ -330,6 +330,18 @@ async def get_media_file(item_id: str):
     )
 
 
+@api_router.get("/brand/logo")
+async def get_brand_logo():
+    path = ROOT_DIR / "brand_logo.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Logo not found")
+    return Response(
+        content=path.read_bytes(),
+        media_type="image/png",
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=604800"},
+    )
+
+
 @api_router.delete("/media/{item_id}")
 async def delete_media(item_id: str, user=Depends(require_admin)):
     item = await db.media.find_one({"id": item_id}, {"_id": 0})
@@ -473,7 +485,8 @@ async def _record_paid_donation(session_id: str, txn: dict, recipient_email: str
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     if donor_email:
-        html = _receipt_html(donor_name, txn.get("amount"), txn.get("frequency"))
+        _s = await _get_settings()
+        html = _receipt_html(donor_name, txn.get("amount"), txn.get("frequency"), ein=_s.get("org_ein", ""))
         await send_email(
             to=donor_email,
             subject="Thank you for your gift to The Caring Sisters Club",
@@ -583,7 +596,8 @@ async def _handle_recurring_renewal(invoice: dict):
     await db.payment_transactions.insert_one(txn)
     if email:
         donor_name = (txn["donor_name"] or "").strip() or "Friend"
-        html = _receipt_html(donor_name, amount, "monthly")
+        _s = await _get_settings()
+        html = _receipt_html(donor_name, amount, "monthly", ein=_s.get("org_ein", ""))
         await send_email(
             to=email,
             subject="Your recurring gift to The Caring Sisters Club",
@@ -758,16 +772,28 @@ async def send_email(*, to: str, subject: str, html: str, reply_to: str = None):
         return None
 
 
-def _receipt_html(name: str, amount, frequency: str) -> str:
+PUBLIC_APP_URL = os.environ.get("PUBLIC_APP_URL", "https://caring-sisters-clone.preview.emergentagent.com").rstrip("/")
+
+
+def _brand_header(eyebrow: str) -> str:
+    return (
+        '<tr><td style="background:#3B0A2E;padding:24px 32px;color:#F7EFE9;text-align:center">'
+        f'<img src="{PUBLIC_APP_URL}/api/brand/logo" alt="The Caring Sisters Club" width="64" height="64" '
+        'style="display:block;margin:0 auto 10px;border-radius:50%;background:#fff" />'
+        '<div style="font-family:Georgia,serif;font-size:19px;font-weight:bold;letter-spacing:1px">The Caring Sisters Club</div>'
+        f'<div style="font-size:11px;color:#CBA24B;letter-spacing:3px;text-transform:uppercase;margin-top:4px">{_esc(eyebrow)}</div>'
+        '</td></tr>'
+    )
+
+
+def _receipt_html(name: str, amount, frequency: str, ein: str = "") -> str:
     freq_txt = "monthly" if frequency == "monthly" else "one-time"
+    ein_txt = f" (EIN {_esc(ein)})" if ein else ""
     return (
         '<table role="presentation" width="100%" style="background:#f7efe9;padding:0;margin:0">'
         '<tr><td align="center" style="padding:28px 16px;font-family:Georgia,\'Times New Roman\',serif">'
         '<table role="presentation" width="600" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden">'
-        '<tr><td style="background:#3B0A2E;padding:28px 32px;color:#F7EFE9">'
-        '<div style="font-size:20px;font-weight:bold;letter-spacing:1px">The Caring Sisters Club</div>'
-        '<div style="font-size:11px;color:#CBA24B;letter-spacing:3px;text-transform:uppercase;margin-top:4px">Love &middot; Respect &middot; Empowerment</div>'
-        '</td></tr>'
+        + _brand_header("Love \u00b7 Respect \u00b7 Empowerment") +
         '<tr><td style="padding:32px;font-family:Arial,Helvetica,sans-serif;color:#241019">'
         f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 16px">Thank you, {_esc(name)}!</h1>'
         f'<p style="font-size:15px;line-height:1.6;color:#4a3340;margin:0 0 16px">Your generosity fuels professional empowerment, housing support, and community care for women across the Diaspora. We are deeply grateful for your {freq_txt} gift.</p>'
@@ -775,7 +801,7 @@ def _receipt_html(name: str, amount, frequency: str) -> str:
         f'<tr><td style="padding:18px 22px;font-size:14px;color:#3B0A2E">Gift amount</td>'
         f'<td align="right" style="padding:18px 22px;font-size:20px;font-weight:bold;color:#B4247E">${_esc(str(amount))}{" / month" if frequency=="monthly" else ""}</td></tr>'
         '</table>'
-        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:0 0 8px">This email serves as your donation receipt. The Caring Sisters Club, Inc. is a 501(c)(3) tax-exempt organization (EIN 88-1234567, sample). Your contribution is tax-deductible to the extent allowed by law. No goods or services were provided in exchange for this gift.</p>'
+        f'<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:0 0 8px">This email serves as your donation receipt. The Caring Sisters Club, Inc. is a 501(c)(3) tax-exempt organization{ein_txt}. Your contribution is tax-deductible to the extent allowed by law. No goods or services were provided in exchange for this gift.</p>'
         '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:16px 0 0">With gratitude,<br/>The Caring Sisters Club</p>'
         '</td></tr>'
         '<tr><td style="background:#29061F;padding:18px 32px;font-family:Arial,sans-serif">'
@@ -876,6 +902,9 @@ DEFAULT_SETTINGS = {
     "thankyou_threshold": 250.0,
     "thankyou_sender_name": "Fem Mansaray, Founder & President",
     "thankyou_note": "On behalf of our entire board and the women we serve, I wanted to personally thank you. Gifts like yours are transformational, and we are honored to have you in our sisterhood.",
+    "org_ein": "",
+    "lapsed_autoemail_enabled": True,
+    "lapsed_cooldown_days": 30,
 }
 
 
@@ -892,6 +921,9 @@ async def _get_settings():
         "thankyou_threshold": float(doc.get("thankyou_threshold") or DEFAULT_SETTINGS["thankyou_threshold"]),
         "thankyou_sender_name": doc.get("thankyou_sender_name") or DEFAULT_SETTINGS["thankyou_sender_name"],
         "thankyou_note": doc.get("thankyou_note") or DEFAULT_SETTINGS["thankyou_note"],
+        "org_ein": doc.get("org_ein", DEFAULT_SETTINGS["org_ein"]),
+        "lapsed_autoemail_enabled": doc.get("lapsed_autoemail_enabled", DEFAULT_SETTINGS["lapsed_autoemail_enabled"]),
+        "lapsed_cooldown_days": int(doc.get("lapsed_cooldown_days") or DEFAULT_SETTINGS["lapsed_cooldown_days"]),
     }
 
 
@@ -904,6 +936,9 @@ class SettingsUpdate(BaseModel):
     thankyou_threshold: Optional[float] = None
     thankyou_sender_name: Optional[str] = None
     thankyou_note: Optional[str] = None
+    org_ein: Optional[str] = None
+    lapsed_autoemail_enabled: Optional[bool] = None
+    lapsed_cooldown_days: Optional[int] = None
 
 
 @api_router.get("/settings")
@@ -947,6 +982,12 @@ async def update_settings(payload: SettingsUpdate, user=Depends(require_admin)):
         update["thankyou_sender_name"] = payload.thankyou_sender_name.strip()
     if payload.thankyou_note is not None:
         update["thankyou_note"] = payload.thankyou_note.strip()
+    if payload.org_ein is not None:
+        update["org_ein"] = payload.org_ein.strip()
+    if payload.lapsed_autoemail_enabled is not None:
+        update["lapsed_autoemail_enabled"] = bool(payload.lapsed_autoemail_enabled)
+    if payload.lapsed_cooldown_days is not None:
+        update["lapsed_cooldown_days"] = max(1, int(payload.lapsed_cooldown_days))
     if update:
         await db.settings.update_one({"key": "site"}, {"$set": update}, upsert=True)
     return await _get_settings()
@@ -1321,10 +1362,11 @@ async def send_test_receipt(user=Depends(require_admin)):
     to = (user.get("email") or "").strip()
     if not to:
         raise HTTPException(status_code=400, detail="Your admin account has no email on file")
+    _s = await _get_settings()
     result = await send_email(
         to=to,
         subject="Test receipt — The Caring Sisters Club",
-        html=_receipt_html(user.get("name") or "Friend", 100, "one-time"),
+        html=_receipt_html(user.get("name") or "Friend", 100, "one-time", ein=_s.get("org_ein", "")),
     )
     if result is None:
         return {"sent": False, "to": to, "detail": "The email provider could not deliver to your address."}
@@ -1395,6 +1437,56 @@ async def trigger_renewal_reminders(user=Depends(require_admin)):
     return await _send_renewal_reminders()
 
 
+async def _send_lapsed_reactivations() -> dict:
+    """Daily: auto-send a 'we miss you' email to newly-lapsed monthly donors, with a cooldown."""
+    settings = await _get_settings()
+    if not settings.get("lapsed_autoemail_enabled"):
+        return {"sent": 0, "skipped": "disabled"}
+    cooldown_days = int(settings.get("lapsed_cooldown_days") or 30)
+    now = datetime.now(timezone.utc)
+    paid = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(5000)
+    # Build per-email monthly profiles
+    profiles = {}
+    for t in paid:
+        email = (t.get("donor_email") or "").strip().lower()
+        if not email:
+            continue
+        p = profiles.setdefault(email, {"name": "", "last_monthly": "", "has_monthly": False})
+        if t.get("frequency") == "monthly":
+            p["has_monthly"] = True
+            upd = t.get("updated_at") or ""
+            if upd > p["last_monthly"]:
+                p["last_monthly"] = upd
+            if not t.get("anonymous") and (t.get("donor_name") or "").strip():
+                p["name"] = t["donor_name"].strip()
+    sent = 0
+    for email, p in profiles.items():
+        if not (p["has_monthly"] and _is_lapsed(p["last_monthly"])):
+            continue
+        last = await db.reactivation_sent.find_one({"email": email}, {"_id": 0}, sort=[("sent_at", -1)])
+        if last and last.get("sent_at"):
+            try:
+                prev = datetime.fromisoformat(last["sent_at"].replace("Z", "+00:00"))
+                if prev.tzinfo is None:
+                    prev = prev.replace(tzinfo=timezone.utc)
+                if (now - prev).days < cooldown_days:
+                    continue  # still within cooldown
+            except ValueError:
+                pass
+        result = await send_email(
+            to=email,
+            subject="We miss you at The Caring Sisters Club",
+            html=_reactivation_email_html(p["name"] or "Friend"),
+        )
+        await db.reactivation_sent.insert_one({
+            "email": email, "sent_at": now.isoformat(), "sent_by": "scheduler",
+            "delivered": result is not None, "auto": True,
+        })
+        if result is not None:
+            sent += 1
+    return {"sent": sent}
+
+
 # ---------- Background scheduler (daily tasks) ----------
 import asyncio
 
@@ -1414,6 +1506,8 @@ async def _daily_scheduler():
                     logging.info(f"Auto year-end statements sent for {prev_year}: {result}")
             # Daily renewal reminders
             await _send_renewal_reminders()
+            # Daily lapsed-donor reactivation emails (with cooldown)
+            await _send_lapsed_reactivations()
         except Exception as e:
             logging.error(f"Daily scheduler error: {e}")
         await asyncio.sleep(24 * 60 * 60)  # once per day

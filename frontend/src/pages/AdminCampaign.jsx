@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, Target, Save, Send, Heart, Mail } from 'lucide-react';
+import { Loader2, Target, Save, Send, Heart, Mail, ShieldCheck, HeartHandshake } from 'lucide-react';
 
 export default function AdminCampaign() {
   const { toast } = useToast();
-  const [form, setForm] = useState({ campaign_title: '', campaign_subtitle: '', goal: '', deadline: '', thankyou_enabled: true, thankyou_threshold: '', thankyou_sender_name: '', thankyou_note: '' });
+  const [form, setForm] = useState({ campaign_title: '', campaign_subtitle: '', goal: '', deadline: '', thankyou_enabled: true, thankyou_threshold: '', thankyou_sender_name: '', thankyou_note: '', org_ein: '', lapsed_autoemail_enabled: true, lapsed_cooldown_days: 30 });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState('');
@@ -55,6 +55,9 @@ export default function AdminCampaign() {
           thankyou_threshold: data.thankyou_threshold ?? '',
           thankyou_sender_name: data.thankyou_sender_name || '',
           thankyou_note: data.thankyou_note || '',
+          org_ein: data.org_ein || '',
+          lapsed_autoemail_enabled: data.lapsed_autoemail_enabled !== false,
+          lapsed_cooldown_days: data.lapsed_cooldown_days ?? 30,
         });
       } catch (e) {
         console.error('AdminCampaign: failed to load settings', e);
@@ -82,6 +85,9 @@ export default function AdminCampaign() {
         thankyou_threshold: Number(form.thankyou_threshold) || 0,
         thankyou_sender_name: form.thankyou_sender_name,
         thankyou_note: form.thankyou_note,
+        org_ein: form.org_ein,
+        lapsed_autoemail_enabled: form.lapsed_autoemail_enabled,
+        lapsed_cooldown_days: Number(form.lapsed_cooldown_days) || 30,
       });
       toast({ title: 'Campaign updated', description: 'Your donor wall now reflects the changes.' });
     } catch (err) {
@@ -169,6 +175,41 @@ export default function AdminCampaign() {
                 onChange={(e) => setForm({ ...form, thankyou_note: e.target.value })}
                 className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-3 text-[14px] focus:outline-none focus:border-[#B4247E] resize-none" />
             </div>
+          </div>
+        </div>
+
+        <div className="mt-8 pt-7 border-t border-[#3B0A2E]/10">
+          <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold mb-1 flex items-center gap-2">
+            <ShieldCheck size={18} className="text-[#B4247E]" /> Receipts & Compliance
+          </h3>
+          <p className="text-[#241019]/60 text-[13px] mb-5">Your EIN appears on every donation receipt so gifts are officially tax-deductible. Your logo is shown at the top of all emails.</p>
+          <div>
+            <label className="text-[13px] font-semibold text-[#3B0A2E]">Organization EIN (Tax ID)</label>
+            <input value={form.org_ein} data-testid="org-ein-input"
+              onChange={(e) => setForm({ ...form, org_ein: e.target.value })}
+              placeholder="e.g. 88-1234567"
+              className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+            <p className="text-[12px] text-[#241019]/50 mt-1.5">Leave blank to omit the EIN line from receipts.</p>
+          </div>
+        </div>
+
+        <div className="mt-8 pt-7 border-t border-[#3B0A2E]/10">
+          <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold mb-1 flex items-center gap-2">
+            <HeartHandshake size={18} className="text-[#B4247E]" /> Lapsed Donor Auto-Email
+          </h3>
+          <p className="text-[#241019]/60 text-[13px] mb-5">Automatically send a warm "we miss you" email once a monthly donor lapses (no gift in 35+ days). A cooldown prevents repeat sends.</p>
+          <label className="flex items-center gap-3 mb-5 cursor-pointer" data-testid="lapsed-autoemail-toggle">
+            <input type="checkbox" checked={form.lapsed_autoemail_enabled}
+              onChange={(e) => setForm({ ...form, lapsed_autoemail_enabled: e.target.checked })}
+              className="w-4 h-4 accent-[#B4247E]" />
+            <span className="text-[13.5px] text-[#3B0A2E] font-medium">Auto-send "we miss you" emails to lapsed monthly donors</span>
+          </label>
+          <div className={form.lapsed_autoemail_enabled ? '' : 'opacity-50 pointer-events-none'}>
+            <label className="text-[13px] font-semibold text-[#3B0A2E]">Cooldown between emails (days)</label>
+            <input type="number" min={1} value={form.lapsed_cooldown_days} data-testid="lapsed-cooldown-input"
+              onChange={(e) => setForm({ ...form, lapsed_cooldown_days: e.target.value })}
+              className="w-40 mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+            <p className="text-[12px] text-[#241019]/50 mt-1.5">A donor won't receive another auto-email within this many days.</p>
           </div>
         </div>
 

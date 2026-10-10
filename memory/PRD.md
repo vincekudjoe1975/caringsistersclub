@@ -79,6 +79,16 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
   allowlist (images for gallery/board/event, PDF for document → 400 otherwise), and derives a
   safe content-type from the extension (never trusts client). `GET /api/media/file/{id}` now
   serves with `X-Content-Type-Options: nosniff` + `Content-Disposition: inline`. Verified.
+- **Receipt branding**: new public `GET /api/brand/logo` serves `backend/brand_logo.png`;
+  receipt/thank-you/reactivation emails show the logo (via `PUBLIC_APP_URL`) and receipts show
+  a configurable real EIN (`org_ein` setting; fake "sample" EIN removed). EIN editable in
+  AdminCampaign → Receipts & Compliance. Verified.
+- **Lapsed auto-email**: `_send_lapsed_reactivations()` runs in the daily scheduler — auto-sends
+  the "we miss you" email to lapsed monthly donors, gated by `lapsed_autoemail_enabled` and a
+  `lapsed_cooldown_days` (default 30) cooldown via the `reactivation_sent` log. Toggle +
+  cooldown in AdminCampaign. Verified (sends once, cooldown skips repeat, disable skips).
+- **Go Live guidance** provided (Manage → Payments → Claim Stripe sandbox + install Emergent
+  app; keys/webhook auto-managed). User action — not a code change.
 
 ## Known issues / notes
 - **Email delivery works** via the Emergent platform-verified domain (202 + id for real
