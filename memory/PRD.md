@@ -181,3 +181,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Stories: public POST /api/stories (+ POST /api/stories/photo public upload, category 'story', hidden from /api/media list), admin GET /api/admin/stories, POST /{id}/approve {target:'home'|program_id, quote} → appended testimonial (added_at), /{id}/reject. ShareStory dialog on Home + program pages. Admin → Stories & Updates.
 - Program sign-ups: POST /api/programs/{slug}/signup → submissions type program_signup + staff notify + confirmation email. ProgramSignup form on program pages.
 - Monthly impact email: gallery items/testimonials carry added_at; _impact_content(last 31 days); recipients = paid monthly donors not cancelled; auto days 1–3 once/month (impact_emails log); admin preview/test/send at /api/admin/impact-email/*.
+
+## 2026 — Story requests, Program interest report, Impact email tracking, Volunteer hours (iteration_9: 100%)
+- Story requests: daily _send_story_requests (setting story_requests_enabled, toggle in Stories & Updates) emails program_signup submissions once after 60 days → /initiatives/<slug>?share=1 (ShareStory autoOpen). Signups store data.program_slug.
+- Reports: GET /api/admin/reports/program-signups?months=N; Admin → Reports tab (AdminReports.jsx: table, trends, CSV + volunteer hours review); SignupCard on Programs tab.
+- Impact tracking: each send has impact_emails.id (cid) + impact_recipients {cid,rid,opened_at,clicked_at,opens,clicks}; pixel /api/t/impact/{cid}/open.gif, clicks /api/t/impact/{cid}/click?r=&u=/path (relative only). GET /api/admin/impact-email/history. Test sends untracked.
+- Volunteer hours: public POST /api/volunteer-hours (pending), admin approve/reject, public GET /api/volunteer-hours/summary → Transparency "volunteer impact" section; LogHours form on /volunteer.
+- Admin tab persists in sessionStorage.

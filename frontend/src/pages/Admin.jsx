@@ -31,7 +31,8 @@ export default function Admin() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [tab, setTab] = useState('gallery');
-  const [view, setView] = useState('media');
+  const [view, setViewState] = useState(() => sessionStorage.getItem('csc_admin_view') || 'media');
+  const setView = (v) => { sessionStorage.setItem('csc_admin_view', v); setViewState(v); };
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);

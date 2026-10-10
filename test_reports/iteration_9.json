@@ -1,0 +1,68 @@
+{
+  "summary": "Comprehensive E2E test of the review request: Volunteer Hours (public log form + admin review + /transparency aggregation), Program Interest Report (CSV + 6-month table + trend arrows + current-month increment on new signup), Impact-email tracking endpoints (pixel GIF, click redirect with //evil.com open-redirect protection, history initial-empty shape), Story-request email toggle (persist across reload + restore ON), Programs Admin signup card, and Share Story dialog auto-open on /initiatives/<slug>?share=1. Backend: 20/20 pytest PASS. Frontend: all specified selectors behave as expected. One leftover concern: Admin page defaults to Media Library on reload instead of persisting last tab (minor UX), handled in retest by re-clicking the Stories tab.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin console", "issues": ["Admin page always lands on Media Library after full reload - last-selected tab is not persisted. Minor UX improvement (sessionStorage/useLocation hash)."]}
+    ]
+  },
+  "test_results": [
+    {"case": "POST /api/volunteer-hours valid", "status": "PASS"},
+    {"case": "POST /api/volunteer-hours hours=0.1 -> 400", "status": "PASS"},
+    {"case": "POST /api/volunteer-hours hours=30 -> 400", "status": "PASS"},
+    {"case": "POST /api/volunteer-hours future date -> 400", "status": "PASS"},
+    {"case": "POST /api/volunteer-hours invalid program -> 400", "status": "PASS"},
+    {"case": "GET /api/admin/volunteer-hours lists pending", "status": "PASS"},
+    {"case": "POST /api/admin/volunteer-hours/<id>/approve updates status + /volunteer-hours/summary aggregates", "status": "PASS"},
+    {"case": "POST /api/admin/volunteer-hours/<id>/reject", "status": "PASS"},
+    {"case": "Approving already-reviewed hour -> 404", "status": "PASS"},
+    {"case": "GET /api/admin/reports/program-signups shape {rows,months,totals}, 6 months, trend field", "status": "PASS"},
+    {"case": "GET /api/admin/reports/program-signups unauth -> 401/403", "status": "PASS"},
+    {"case": "POST /api/programs/wellness-workshops/signup increments current-month count in report", "status": "PASS"},
+    {"case": "GET /api/t/impact/<cid>/open.gif returns image/gif with content", "status": "PASS"},
+    {"case": "GET /api/t/impact/<cid>/click?u=//evil.com -> redirect NOT to evil.com (open-redirect blocked)", "status": "PASS"},
+    {"case": "GET /api/t/impact/<cid>/click?u=/programs preserves safe relative path in redirect", "status": "PASS"},
+    {"case": "GET /api/admin/impact-email/history returns {items:[]} when no sends", "status": "PASS"},
+    {"case": "GET/PUT /api/admin/settings story_requests_enabled toggle round-trip", "status": "PASS"},
+    {"case": "UI /volunteer log-hours happy-path -> log-hours-success + log-more-hours-btn resets", "status": "PASS"},
+    {"case": "UI hours=30 blocked (HTML5 max=24 tooltip surfaced)", "status": "PASS"},
+    {"case": "UI /initiatives/wellness-workshops?share=1 auto-opens ShareStory dialog (story-name-input visible)", "status": "PASS"},
+    {"case": "UI Admin -> Reports signup-report-row count=6 programs, signup-report-trend icons present, CSV export downloads program-signups.csv", "status": "PASS"},
+    {"case": "UI Admin -> Reports hours-approve-btn moves row to Reviewed with hours-status=approved; hours-approved-total updates 5.0 -> 7.5", "status": "PASS"},
+    {"case": "UI Admin -> Programs program-signup-card lists top programs with this-month counts and trend", "status": "PASS"},
+    {"case": "UI Admin -> Stories story-request-toggle checkbox state persists across reload; restored to ON at end", "status": "PASS"},
+    {"case": "UI Admin -> Stories impact-history element HIDDEN when no sends", "status": "PASS"},
+    {"case": "UI /transparency volunteer-impact shows volunteer-total-hours=7.5 matching admin sum, volunteer-count=2, 1 volunteer-program-row", "status": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_sisters_reports_hours_impact.py",
+    "/app/test_reports/pytest/reports_hours_impact.xml"
+  ],
+  "action_items": [
+    "(Optional) Persist last-selected Admin tab in sessionStorage/URL hash so reload stays on Reports/Stories instead of defaulting to Media Library.",
+    "(Optional) The /admin/reports/program-signups response uses key `rows` but similar aggregation endpoints elsewhere use `items` - consider standardising the response envelope across admin reports.",
+    "(Optional) ShareStory DialogContent still missing <DialogDescription> (console warning carried over from iteration_8)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~3800 lines - continues to grow with story-request / impact-tracking / hours routers appended. Should be split into story_requests.py, impact.py, volunteer_hours.py, reports.py routers for maintainability.",
+    "Impact click endpoint uses a regex to validate paths; it allows backslashes-free relative URLs correctly, but note query params use & which is in the whitelist - verified /programs case works. Would benefit from a unit test matrix (javascript:, http://evil.com, /\\\\evil.com) - open-redirect is correctly blocked for the //evil.com case tested here.",
+    "/admin/reports/program-signups uses an aggregation that re-fetches program titles via `programs.find_one` inside the loop - acceptable for 6 programs but N+1-prone; batch fetch keyed by id would be cleaner.",
+    "Rate limit 'hours' = 10/10min/IP: works but may be aggressive if a staff member logs multiple sessions per volunteer; consider admin-session bypass.",
+    "/volunteer-hours/summary iterates distinct emails per request - fine today, but should be cached for the public /transparency page which fetches it on every visit."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sisters_reports_hours_impact.py"
+  ],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "100% of specified flows"},
+  "test_credentials": "Temp admin via /app/backend/tests/qa_session.py up/down (cookie session_token=qa_tok_123). Session torn down at end of test run.",
+  "seed_data_creation": "Created and cleaned up: 2 volunteer_hours (@example.com) via UI, 2 volunteer_hours via API, 1 program_signup via UI (/initiatives/wellness-workshops), 1 program_signup via API. Post-test MongoDB verified clean: 0 volunteer_hours remaining, 0 program_signup submissions with @example.com. story_requests_enabled restored to default (ON).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Endpoints verified: POST /api/volunteer-hours (rate 'hours' 10/10min/IP, hours 0.25-24, program must be published, date within past 365 days, no future), GET /api/admin/volunteer-hours (admin), POST /api/admin/volunteer-hours/{id}/{approve|reject} (404 when not pending), GET /api/volunteer-hours/summary (public, returns {total_hours, volunteers, by_program:[{program,hours}]}). GET /api/admin/reports/program-signups?months=N returns {months:[YYYY-MM...], rows:[{program,counts:[],total,trend:'up'|'down'|'flat'}], totals:[]}. GET /api/t/impact/{cid}/open.gif returns 1x1 image/gif with Cache-Control:no-store (no DB mutation unless the cid/rid pair exists). GET /api/t/impact/{cid}/click?r=&u= returns 302 to PUBLIC_APP_URL+safe-path; `u` is validated with ^/[A-Za-z0-9/_\\-?=&.]*$ AND !startswith('//') otherwise falls back to '/'. GET /api/admin/impact-email/history returns {items:[{id,sent_at,sent,opens,clicks,open_rate,click_rate,...}]}. _send_story_requests cron (server.py:3326) scans submissions type=program_signup created_at<=now-60d, sets story_request_sent=True and emails /initiatives/{slug}?share=1. Settings key story_requests_enabled toggles via PUT /api/admin/settings. All CSRF-protected mutations require X-Requested-With:XMLHttpRequest when session_token cookie is present. Test file /app/backend/tests/test_sisters_reports_hours_impact.py (20 tests, 2.5s) uses REACT_APP_BACKEND_URL + MONGO_URL + DB_NAME env vars - run with `cd /app && REACT_APP_BACKEND_URL=... MONGO_URL=mongodb://localhost:27017 DB_NAME=test_database python3 -m pytest backend/tests/test_sisters_reports_hours_impact.py -v`.",
+  "rca of the issue": "No bugs found. The two initial test failures (`test_report_shape` and `test_signup_increments_current_month`) were test-side mismatches - server returns {rows,months,totals} but tests expected {items,months}. Fixed in test file; both re-pass."
+}
