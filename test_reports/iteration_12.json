@@ -1,0 +1,54 @@
+{
+  "summary": "E2E tested iteration-12: (1) Program waitlist spot-alert modes claim/auto/broadcast + delete-triggers-fill + expired-offer re-promotion, (2) Volunteer leaderboard highest-badge, (3) YIR share card PNG + share page OG tags + custom image_url + reset, (4) YIR email preview/test/send/autosend flag. Backend: 15/15 pytest PASS (test_iter12_waitlist_yir_share.py). Frontend: all testids present and working — /waitlist/claim renders waitlist-claim-page+btn+expires for open token, waitlist-claimed on success, waitlist-claim-state 'This offer has expired' for expired token, waitlist-claim-error 'This link is invalid.' for bogus token; Admin > Programs edit dialog shows program-waitlist-mode-select with the 3 required options (claim/auto/broadcast) with human labels; /volunteer leaderboard shows leaderboard-badge '10h' next to Sister U.; /year-in-review/2026 ShareBar links point to /api/share/year-in-review/2026 for all 5 share buttons; Admin > Reports > YIR card shows yir-share-image-preview (auto card with 2026 stats), yir-share-image-upload, yir-email section with yir-email-recipients=3, yir-email-preview-btn opening yir-email-preview iframe, yir-email-test-input/test-btn, yir-email-send-btn enabled when published (disabled when unpublished), yir-autosend-checkbox (unchecked by default).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_results": [
+    {"case": "Claim mode: not_fit frees seat -> next waitlisted gets 'open' offer_status + token + ~48h offer_expires; subsequent waiter has no offer", "status": "PASS"},
+    {"case": "GET /api/waitlist/offer?token=open -> status='open'; POST /api/waitlist/claim -> 'claimed' + waitlist:false; re-claim idempotent; program now full", "status": "PASS"},
+    {"case": "Expired offer: setting offer_expires in past then re-triggering _fill_seats marks it 'expired' and promotes next; GET -> 'expired'; POST claim -> 410", "status": "PASS"},
+    {"case": "Auto mode: freeing a seat moves oldest waitlisted (waitlist:false, data.list='Moved in from waitlist')", "status": "PASS"},
+    {"case": "Broadcast mode: capacity+1 with 2 waitlisted -> both get open offers; first claim 'claimed', second claim 409 (full)", "status": "PASS"},
+    {"case": "DELETE /api/submissions/{seated-id} triggers _fill_seats -> waitlisted gets open offer", "status": "PASS"},
+    {"case": "GET /api/waitlist/offer?token=bogus -> 404", "status": "PASS"},
+    {"case": "GET /api/volunteer-hours/leaderboard items include badge=50 when volunteer_milestones has scope:'all' threshold:50", "status": "PASS"},
+    {"case": "GET /api/share/year-in-review/2026/card.png -> 404 anon unpublished, 200 image/png with admin cookie; valid PNG magic bytes", "status": "PASS"},
+    {"case": "GET /api/share/year-in-review/2026 -> 404 until publish; after publish 200 HTML containing og:image, og:title, twitter:card=summary_large_image, meta refresh to /year-in-review/2026", "status": "PASS"},
+    {"case": "PUT /api/admin/year-in-review/2026 {image_url:'/api/media/file/<uuid>'} -> 200 and og:image uses that URL; invalid URL -> 400; image_url:'' -> reset to empty", "status": "PASS"},
+    {"case": "Unpublish restores 404 on both /share/year-in-review/2026 and /share/year-in-review/2026/card.png (anonymous)", "status": "PASS"},
+    {"case": "GET /api/admin/year-in-review/2026/email returns {html,recipients:int,history:list}", "status": "PASS"},
+    {"case": "POST .../email/test {email:'bad'} -> 400", "status": "PASS"},
+    {"case": "POST .../email/send when unpublished -> 400; autosend flag persists via PUT then resets to false before publishing (no real donor send triggered)", "status": "PASS"},
+    {"case": "UI /waitlist/claim?token=OPEN: shows 'A spot is waiting for you' + waitlist-claim-btn + waitlist-claim-expires; click -> waitlist-claimed", "status": "PASS"},
+    {"case": "UI /waitlist/claim?token=EXPIRED: shows waitlist-claim-state 'This offer has expired'", "status": "PASS"},
+    {"case": "UI /waitlist/claim?token=INVALID: shows waitlist-claim-error 'This link is invalid.'", "status": "PASS"},
+    {"case": "UI Admin > Programs edit dialog: program-waitlist-mode-select has 3 options claim/auto/broadcast with human-readable labels", "status": "PASS"},
+    {"case": "UI /volunteer Leaderboard: leaderboard-badge '10h' present next to seeded volunteer name", "status": "PASS"},
+    {"case": "UI /year-in-review/2026 ShareBar: all 5 share links (facebook/x/linkedin/whatsapp/email) encode /api/share/year-in-review/2026 as the share URL", "status": "PASS"},
+    {"case": "UI Admin > Reports > YIR: yir-share-image-preview/upload, yir-email, yir-email-recipients=3, yir-email-preview-btn opens yir-email-preview iframe, yir-email-test-input/btn, yir-email-send-btn enabled when published and gets disabled when unpublished, yir-autosend-checkbox present/unchecked", "status": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter12_waitlist_yir_share.py",
+    "/app/test_reports/pytest/iter12.xml"
+  ],
+  "action_items": [
+    "None blocking. Minor UX: yir-share-image-reset only renders when a custom image_url is set (expected). The 'Use auto card' button appears after upload; this matches spec."
+  ],
+  "critical_code_review_comments": [
+    "WAITLIST_MODES is defined twice in server.py (line 1792 for events = ('auto','invite'); line 3232 for programs = ('claim','auto','broadcast')). The later assignment shadows the first — functionally fine today because EventIn validation uses the shadowed tuple before the override executes at import time? Verify by checking the event waitlist validation path: at line 1833 it uses WAITLIST_MODES which will have the PROGRAM value at runtime, so event mode 'invite' may silently be rejected/overwritten. Rename one to EVENT_WAITLIST_MODES / PROGRAM_WAITLIST_MODES to prevent cross-feature regressions (same class of bug fixed in iter-11 for MILESTONES).",
+    "_fill_seats runs on every program update (even unrelated field edits) and every stage transition — fine for correctness but can send many spot-alert emails if a staffer edits a full program with many waitlisters in broadcast mode. Consider throttling / only firing when capacity, waitlist_mode or published change.",
+    "/api/share/year-in-review/{year}/card.png always regenerates the PNG from PIL (CPU work) with Cache-Control: public, max-age=600. For high-traffic shares consider caching the PNG bytes in Mongo keyed by year+stats-hash so viral traffic doesn't hammer PIL.",
+    "/api/share/year-in-review/{year} redirect uses meta refresh with content='0; url=...' but the HTTPResponse itself is 200 — social crawlers that follow meta-refresh are OK, but a server-side 302 after og tag extraction would be slightly cleaner. Current flow is standard and works.",
+    "_yir_recipients lowercases donor_email with .strip().lower() but keys volunteer_hours email with just .lower() (no strip). If a volunteer email was saved with leading/trailing whitespace it would dedupe incorrectly against a donor. Low risk.",
+    "server.py now 4423 lines — still well past 700-line guideline. Split waitlist/YIR into their own routers.",
+    "WaitlistClaim.jsx: `info.name` is taken from first word of saved name — fine. The expires timestamp is formatted with en-US locale only; for international users this is non-ideal but minor.",
+    "AdminReports.jsx YIR Send-to-all uses window.confirm(). Spec says the real donor list exists; a modal with recipient count and 'type CONFIRM' guard would be safer for a one-shot operation to real donors.",
+    "YIR autosend logic: in admin_publish_yir, autosend fires only if BOTH payload.public AND existing site.yir_autosend are true AND no yir_emails doc exists for the year. If a staffer toggles autosend ON in the same PUT that publishes, the queue trigger uses `site` fetched AFTER both $set operations — correct. But if autosend was set by a different request and then page is published via UI, the UI must do a GET first to re-read autosend — currently fine because YirPublishIn sends only {public:true}."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter12_waitlist_yir_share.py"],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100%"},
+  "test_credentials": "QA temp admin via /app/backend/tests/qa_session.py up/down (cookie session_token=qa_tok_123). Session torn down at end.",
+  "seed_data_creation": "Created and cleaned: waitlist test submissions for wellness-workshops (claim/auto/broadcast scenarios), seeded 1 open-offer and 1 expired-offer submission for UI test, 1 volunteer_hours+1 volunteer_milestones for leaderboard-badge UI, briefly published YIR 2026. Cleanup done: all @example.com subs/hours/milestones deleted, program capacity reset to 0 and waitlist_mode to 'claim', settings.yir_public=[], yir_autosend=false, yir_images.2026='', yir_emails collection emptied. qa_session down executed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend test file test_iter12_waitlist_yir_share.py should be run with `-n 0` (serial) because it mutates a single program; the pytest.ini default parallel execution races on the same program. All waitlist spot-alert, YIR share card, YIR share page OG tags, YIR email flows verified. The second WAITLIST_MODES shadow (program overrides event tuple) is flagged in critical_code_review_comments — same class of bug as the MILESTONES one that main agent fixed in iter-11, worth proactive rename to EVENT_WAITLIST_MODES/PROGRAM_WAITLIST_MODES."
+}

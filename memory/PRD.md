@@ -204,3 +204,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 ## Backlog
 - P1: Open Graph share image/meta for Year in Review; "Promote from waitlist" email to waitlisted sign-ups when a seat frees.
 - P2: Milestone badges shown publicly on leaderboard; scheduler failure dashboard.
+
+## 2026 — Waitlist spot alerts, YIR share card, leaderboard badges, YIR email (iteration_12: 100%)
+- Program.waitlist_mode: claim (48h token offer to next in line, expired→next) | auto (move in + "You're in!") | broadcast (all waiting get tokens, first claim wins). _fill_seats(pid) on stage change, submission delete, program update, hourly. Public GET /api/waitlist/offer?token, POST /api/waitlist/claim; page /waitlist/claim.
+- Leaderboard items include badge (highest all-time milestone).
+- YIR share: /api/share/year-in-review/{year}/card.png (Pillow, fonts in backend/fonts; admin can view unpublished), /api/share/year-in-review/{year} OG HTML + redirect (share buttons use this). settings.site.yir_images[year] optional uploaded override (media category 'share').
+- YIR email: GET /api/admin/year-in-review/{y}/email (preview, recipients, history), POST .../email/test, POST .../email/send {force} (requires published; 409 if sent before). settings.site.yir_autosend → sends once on publish. Log in db.yir_emails; 0.6s spacing between sends.
