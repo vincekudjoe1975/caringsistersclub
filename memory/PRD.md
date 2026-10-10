@@ -239,3 +239,8 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - _send_anniversaries (daily) → db.volunteer_anniversaries {email, year, years, cert_token}; GET /api/certificates/anniversary/{token}.pdf (_cert_pdf lines/seal params).
 - Donors composer: top-template-banner + chips ranked by $/recipient (uses /admin/reports/template-insights).
 - Programs: start_date/end_date/schedule; public GET /api/sessions; /sessions page (calendar + list), nav link 'Sessions'.
+
+## 2026 — Session reminders, calendar subscribe, anniversary shout-outs, session feedback (iteration_18: 100%)
+- Hourly: _send_session_reminders (2day + dayof when UTC hour>=11; db.session_reminders), _send_session_feedback (sessions ended 1-4 days ago; db.session_feedback with token).
+- Public: GET /api/sessions.ics (subscribe feed), /api/sessions/{slug}/calendar.ics, GET/POST /api/feedback, GET /api/volunteer-hours/anniversaries (follows badge_wall_mode). Pages: /feedback; SubscribeBar on /sessions; AnniversaryShoutouts on /volunteer.
+- Admin: GET /api/admin/reports/session-feedback, POST /api/admin/feedback/{id}/feature (→ program.testimonials, max 6). SessionFeedback.jsx in Reports.
