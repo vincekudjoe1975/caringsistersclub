@@ -27,6 +27,7 @@ import ProgramDetail from './pages/ProgramDetail';
 import YearInReview from './pages/YearInReview';
 import WaitlistClaim from './pages/WaitlistClaim';
 import WaitlistStatus from './pages/WaitlistStatus';
+import BadgePage from './pages/BadgePage';
 import { Loader2 } from 'lucide-react';
 
 function ScrollToTop() {
@@ -75,6 +76,7 @@ function Shell() {
           <Route path="/year-in-review/:year" element={<YearInReview />} />
           <Route path="/waitlist/claim" element={<WaitlistClaim />} />
           <Route path="/waitlist/status" element={<WaitlistStatus />} />
+          <Route path="/badge/:token" element={<BadgePage />} />
           <Route path="/events" element={<Events />} />
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/transparency" element={<Transparency />} />

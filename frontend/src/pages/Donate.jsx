@@ -21,6 +21,8 @@ export default function Donate() {
   useEffect(() => {
     const a = new URLSearchParams(window.location.search).get('appeal');
     if (a && /^[0-9a-f-]{36}$/i.test(a)) sessionStorage.setItem('csc_appeal', a);
+    const src = new URLSearchParams(window.location.search).get('src');
+    if (src && /^yir-(email|page)-\d{4}$/.test(src)) sessionStorage.setItem('csc_source', src);
     const amt = Number(new URLSearchParams(window.location.search).get('amount'));
     if (amt >= 1 && amt <= 100000) {
       if (donationTiers.some((t) => t.amount === amt)) setAmount(amt); else setCustom(String(Math.round(amt)));
@@ -45,6 +47,7 @@ export default function Donate() {
         anonymous: anonymous,
         origin_url: window.location.origin,
         appeal_id: sessionStorage.getItem('csc_appeal') || undefined,
+        source: sessionStorage.getItem('csc_source') || undefined,
       });
       if (data.checkout_url) {
         window.location.href = data.checkout_url;

@@ -20,10 +20,8 @@ function Stat({ icon: Icon, value, label, id, delay }) {
   );
 }
 
-export function ShareBar({ year }) {
+export function ShareBar({ url, text, testid = 'yir' }) {
   const [copied, setCopied] = useState(false);
-  const url = `${BACKEND_URL}/api/share/year-in-review/${year}`;
-  const text = `See what The Caring Sisters Club achieved together in ${year}!`;
   const e = encodeURIComponent;
   const links = [
     ['Facebook', `https://www.facebook.com/sharer/sharer.php?u=${e(url)}`],
@@ -34,12 +32,12 @@ export function ShareBar({ year }) {
   ];
   const copy = async () => { try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch (err) { console.error('Copy failed', err); } };
   return (
-    <div className="flex flex-wrap gap-2.5 justify-center" data-testid="yir-share-bar">
+    <div className="flex flex-wrap gap-2.5 justify-center" data-testid={`${testid}-share-bar`}>
       {links.map(([n, href]) => (
-        <a key={n} href={href} target="_blank" rel="noopener noreferrer" data-testid={`yir-share-${n.toLowerCase()}`}
+        <a key={n} href={href} target="_blank" rel="noopener noreferrer" data-testid={`${testid}-share-${n.toLowerCase()}`}
           className="px-5 py-2.5 rounded-full text-[13.5px] font-semibold text-[#3B0A2E] bg-white border border-[#3B0A2E]/12 hover:border-[#B4247E] hover:text-[#B4247E] transition-colors">{n}</a>
       ))}
-      <button onClick={copy} data-testid="yir-copy-link-btn" className="btn-magenta px-5 py-2.5 rounded-full text-[13.5px] font-semibold flex items-center gap-1.5">
+      <button onClick={copy} data-testid={`${testid}-copy-link-btn`} className="btn-magenta px-5 py-2.5 rounded-full text-[13.5px] font-semibold flex items-center gap-1.5">
         {copied ? <Check size={15} /> : <Link2 size={15} />} {copied ? 'Link copied' : 'Copy link'}
       </button>
     </div>
@@ -86,9 +84,9 @@ export default function YearInReview() {
         <div className="max-w-3xl mx-auto px-5 lg:px-8">
           <h2 className="font-serif text-[28px] text-[#3B0A2E] font-semibold mb-2">Share our year</h2>
           <p className="text-[#241019]/65 text-[15px] mb-7">Help more sisters find us by sharing this page.</p>
-          <ShareBar year={d.year} />
+          <ShareBar url={`${BACKEND_URL}/api/share/year-in-review/${d.year}`} text={`See what The Caring Sisters Club achieved together in ${d.year}!`} />
           <div className="mt-10 flex flex-wrap justify-center gap-3">
-            <Link to={`/donate?amount=${d.ask_amount || 50}`} data-testid="yir-donate-link" className="btn-gold rounded-full px-7 py-3 font-semibold text-[14px] flex items-center gap-2"><Heart size={15} /> Help us do it again: give ${d.ask_amount || 50}</Link>
+            <Link to={`/donate?amount=${d.ask_amount || 50}&src=yir-page-${d.year}`} onClick={() => api.post(`/yir/${d.year}/click`).catch(() => {})} data-testid="yir-donate-link" className="btn-gold rounded-full px-7 py-3 font-semibold text-[14px] flex items-center gap-2"><Heart size={15} /> Help us do it again: give ${d.ask_amount || 50}</Link>
             <Link to="/volunteer" className="rounded-full px-7 py-3 font-semibold text-[14px] text-[#3B0A2E] border border-[#3B0A2E]/15">Volunteer</Link>
           </div>
         </div>

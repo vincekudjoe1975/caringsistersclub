@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Loader2, TrendingUp, TrendingDown, Minus, Download, Clock3, Check, X, BarChart3, Sparkles, ExternalLink, UploadCloud, Eye, Send } from 'lucide-react';
 import { api, BACKEND_URL, mediaSrc } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
+import { ProgramForecast } from '../components/ProgramForecast';
 
 const monthLabel = (k) => new Date(`${k}-01T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 const csvCell = (v) => { let t = String(v ?? ''); if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`; return `"${t.replace(/"/g, '""')}"`; };
@@ -212,6 +213,32 @@ function YirEmail({ year, d, onSaved }) {
   );
 }
 
+function YirResults({ year }) {
+  const [r, setR] = useState(null);
+  useEffect(() => { api.get(`/admin/year-in-review/${year}/results`).then(({ data }) => setR(data)).catch(() => setR(null)); }, [year]);
+  if (!r) return null;
+  const row = (key, label) => {
+    const x = r[key];
+    return (
+      <tr className="border-t border-[#3B0A2E]/8" data-testid={`yir-results-${key}`}>
+        <td className="px-3 py-2.5 font-semibold text-[#3B0A2E]">{label}</td>
+        <td className="px-3 py-2.5" data-testid={`yir-results-${key}-clicks`}>{x.clicks}</td>
+        <td className="px-3 py-2.5">{x.checkouts}</td>
+        <td className="px-3 py-2.5" data-testid={`yir-results-${key}-gifts`}>{x.gifts}</td>
+        <td className="px-3 py-2.5 font-bold text-[#B4247E]" data-testid={`yir-results-${key}-raised`}>${x.raised.toLocaleString()}</td>
+        <td className="px-3 py-2.5">{x.conversion === null ? '—' : `${x.conversion}%`}</td>
+      </tr>
+    );
+  };
+  return (
+    <div className="mt-5 pt-5 border-t border-[#3B0A2E]/8" data-testid="yir-results">
+      <p className="text-[13.5px] font-semibold text-[#3B0A2E] mb-2">"Help us do it again" results</p>
+      <table className="w-full text-left text-[13px]"><thead><tr className="text-[11px] uppercase tracking-wide text-[#241019]/50"><th className="px-3 py-2">Source</th><th className="px-3 py-2">Clicks</th><th className="px-3 py-2">Checkouts</th><th className="px-3 py-2">Gifts</th><th className="px-3 py-2">Raised</th><th className="px-3 py-2">Click→gift</th></tr></thead>
+        <tbody>{row('email', 'Email button')}{row('page', 'Page button')}</tbody></table>
+    </div>
+  );
+}
+
 function YearInReviewAdmin() {
   const now = new Date().getFullYear();
   const [year, setYear] = useState(now);
@@ -248,6 +275,7 @@ function YearInReviewAdmin() {
           </div>
           <YirShareImage year={year} d={d} onSaved={merge} />
           <YirEmail year={year} d={d} onSaved={merge} />
+          <YirResults year={year} />
         </>
       ) : <p className="text-[13px] text-red-600">Could not load this year.</p>}
     </div>
@@ -259,6 +287,7 @@ export default function AdminReports() {
     <div data-testid="admin-reports">
       <h2 className="font-serif text-[24px] text-[#3B0A2E] font-semibold mb-5">Reports</h2>
       <YearInReviewAdmin />
+      <ProgramForecast />
       <StoryRequestResults />
       <SignupReport />
       <HoursReview />
