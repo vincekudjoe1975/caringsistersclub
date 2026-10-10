@@ -1,0 +1,54 @@
+{
+  "summary": "Iter-21 (Sisterhood badges page, Comeback tracking, Review feature requests, Claim window). Backend pytest 13/13 PASS. Frontend 4/4 flows PASS. All targeted features behave per spec.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/sisterhood/{token}", "issue": "_short_name returns first + LAST-WORD initial. For 'QA Sis Tester' it returns 'QA T.' (not 'QA S.' as the spec example implied). Behavior matches 'first name + last initial' for multi-word names and real-world cases (First Last -> 'First L.') but the spec example in this iter is misleading; left behavior as-is."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_results": [
+    {"case": "_sis_link idempotent (same URL for same email across calls)", "status": "PASS"},
+    {"case": "GET /api/sisterhood/{token} returns 2 badges + short name; bad token -> 404", "status": "PASS"},
+    {"case": "GET /api/share/sisterhood/{token}/card.png -> 200 image/png (>1KB)", "status": "PASS"},
+    {"case": "GET /api/share/sisterhood/{token} -> HTML with og:image/og:title", "status": "PASS"},
+    {"case": "POST /api/certificates/request with only sub-50h badges returns 200 and message mentions 'badge'", "status": "PASS"},
+    {"case": "Comeback: signup on clone of program with recent noshow_emails sets came_back=true + comeback_at on noshow doc; second signup not re-counted", "status": "PASS"},
+    {"case": "Comeback: noshow at 70 days ago -> no came_back on signup", "status": "PASS"},
+    {"case": "Admin /api/admin/reports/comebacks returns row with sent=1 comebacks=1 rate=100", "status": "PASS"},
+    {"case": "POST /api/feedback 5★ + >=10 char comment -> session_feedback.review_requested=true; repeat does NOT update review_requested_at", "status": "PASS"},
+    {"case": "GET /api/feature-consent?token=T returns quote, consented=false", "status": "PASS"},
+    {"case": "POST /api/feature-consent creates pending story_submissions {source:'feedback'}; repeat POST ok, no duplicate (count=1); photo_url='https://evil' -> 400; rating-4 token -> 404 on GET", "status": "PASS"},
+    {"case": "PUT /api/admin/programs/{id} with offer_hours=24 persists; offer_hours=30 (invalid) normalized to 48", "status": "PASS"},
+    {"case": "offer_hours=24 -> admin waitlist offer action sets offer_expires ~24h after offer_sent_at", "status": "PASS"},
+    {"case": "Waitlist speed report: 5 claimed @ 2h on program with offer_hours=48 -> tip contains '24-hour'; switch to offer_hours=24 -> no tip", "status": "PASS"},
+    {"case": "FE /sisterhood/{token}: sisterhood-page + sisterhood-name 'QA S.' + 2 sisterhood-badge + sisterhood-card-image render; bad token -> sisterhood-not-found", "status": "PASS"},
+    {"case": "FE /feature-my-words?token=T: quote renders, photo input + submit present, submit -> feature-words-success; bad token -> feature-words-error", "status": "PASS"},
+    {"case": "FE Admin>Programs 'New Program' -> program-offer-hours-select present with options [12,24,48,72]", "status": "PASS"},
+    {"case": "FE Admin>Reports: comeback-report + comeback-summary '1 of 1 came back (100%)'; waitlist-speed-tip '100% of claims happen within 12 hours. Try a 24-hour window so seats move faster.'", "status": "PASS"},
+    {"case": "FE Admin>Form Submissions>Program Sign-Ups: signup-came-back-badge visible on QA FE CB submission", "status": "PASS"}
+  ],
+  "test_report_links": ["/app/backend/tests/test_iter21_sisterhood_comeback_review_claimwin.py", "/app/test_reports/pytest/iter21.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "backend/server.py: 6209 lines — still above the 6k marker from iter-19/20. Sisterhood (5642-5724), Comeback (5727-5747), Review feature (5750-5807), and Waitlist speed (5597-5639) can be moved to routers/services modules.",
+    "_sis_link does an upsert find_one_and_update returning return_document=True without specifying ReturnDocument.AFTER — motor defaults to BEFORE, which means on first-insert the method may return None. The `return_document=True` here equals `pymongo.ReturnDocument.AFTER` in the current motor version (truthy), so it works, but is implementation-dependent. Prefer `return_document=ReturnDocument.AFTER` for clarity (same note applies to admin_hide_quote nearby).",
+    "feature_consent (server.py:5789): photo_url validation regex only accepts '/api/media/file/UUID'. If any legitimate uploader produces a path with underscores or extensions this will reject it; current /api/stories/photo always returns that shape, so OK, but worth asserting shape in a unit test.",
+    "_add_sis (server.py:5650) splices a 'See all my badges in one place' link by locating a hard-coded style fragment `</td></tr><tr><td style=\"background:#29061F`. If the email footer HTML ever changes background color the splice silently no-ops. Suggest replacing with a dedicated placeholder.",
+    "admin_comebacks (server.py:5738) does one find_one per distinct program_id (N queries). For 100+ programs this becomes slow; a $lookup aggregation would be constant-round.",
+    "program_signup (server.py:3265) uses find_one_and_update to atomically mark noshow comeback_at, which is correctly idempotent — nice.",
+    "admin_waitlist_speed computes offer_expires from stored field, not programs.offer_hours — so if a program's offer_hours changes, historical offers keep their stored expiry (correct). Tip threshold uses >=5 claims; a program with 4 ultra-fast claims won't get the tip (expected per spec)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter21_sisterhood_comeback_review_claimwin.py (new)",
+    "/app/test_reports/iteration_21.json",
+    "/app/test_reports/pytest/iter21.xml"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% (4/4 flows)"},
+  "test_credentials": "QA admin via /app/backend/tests/qa_session.py up (session_token=qa_tok_123). qa_session.py down executed at teardown.",
+  "seed_data_creation": "Backend self-seeds per-class qa21-* program/clone/feedback/noshow docs with teardown via module fixture (regex ^qa\\.(sis|back|rev|iter21)). Frontend seed inline (sisterhood_links/volunteer_milestones/participant_badges for qa.iter21fe@example.com, session_feedback for qa.iter21ferev@example.com with 5★ comment, program qa21fe-* with 5 claimed waitlist submissions + 1 came-back submission + 1 noshow_emails with comeback_at). ALL cleaned at end: vm=1 pb=1 sl=1 sf=1 ne=1 ss=1 subs=6 prg=1.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "pytest.ini still forces -n 2 --dist loadscope — this suite shares test-session state via class attributes, use `-n 0` (as done here). admin_hide_quote fix (`if f is None`) from iter-20 is intact. Spec example 'QA Sis Tester' -> 'QA S.' is wrong; code correctly uses last-word initial so 3-word names return LAST-word initial ('QA T.'). This is working-as-designed per the 'first name + last initial' phrasing but the test harness should match real 2-word names like 'First Last'.",
+  "rca of the issue": "n/a — no regressions."
+}

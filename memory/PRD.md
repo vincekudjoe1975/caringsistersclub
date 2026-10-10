@@ -257,3 +257,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - db.participant_badges {email, kind 'faithful', share_token, seal '3x'}; _check_streaks on attendance updates; _badge falls back to participant_badges (kind participant).
 - GET /api/admin/reports/waitlist-speed; WaitlistSpeed.jsx.
 - Gotcha: find_one with projection excluding _id can return {} (falsy) — use `is None`.
+
+## 2026 — Sisterhood page, comebacks, review feature requests, claim window (iteration_21: 100%)
+- db.sisterhood_links {email, token}; _sis_link/_add_sis inject "See all my badges" into badge emails; GET /api/sisterhood/{token}, /api/share/sisterhood/{token}(/card.png); page /sisterhood/:token. Certificate request emails sisterhood link even without 50h certs.
+- noshow_emails.email + comeback_at (COMEBACK_DAYS 60, program family via _family_ids); submission.came_back; GET /api/admin/reports/comebacks; ComebackReport.jsx.
+- 5-star comment (>=10 chars) → review request email once (session_feedback.review_requested); /feature-my-words page; GET/POST /api/feature-consent → pending story_submissions (source 'feedback').
+- program.offer_hours (12/24/48/72; default 48) used for all offers; waitlist-speed rows include offer_hours + tip.
