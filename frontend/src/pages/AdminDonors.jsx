@@ -51,6 +51,7 @@ export default function AdminDonors() {
   const [showScheduled, setShowScheduled] = useState(false);
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduling, setScheduling] = useState(false);
+  const [scheduleRepeat, setScheduleRepeat] = useState('none');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -289,9 +290,9 @@ export default function AdminDonors() {
     }
     setScheduling(true);
     try {
-      await api.post('/admin/scheduled-appeals', { segment: quickFilter, subject: segSubject, message: segMessage, send_on: scheduleDate });
+      await api.post('/admin/scheduled-appeals', { segment: quickFilter, subject: segSubject, message: segMessage, send_on: scheduleDate, repeat: scheduleRepeat });
       toast({ title: 'Appeal scheduled', description: `Will send to ${currentFilterLabel} donors on ${new Date(scheduleDate).toLocaleDateString()}.` });
-      setSegModal(false); setSegSubject(''); setSegMessage(''); setScheduleDate('');
+      setSegModal(false); setSegSubject(''); setSegMessage(''); setScheduleDate(''); setScheduleRepeat('none');
       loadScheduled();
     } catch (e) {
       toast({ title: 'Schedule failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
@@ -425,6 +426,9 @@ export default function AdminDonors() {
                     <th className="px-5 py-3 font-semibold">Subject</th>
                     <th className="px-5 py-3 font-semibold">By</th>
                     <th className="px-5 py-3 font-semibold text-right">Delivered</th>
+                    <th className="px-5 py-3 font-semibold text-right">Clicks</th>
+                    <th className="px-5 py-3 font-semibold text-right">Gifts</th>
+                    <th className="px-5 py-3 font-semibold text-right">Raised</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -435,6 +439,9 @@ export default function AdminDonors() {
                       <td className="px-5 py-3 text-[#3B0A2E] font-medium max-w-[220px] truncate">{a.subject}</td>
                       <td className="px-5 py-3 text-[#241019]/60">{a.sent_by_name || '—'}</td>
                       <td className="px-5 py-3 text-right text-[#3B0A2E] font-semibold">{a.sent} / {a.recipients}</td>
+                      <td className="px-5 py-3 text-right text-[#241019]/70" data-testid="appeal-clicks">{a.clicks ?? 0}</td>
+                      <td className="px-5 py-3 text-right text-[#241019]/70" data-testid="appeal-gifts">{a.donations ?? 0}</td>
+                      <td className="px-5 py-3 text-right font-semibold" style={{ color: a.raised > 0 ? '#3c7a2f' : '#241019' }} data-testid="appeal-raised">${(a.raised || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -458,7 +465,8 @@ export default function AdminDonors() {
               <table className="w-full text-left">
                 <thead>
                   <tr className="text-[#241019]/55 text-[12px] uppercase tracking-wide" style={{ background: '#faf2f7' }}>
-                    <th className="px-5 py-3 font-semibold">Send On</th>
+                    <th className="px-5 py-3 font-semibold">Next Send</th>
+                    <th className="px-5 py-3 font-semibold">Repeats</th>
                     <th className="px-5 py-3 font-semibold">Segment</th>
                     <th className="px-5 py-3 font-semibold">Subject</th>
                     <th className="px-5 py-3 font-semibold">Status</th>
@@ -469,6 +477,7 @@ export default function AdminDonors() {
                   {scheduled.map((s) => (
                     <tr key={s.id} className="border-t border-[#3B0A2E]/8 text-[13px]" data-testid="scheduled-appeal-row">
                       <td className="px-5 py-3 text-[#241019]/70 whitespace-nowrap">{s.send_on ? new Date(s.send_on).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                      <td className="px-5 py-3 text-[#241019]/70 capitalize" data-testid="scheduled-repeat">{s.repeat && s.repeat !== 'none' ? <span className="flex items-center gap-1"><Repeat size={12} /> {s.repeat}{s.runs ? ` · ${s.runs} sent` : ''}</span> : 'Once'}</td>
                       <td className="px-5 py-3"><span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full capitalize" style={{ background: '#f2e6ee', color: '#B4247E' }}>{s.segment}</span></td>
                       <td className="px-5 py-3 text-[#3B0A2E] font-medium max-w-[200px] truncate">{s.subject}</td>
                       <td className="px-5 py-3">
@@ -625,6 +634,17 @@ export default function AdminDonors() {
                   <input type="date" min={todayStr} value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} data-testid="schedule-date-input"
                     className="rounded-lg border border-[#3B0A2E]/15 px-3 py-2 text-[13px] focus:outline-none focus:border-[#B4247E]" />
                 </div>
+                {scheduleDate && (
+                  <div>
+                    <label className="text-[12px] font-semibold text-[#3B0A2E] block mb-1">Repeat</label>
+                    <select value={scheduleRepeat} onChange={(e) => setScheduleRepeat(e.target.value)} data-testid="schedule-repeat-select"
+                      className="rounded-lg border border-[#3B0A2E]/15 px-3 py-2 text-[13px] bg-white focus:outline-none focus:border-[#B4247E]">
+                      <option value="none">Does not repeat</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="quarterly">Quarterly</option>
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap justify-end gap-2 mt-5">

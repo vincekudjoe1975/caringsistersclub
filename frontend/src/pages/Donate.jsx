@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { donationTiers, org } from '../mock/mock';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
@@ -17,6 +17,11 @@ export default function Donate() {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
+  useEffect(() => {
+    const a = new URLSearchParams(window.location.search).get('appeal');
+    if (a && /^[0-9a-f-]{36}$/i.test(a)) sessionStorage.setItem('csc_appeal', a);
+  }, []);
+
   const finalAmount = custom ? Number(custom) : amount;
 
   const submit = async (e) => {
@@ -34,6 +39,7 @@ export default function Donate() {
         donor_email: email,
         anonymous: anonymous,
         origin_url: window.location.origin,
+        appeal_id: sessionStorage.getItem('csc_appeal') || undefined,
       });
       if (data.checkout_url) {
         window.location.href = data.checkout_url;

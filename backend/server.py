@@ -367,6 +367,7 @@ class DonationCheckout(BaseModel):
     donor_email: Optional[str] = None
     anonymous: bool = False
     origin_url: str
+    appeal_id: Optional[str] = None
 
 
 def _validate_donation_amount(amount: float) -> float:
@@ -400,6 +401,7 @@ def _create_stripe_donation_session(req: "DonationCheckout", amount: float, mont
                 "donor_name": req.donor_name or "",
                 "donor_email": req.donor_email or "",
                 "kind": "donation",
+                "appeal_id": req.appeal_id or "",
             },
         )
     except Exception as e:
@@ -455,6 +457,7 @@ async def create_donation_checkout(req: DonationCheckout, request: Request):
         "donor_name": req.donor_name or "",
         "donor_email": req.donor_email or "",
         "anonymous": bool(req.anonymous),
+        "appeal_id": (req.appeal_id or "")[:64] or None,
         "status": "initiated",
         "payment_status": "pending",
         "created_at": now,
@@ -1059,7 +1062,7 @@ async def admin_donations(frequency: Optional[str] = None, user=Depends(require_
 # ---------- Admin: CSV export, year-end statements, progress emails ----------
 import csv
 import io
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 
 
 def _txn_display_name(t: dict) -> str:
@@ -1377,7 +1380,8 @@ async def send_test_receipt(user=Depends(require_admin)):
 MAJOR_DONOR_MIN = 500.0
 
 
-def _appeal_email_html(name: str, subject: str, message_html: str) -> str:
+def _appeal_email_html(name: str, subject: str, message_html: str, appeal_id: str = None) -> str:
+    gift_url = f"{PUBLIC_APP_URL}/api/t/appeal/{appeal_id}" if appeal_id else f"{PUBLIC_APP_URL}/donate"
     return (
         '<table role="presentation" width="100%" style="background:#f7efe9;padding:0;margin:0"><tr><td align="center" style="padding:28px 16px">'
         '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
@@ -1386,7 +1390,7 @@ def _appeal_email_html(name: str, subject: str, message_html: str) -> str:
         f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:22px;margin:0 0 14px">{_esc(subject)}</h1>'
         f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">Dear {_esc(name)},</p>'
         f'<div style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 22px">{message_html}</div>'
-        '<a href="' + PUBLIC_APP_URL + '/donate" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">Make a Gift</a>'
+        '<a href="' + gift_url + '" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">Make a Gift</a>'
         '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:22px 0 0">With gratitude,<br/>The Caring Sisters Club</p>'
         '</td></tr>'
         '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you supported The Caring Sisters Club. We never ask for your password or card details by email.</p></td></tr>'
@@ -1440,17 +1444,32 @@ async def _dispatch_segment_appeal(seg: str, subject: str, message: str, sent_by
     if not recipients:
         return {"recipients": 0, "sent": 0, "empty": True}
     message_html = _esc(message).replace("\n", "<br/>")
+    appeal_id = str(uuid.uuid4())
     sent = 0
     for p in recipients:
-        result = await send_email(to=p["email"], subject=subject, html=_appeal_email_html(p["name"] or "Friend", subject, message_html))
+        result = await send_email(to=p["email"], subject=subject, html=_appeal_email_html(p["name"] or "Friend", subject, message_html, appeal_id))
         if result is not None:
             sent += 1
     await db.segment_emails.insert_one({
+        "id": appeal_id, "clicks": 0,
         "segment": seg, "subject": subject, "recipients": len(recipients),
         "sent": sent, "sent_by": sent_by, "sent_by_name": sent_by_name,
         "sent_at": datetime.now(timezone.utc).isoformat(),
     })
-    return {"recipients": len(recipients), "sent": sent}
+    return {"recipients": len(recipients), "sent": sent, "appeal_id": appeal_id}
+
+
+@api_router.get("/t/appeal/{appeal_id}")
+async def track_appeal_click(appeal_id: str, request: Request):
+    target = f"{PUBLIC_APP_URL}/donate"
+    try:
+        _rate_limit(request, f"appeal-click:{appeal_id}", max_hits=3, window_s=600)
+        res = await db.segment_emails.update_one({"id": appeal_id}, {"$inc": {"clicks": 1}})
+        if res.matched_count:
+            target = f"{target}?appeal={appeal_id}"
+    except HTTPException:
+        target = f"{target}?appeal={appeal_id}"
+    return RedirectResponse(url=target, status_code=302)
 
 
 @api_router.post("/admin/donors/segment-email")
@@ -1486,6 +1505,19 @@ async def send_segment_email_test(payload: SegmentEmail, user=Depends(require_ad
 @api_router.get("/admin/appeals")
 async def donor_appeal_history(user=Depends(require_admin)):
     items = await db.segment_emails.find({}, {"_id": 0}).sort("sent_at", -1).to_list(50)
+    ids = [a["id"] for a in items if a.get("id")]
+    stats = {}
+    if ids:
+        async for row in db.payment_transactions.aggregate([
+            {"$match": {"appeal_id": {"$in": ids}, "payment_status": "paid"}},
+            {"$group": {"_id": "$appeal_id", "donations": {"$sum": 1}, "raised": {"$sum": "$amount"}}},
+        ]):
+            stats[row["_id"]] = row
+    for a in items:
+        st = stats.get(a.get("id"), {})
+        a["clicks"] = a.get("clicks", 0)
+        a["donations"] = st.get("donations", 0)
+        a["raised"] = round(float(st.get("raised", 0)), 2)
     return {"items": items}
 
 
@@ -1531,6 +1563,17 @@ class ScheduledAppeal(BaseModel):
     subject: str
     message: str
     send_on: str  # YYYY-MM-DD
+    repeat: str = "none"  # none | monthly | quarterly
+
+
+REPEAT_MONTHS = {"monthly": 1, "quarterly": 3}
+
+
+def _add_months(day, months: int):
+    import calendar
+    m = day.month - 1 + months
+    y, m = day.year + m // 12, m % 12 + 1
+    return day.replace(year=y, month=m, day=min(day.day, calendar.monthrange(y, m)[1]))
 
 
 @api_router.get("/admin/scheduled-appeals")
@@ -1553,9 +1596,12 @@ async def create_scheduled_appeal(payload: ScheduledAppeal, user=Depends(require
         raise HTTPException(status_code=400, detail="send_on must be a valid date (YYYY-MM-DD)")
     if day < datetime.now(timezone.utc).date():
         raise HTTPException(status_code=400, detail="Scheduled date cannot be in the past")
+    repeat = (payload.repeat or "none").strip().lower()
+    if repeat not in ("none", *REPEAT_MONTHS):
+        raise HTTPException(status_code=400, detail="repeat must be none, monthly or quarterly")
     doc = {
         "id": str(uuid.uuid4()), "segment": seg, "subject": subject, "message": message,
-        "send_on": send_on, "status": "scheduled",
+        "send_on": send_on, "status": "scheduled", "repeat": repeat, "runs": 0,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by": user.get("user_id"),
         "created_by_name": user.get("name") or user.get("email") or "Admin",
@@ -1583,14 +1629,17 @@ async def _run_scheduled_appeals() -> dict:
             a["segment"], a["subject"], a["message"],
             a.get("created_by"), a.get("created_by_name") or "Scheduled",
         )
-        await db.scheduled_appeals.update_one(
-            {"id": a["id"]},
-            {"$set": {
-                "status": "empty" if result.get("empty") else "sent",
-                "sent_at": datetime.now(timezone.utc).isoformat(),
-                "result": {"recipients": result.get("recipients", 0), "sent": result.get("sent", 0)},
-            }},
-        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        summary = {"recipients": result.get("recipients", 0), "sent": result.get("sent", 0)}
+        months = REPEAT_MONTHS.get(a.get("repeat") or "none")
+        if months:
+            nxt = datetime.strptime(a["send_on"], "%Y-%m-%d").date()
+            while nxt.isoformat() <= today:
+                nxt = _add_months(nxt, months)
+            update = {"send_on": nxt.isoformat(), "sent_at": now_iso, "result": summary}
+        else:
+            update = {"status": "empty" if result.get("empty") else "sent", "sent_at": now_iso, "result": summary}
+        await db.scheduled_appeals.update_one({"id": a["id"]}, {"$set": update, "$inc": {"runs": 1}})
         processed += 1
     return {"processed": processed}
 
