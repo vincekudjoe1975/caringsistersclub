@@ -7,7 +7,7 @@ import { useSignupReport, Trend } from './AdminReports';
 import { uploadImage, imgSrc } from '../lib/useHomeContent';
 import { WaitlistPanel } from '../components/WaitlistPanel';
 import { CloneProgramDialog } from '../components/CloneProgram';
-import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, X, UploadCloud, Tags, ExternalLink, ListOrdered, Copy } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, X, UploadCloud, Tags, ExternalLink, ListOrdered, Copy, Megaphone } from 'lucide-react';
 
 const EMPTY = { title: '', category: '', image_url: '', summary: '', body: '', goals: [], impact: [], cta_text: 'Get Involved', cta_link: '/volunteer', published: true, gallery: [], testimonials: [], home_testimonial_ids: [], capacity: 0, waitlist_mode: 'claim' };
 const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E] bg-white';
@@ -230,6 +230,24 @@ function CategoryEditor({ categories, onSaved }) {
   );
 }
 
+function LaunchEmailButton({ p }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
+    setBusy(true);
+    try {
+      const { data: info } = await api.get(`/admin/programs/${p.id}/launch`);
+      if (!info.published) { toast({ title: 'Publish this session first', variant: 'destructive' }); return; }
+      if (!info.pending) { toast({ title: 'Nobody new to email', description: `${info.sent} already emailed.` }); return; }
+      if (!window.confirm(`Email ${info.pending} past interested sister(s) that ${p.title} is open?`)) return;
+      const { data } = await api.post(`/admin/programs/${p.id}/launch`);
+      toast({ title: `Launch email sending to ${data.queued}` });
+    } catch (err) { toast({ title: 'Send failed', description: err?.response?.data?.detail, variant: 'destructive' }); }
+    finally { setBusy(false); }
+  };
+  return <button onClick={go} disabled={busy} className={iconBtn} title={`Session launch email${p.launch_email === 'auto' ? ' (auto on publish)' : ''}`} data-testid="program-launch-email-btn">{busy ? <Loader2 size={15} className="animate-spin" /> : <Megaphone size={15} />}</button>;
+}
+
 function ProgramRow({ p, first, last, onMove, onEdit, onToggle, onDelete, onWaitlist, onClone }) {
   const iconBtn = 'p-2 text-[#3B0A2E] hover:text-[#B4247E] disabled:opacity-25';
   return (
@@ -252,6 +270,7 @@ function ProgramRow({ p, first, last, onMove, onEdit, onToggle, onDelete, onWait
         {p.published && <a href={`/initiatives/${p.slug}`} target="_blank" rel="noreferrer" className={iconBtn} title="View"><ExternalLink size={16} /></a>}
         <button onClick={onToggle} className={iconBtn} title={p.published ? 'Unpublish' : 'Publish'} data-testid="program-toggle-publish-btn">{p.published ? <EyeOff size={16} /> : <Eye size={16} />}</button>
         {p.capacity > 0 && <button onClick={onWaitlist} className="px-3 py-1.5 rounded-full text-[12px] font-semibold text-[#B4247E] flex items-center gap-1" style={{ border: '1px solid rgba(180,36,126,0.3)' }} data-testid="program-waitlist-btn"><ListOrdered size={14} /> Waitlist</button>}
+        {p.cloned_from && <LaunchEmailButton p={p} />}
         <button onClick={onClone} className={iconBtn} title="Clone as new session" data-testid="program-clone-btn"><Copy size={15} /></button>
         <button onClick={onEdit} className={iconBtn} data-testid="program-edit-btn"><Pencil size={16} /></button>
         <button onClick={onDelete} className="p-2 text-red-500 hover:text-red-700" data-testid="program-delete-btn"><Trash2 size={16} /></button>

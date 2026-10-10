@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Loader2, Copy, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Loader2, Copy, X, Lightbulb } from 'lucide-react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 
@@ -14,10 +14,15 @@ export const CloneProgramDialog = ({ program, onClose, onDone }) => {
   const [capacity, setCapacity] = useState(program.capacity || 10);
   const [transfer, setTransfer] = useState('claim');
   const [busy, setBusy] = useState(false);
+  const [launch, setLaunch] = useState('auto');
+  const [tip, setTip] = useState(null);
+  useEffect(() => {
+    api.get(`/admin/programs/${program.id}/seat-suggestion`).then(({ data }) => { setTip(data); if (data.suggested) setCapacity(data.suggested); }).catch(() => {});
+  }, [program.id]);
   const submit = async () => {
     setBusy(true);
     try {
-      const { data } = await api.post(`/admin/programs/${program.id}/clone`, { capacity: Number(capacity) || 0, transfer });
+      const { data } = await api.post(`/admin/programs/${program.id}/clone`, { capacity: Number(capacity) || 0, transfer, launch_email: launch });
       toast({ title: `Created "${data.title}"`, description: `Saved hidden. Publish it in Programs${transfer !== 'none' && data.source_waitlist ? ` to bring over ${Math.min(data.source_waitlist, data.capacity || data.source_waitlist)} waitlisted sister(s)` : ''}.` });
       onDone?.(data);
       onClose();
@@ -33,13 +38,28 @@ export const CloneProgramDialog = ({ program, onClose, onDone }) => {
         </div>
         <p className="text-[13px] text-[#241019]/60 mb-5">Copies <strong>{program.title}</strong> as a new hidden session you can review before publishing.</p>
         <label className="text-[13px] font-semibold text-[#3B0A2E]">Seats in the new session (0 = unlimited)</label>
-        <input type="number" min="0" value={capacity} onChange={(e) => setCapacity(e.target.value)} data-testid="clone-capacity-input" className="w-full mt-1.5 mb-5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px]" />
+        <input type="number" min="0" value={capacity} onChange={(e) => setCapacity(e.target.value)} data-testid="clone-capacity-input" className="w-full mt-1.5 mb-2 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px]" />
+        {tip && (
+          <div className="rounded-xl p-3 mb-5 text-[12.5px] flex gap-2 items-start" style={{ background: '#fdf3e1' }} data-testid="clone-seat-suggestion">
+            <Lightbulb size={15} className="text-[#8a6a2c] mt-0.5 shrink-0" />
+            <span className="flex-1 text-[#5c4a1f]">{tip.suggested ? <><strong>Suggested: {tip.suggested} seats.</strong> {tip.why}</> : tip.why}</span>
+            {tip.suggested && Number(capacity) !== tip.suggested && <button onClick={() => setCapacity(tip.suggested)} data-testid="clone-use-suggestion-btn" className="font-semibold text-[#B4247E] whitespace-nowrap">Use suggestion</button>}
+          </div>
+        )}
         <p className="text-[13px] font-semibold text-[#3B0A2E] mb-2">Waitlist from the current session</p>
         <div className="space-y-2 mb-6">
           {OPTIONS.map(([v, t, d]) => (
             <label key={v} className={`flex gap-3 p-3 rounded-xl border cursor-pointer ${transfer === v ? 'border-[#B4247E] bg-[#faf2f7]' : 'border-[#3B0A2E]/10'}`}>
               <input type="radio" name="transfer" checked={transfer === v} onChange={() => setTransfer(v)} data-testid={`clone-transfer-${v}`} className="accent-[#B4247E] mt-1" />
               <span><span className="block text-[13.5px] font-semibold text-[#3B0A2E]">{t}</span><span className="block text-[12px] text-[#241019]/60">{d}</span></span>
+            </label>
+          ))}
+        </div>
+        <p className="text-[13px] font-semibold text-[#3B0A2E] mb-2">Tell past interested sisters</p>
+        <div className="flex gap-2 mb-6">
+          {[['auto', 'Email automatically on publish'], ['manual', "I'll click Send"]].map(([v, t]) => (
+            <label key={v} className={`flex-1 flex items-center gap-2 p-3 rounded-xl border cursor-pointer text-[13px] font-semibold text-[#3B0A2E] ${launch === v ? 'border-[#B4247E] bg-[#faf2f7]' : 'border-[#3B0A2E]/10'}`}>
+              <input type="radio" name="launch" checked={launch === v} onChange={() => setLaunch(v)} data-testid={`clone-launch-${v}`} className="accent-[#B4247E]" /> {t}
             </label>
           ))}
         </div>

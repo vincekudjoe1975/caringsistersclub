@@ -48,6 +48,7 @@ export default function AdminDonors() {
   const [appeals, setAppeals] = useState([]);
   const [showAppeals, setShowAppeals] = useState(false);
   const [templates, setTemplates] = useState([]);
+  const [segTemplateId, setSegTemplateId] = useState(null);
   const [scheduled, setScheduled] = useState([]);
   const [showScheduled, setShowScheduled] = useState(false);
   const [scheduleDate, setScheduleDate] = useState('');
@@ -247,9 +248,9 @@ export default function AdminDonors() {
     }
     setSegSending(true);
     try {
-      const { data } = await api.post('/admin/donors/segment-email', { segment: quickFilter, subject: segSubject, message: segMessage });
+      const { data } = await api.post('/admin/donors/segment-email', { segment: quickFilter, subject: segSubject, message: segMessage, template_id: segTemplateId || undefined });
       toast({ title: 'Appeal sent', description: `Delivered to ${data.sent} of ${data.recipients} ${currentFilterLabel} donor${data.recipients === 1 ? '' : 's'}.` });
-      setSegModal(false); setSegSubject(''); setSegMessage('');
+      setSegModal(false); setSegSubject(''); setSegMessage(''); setSegTemplateId(null);
       loadAppeals();
     } catch (e) {
       toast({ title: 'Send failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
@@ -260,7 +261,7 @@ export default function AdminDonors() {
 
   const applyTemplate = (id) => {
     const t = templates.find((x) => x.id === id);
-    if (t) { setSegSubject(t.subject); setSegMessage(t.message); }
+    if (t) { setSegSubject(t.subject); setSegMessage(t.message); setSegTemplateId(t.id); }
   };
 
   const saveTemplate = async () => {
@@ -295,9 +296,9 @@ export default function AdminDonors() {
     }
     setScheduling(true);
     try {
-      await api.post('/admin/scheduled-appeals', { segment: quickFilter, subject: segSubject, message: segMessage, send_on: scheduleDate, repeat: scheduleRepeat });
+      await api.post('/admin/scheduled-appeals', { segment: quickFilter, subject: segSubject, message: segMessage, send_on: scheduleDate, repeat: scheduleRepeat, template_id: segTemplateId || undefined });
       toast({ title: 'Appeal scheduled', description: `Will send to ${currentFilterLabel} donors on ${new Date(scheduleDate).toLocaleDateString()}.` });
-      setSegModal(false); setSegSubject(''); setSegMessage(''); setScheduleDate(''); setScheduleRepeat('none');
+      setSegModal(false); setSegSubject(''); setSegMessage(''); setSegTemplateId(null); setScheduleDate(''); setScheduleRepeat('none');
       loadScheduled();
     } catch (e) {
       toast({ title: 'Schedule failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });

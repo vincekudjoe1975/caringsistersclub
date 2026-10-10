@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Loader2, History, Archive } from 'lucide-react';
+import { Loader2, History, Archive, Lightbulb } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from 'recharts';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
@@ -24,6 +24,7 @@ function HistoryBody({ h, onClose }) {
     { label: 'Now', 'Seats filled': h.current.taken, Waitlist: h.current.waitlist, 'Sign-ups': h.current.signups }];
   return (
     <>
+      {h.suggestion && <p className="rounded-xl px-4 py-3 mb-4 text-[13px] text-[#5c4a1f] flex items-center gap-2" style={{ background: '#fdf3e1' }} data-testid="history-seat-suggestion"><Lightbulb size={15} className="text-[#8a6a2c] shrink-0" />{h.suggestion.suggested ? <span><strong>Next session: {h.suggestion.suggested} seats suggested.</strong> {h.suggestion.why}</span> : h.suggestion.why}</p>}
       <div className="h-56 mb-5" data-testid="history-chart">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chart} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>

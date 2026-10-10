@@ -1543,6 +1543,7 @@ class SegmentEmail(BaseModel):
     segment: str  # all | monthly | lapsed | major
     subject: str
     message: str
+    template_id: Optional[str] = None
 
 
 async def _donor_segment_recipients(seg: str) -> list:
@@ -1580,7 +1581,7 @@ async def donor_segment_count(segment: str, user=Depends(require_admin)):
     return {"segment": segment, "count": len(recipients)}
 
 
-async def _dispatch_segment_appeal(seg: str, subject: str, message: str, sent_by: str, sent_by_name: str, kind: str = "segment") -> dict:
+async def _dispatch_segment_appeal(seg: str, subject: str, message: str, sent_by: str, sent_by_name: str, kind: str = "segment", template_id: str = None) -> dict:
     recipients = await _donor_segment_recipients(seg)
     if not recipients:
         return {"recipients": 0, "sent": 0, "empty": True}
@@ -1594,7 +1595,7 @@ async def _dispatch_segment_appeal(seg: str, subject: str, message: str, sent_by
     await db.segment_emails.insert_one({
         "id": appeal_id, "clicks": 0,
         "segment": seg, "subject": subject, "recipients": len(recipients),
-        "sent": sent, "sent_by": sent_by, "sent_by_name": sent_by_name, "kind": kind,
+        "sent": sent, "sent_by": sent_by, "sent_by_name": sent_by_name, "kind": kind, "template_id": (template_id or "")[:64] or None,
         "sent_at": datetime.now(timezone.utc).isoformat(),
     })
     return {"recipients": len(recipients), "sent": sent, "appeal_id": appeal_id}
@@ -1620,7 +1621,7 @@ async def send_segment_email(payload: SegmentEmail, user=Depends(require_admin))
     message = (payload.message or "").strip()
     if not subject or not message:
         raise HTTPException(status_code=400, detail="Subject and message are required")
-    result = await _dispatch_segment_appeal(seg, subject, message, user.get("user_id"), user.get("name") or user.get("email") or "Admin")
+    result = await _dispatch_segment_appeal(seg, subject, message, user.get("user_id"), user.get("name") or user.get("email") or "Admin", template_id=payload.template_id)
     if result.get("empty"):
         raise HTTPException(status_code=400, detail="No donors match this segment")
     return {"segment": seg, "recipients": result["recipients"], "sent": result["sent"]}
@@ -1705,6 +1706,7 @@ class ScheduledAppeal(BaseModel):
     message: str
     send_on: str  # YYYY-MM-DD
     repeat: str = "none"  # none | monthly | quarterly
+    template_id: Optional[str] = None
 
 
 REPEAT_MONTHS = {"monthly": 1, "quarterly": 3}
@@ -1742,7 +1744,7 @@ async def create_scheduled_appeal(payload: ScheduledAppeal, user=Depends(require
         raise HTTPException(status_code=400, detail="repeat must be none, monthly or quarterly")
     doc = {
         "id": str(uuid.uuid4()), "segment": seg, "subject": subject, "message": message,
-        "send_on": send_on, "status": "scheduled", "repeat": repeat, "runs": 0,
+        "send_on": send_on, "status": "scheduled", "repeat": repeat, "runs": 0, "template_id": (payload.template_id or "")[:64] or None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by": user.get("user_id"),
         "created_by_name": user.get("name") or user.get("email") or "Admin",
@@ -1769,7 +1771,7 @@ async def _run_scheduled_appeals() -> dict:
         result = await _dispatch_segment_appeal(
             a["segment"], a["subject"], a["message"],
             a.get("created_by"), a.get("created_by_name") or "Scheduled",
-            "recurring" if (a.get("repeat") or "none") != "none" else "scheduled",
+            "recurring" if (a.get("repeat") or "none") != "none" else "scheduled", a.get("template_id"),
         )
         now_iso = datetime.now(timezone.utc).isoformat()
         summary = {"recipients": result.get("recipients", 0), "sent": result.get("sent", 0)}
@@ -2888,6 +2890,9 @@ async def admin_update_program(pid: str, payload: ProgramIn, background: Backgro
     await db.programs.update_one({"id": pid}, {"$set": {**data, "updated_at": _now_iso()}})
     if data["published"] and cur.get("transfer_from") and not cur.get("transfer_done"):
         await _transfer_waitlist(pid)
+    if data["published"] and cur.get("cloned_from") and cur.get("launch_email") == "auto" and not cur.get("launch_sent"):
+        await db.programs.update_one({"id": pid}, {"$set": {"launch_sent": True}})
+        background.add_task(_send_launch_emails, pid)
     background.add_task(_fill_seats, pid)
     return await db.programs.find_one({"id": pid}, {"_id": 0})
 
@@ -4493,6 +4498,7 @@ async def admin_yir_results(year: int, user=Depends(require_admin)):
 class CloneIn(BaseModel):
     capacity: int = 0
     transfer: str = "claim"
+    launch_email: str = "auto"
 
 
 _CLONE_SKIP = ("id", "slug", "created_at", "updated_at", "order", "home_testimonial_ids", "seats_left", "full", "priority_until",
@@ -4504,6 +4510,8 @@ async def admin_clone_program(pid: str, payload: CloneIn, user=Depends(require_a
     src = await db.programs.find_one({"id": pid}, {"_id": 0})
     if not src:
         raise HTTPException(status_code=404, detail="Program not found")
+    if payload.launch_email not in ("auto", "manual"):
+        raise HTTPException(status_code=400, detail="Invalid launch email option")
     if payload.transfer not in ("claim", "auto", "none"):
         raise HTTPException(status_code=400, detail="Invalid waitlist option")
     if not 0 <= payload.capacity <= 100000:
@@ -4515,12 +4523,13 @@ async def admin_clone_program(pid: str, payload: CloneIn, user=Depends(require_a
     last = await db.programs.find_one({}, {"_id": 0, "order": 1}, sort=[("order", -1)])
     doc = {**{k: v for k, v in src.items() if k not in _CLONE_SKIP}, "id": str(uuid.uuid4()), "slug": await _unique_slug(title), "title": title,
            "capacity": payload.capacity, "published": False, "cloned_from": root, "home_testimonial_ids": [],
-           "order": (last or {}).get("order", -1) + 1, "created_at": _now_iso(), "season_started_at": _now_iso()}
+           "order": (last or {}).get("order", -1) + 1, "created_at": _now_iso(), "season_started_at": _now_iso(),
+           "launch_email": payload.launch_email, "launch_sent": False}
     if payload.transfer != "none":
         doc.update({"transfer_from": src["id"], "transfer_mode": payload.transfer, "transfer_done": False})
     await db.programs.insert_one(dict(doc))
     waiting = await db.submissions.count_documents(_wl_q(src["id"]))
-    return {**doc, "source_waitlist": waiting}
+    return {**doc, "source_waitlist": waiting, "launch_audience": len(await _launch_recipients(doc))}
 
 
 async def _transfer_waitlist(pid: str) -> int:
@@ -4594,7 +4603,7 @@ async def admin_program_history(pid: str, user=Depends(require_admin)):
     snaps = await db.program_snapshots.find({"program_id": pid}, {"_id": 0}).sort("end", 1).to_list(500)
     season = p.get("season_started_at") or p.get("created_at") or _now_iso()
     current = await _snapshot(p, "current", "Current season", season, _now_iso(), save=False)
-    return {"program": p["title"], "season_started_at": season, "monthly": [x for x in snaps if x["kind"] == "monthly"],
+    return {"program": p["title"], "season_started_at": season, "suggestion": await _seat_suggestion(p), "monthly": [x for x in snaps if x["kind"] == "monthly"],
             "seasons": [x for x in snaps if x["kind"] == "season"], "current": current}
 
 
@@ -4619,8 +4628,7 @@ async def admin_close_season(pid: str, payload: CloseSeasonIn, background: Backg
 
 
 # ---------- Badge wall ----------
-@api_router.get("/volunteer-hours/badge-wall")
-async def badge_wall():
+async def _badge_wall_items() -> list:
     mode = (await _site()).get("badge_wall_mode") or "optin"
     out, seen = [], set()
     async for m in db.volunteer_milestones.find({}, {"_id": 0}).sort("awarded_at", -1).limit(200):
@@ -4631,10 +4639,203 @@ async def badge_wall():
         if mode == "optin" and not await db.volunteer_hours.find_one({"email": m["email"], "leaderboard": True}, {"_id": 1}):
             continue
         last = await db.volunteer_hours.find_one({"email": m["email"], "status": "approved"}, {"_id": 0, "name": 1}, sort=[("created_at", -1)])
-        out.append({"name": _short_name((last or {}).get("name", "")), "threshold": m["threshold"], "awarded_at": m["awarded_at"],
+        out.append({"email": m["email"], "first": ((last or {}).get("name") or "friend").split(" ")[0], "name": _short_name((last or {}).get("name", "")),
+                    "threshold": m["threshold"], "awarded_at": m["awarded_at"], "scope": m["scope"],
                     "label": m.get("label") or f"{m['threshold']} Hours", "share_token": m.get("share_token")})
         if len(out) >= 12:
             break
+    return out
+
+
+@api_router.get("/volunteer-hours/badge-wall")
+async def badge_wall():
+    return {"items": [{k: v for k, v in b.items() if k not in ("email", "first", "scope")} for b in await _badge_wall_items()]}
+
+
+def _wall_email_html(b: dict, first_time: bool) -> str:
+    link = f"{PUBLIC_APP_URL}/badge/{b['share_token']}"
+    e = _urlquote
+    msg = f"I earned the {b['label']} volunteer badge with The Caring Sisters Club!"
+    share = f"{PUBLIC_APP_URL}/api/share/badge/{b['share_token']}"
+    socials = " &nbsp; ".join(f'<a href="{u}" style="color:#B4247E;font-weight:bold;font-size:13px;text-decoration:none">{n}</a>' for n, u in (
+        ("Facebook", f"https://www.facebook.com/sharer/sharer.php?u={e(share)}"), ("LinkedIn", f"https://www.linkedin.com/sharing/share-offsite/?url={e(share)}"),
+        ("X", f"https://twitter.com/intent/tweet?text={e(msg)}&url={e(share)}"), ("WhatsApp", f"https://wa.me/?text={e(msg + ' ' + share)}")))
+    head = "You're on our Badge Wall!" if first_time else "Your new badge is on the wall!"
+    lead = ("Your volunteer milestone is now featured on the <strong>Recent badge earners</strong> wall on our Volunteer page for the whole community to celebrate."
+            if first_time else f"Your <strong>{_esc(b['label'])}</strong> badge just joined the <strong>Recent badge earners</strong> wall on our Volunteer page.")
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Badge Wall") +
+        '<tr><td style="padding:34px 32px;font-family:Arial,sans-serif;color:#241019;text-align:center">'
+        f'<div style="display:inline-block;width:96px;height:96px;border-radius:50%;background:#3B0A2E;border:4px solid #CBA24B;color:#CBA24B;font-family:Georgia,serif;font-size:30px;font-weight:bold;line-height:96px;margin:0 0 16px">{b["threshold"]}h</div>'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 10px">{head}</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">Congratulations, {_esc(b["first"])}! {lead}</p>'
+        + _btn(link, "See My Badge", primary=True) +
+        f'<p style="font-size:13px;color:#6b5560;margin:22px 0 6px">Share your milestone:</p><p style="margin:0">{socials}</p>'
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">We show only your first name and last initial on our website. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _celebrate_badge_wall() -> int:
+    """Hourly: email each volunteer once per badge that newly appears on the public badge wall."""
+    sent = 0
+    for b in await _badge_wall_items():
+        if not b.get("share_token"):
+            continue
+        r = await db.badge_wall_notified.update_one({"email": b["email"], "scope": b["scope"], "threshold": b["threshold"]},
+                                                    {"$setOnInsert": {"at": _now_iso()}}, upsert=True)
+        if r.upserted_id is None:
+            continue
+        first_time = await db.badge_wall_notified.count_documents({"email": b["email"]}) == 1
+        try:
+            await send_email(to=b["email"], subject="You're on our Badge Wall!" if first_time else f"Your {b['label']} badge is on the wall!", html=_wall_email_html(b, first_time))
+            sent += 1
+        except Exception as ex:
+            logging.error(f"Badge wall email failed: {ex}")
+    return sent
+
+
+# ---------- Seat suggestions ----------
+async def _seat_suggestion(p: dict):
+    root = p.get("cloned_from") or p["id"]
+    fam = [x["id"] for x in await db.programs.find({"$or": [{"id": root}, {"cloned_from": root}]}, {"_id": 0, "id": 1}).to_list(100)]
+    seasons = await db.program_snapshots.find({"program_id": {"$in": fam}, "kind": "season"}, {"_id": 0}).to_list(200)
+    basis = "past seasons"
+    if not seasons:
+        seasons, basis = [await _snapshot(p, "current", "", p.get("season_started_at") or p.get("created_at") or _now_iso(), _now_iso(), save=False)], "the current season"
+    seasons = [x for x in seasons if x.get("capacity") or x.get("taken")]
+    if not seasons:
+        return {"suggested": None, "why": "Not enough sign-up history yet."}
+    filled = sum(x["taken"] for x in seasons) / len(seasons)
+    wl = sum(x["waitlist"] for x in seasons) / len(seasons)
+    fast = [x for x in seasons if x.get("days_to_fill") is not None and x["days_to_fill"] < 14]
+    n = filled + wl
+    if fast:
+        n *= 1.2
+    n = max(1, int(-(-n // 1)))
+    why = f"Based on {len(seasons)} {basis if len(seasons) == 1 else 'seasons'}: ~{filled:g} seats filled + ~{wl:g} waiting"
+    why += f", +20% because {len(fast)} filled in under 14 days." if fast else "."
+    return {"suggested": n, "why": why.replace(".0 ", " ")}
+
+
+@api_router.get("/admin/programs/{pid}/seat-suggestion")
+async def admin_seat_suggestion(pid: str, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return await _seat_suggestion(p)
+
+
+# ---------- Session launch emails ----------
+async def _launch_recipients(p: dict) -> list:
+    root = p.get("cloned_from") or p["id"]
+    fam = [x for x in await db.programs.find({"$or": [{"id": root}, {"cloned_from": root}], "id": {"$ne": p["id"]}}, {"_id": 0, "id": 1, "slug": 1}).to_list(100)]
+    if not fam:
+        return []
+    q = {"type": "program_signup", "$or": [{"program_id": {"$in": [x["id"] for x in fam]}}, {"program_id": {"$exists": False}, "data.program_slug": {"$in": [x["slug"] for x in fam]}}]}
+    current = {(x["data"].get("email") or "").lower() async for x in db.submissions.find({"type": "program_signup", "program_id": p["id"]}, {"_id": 0, "data.email": 1})}
+    done = {x["email"] async for x in db.session_launch_emails.find({"program_id": p["id"]}, {"_id": 0, "email": 1})}
+    out = {}
+    async for x in db.submissions.find(q, {"_id": 0, "data": 1}).sort("created_at", -1):
+        em = (x["data"].get("email") or "").strip().lower()
+        if em and em not in current and em not in done and re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", em):
+            out.setdefault(em, x["data"].get("name") or "")
+    return [{"email": k, "name": v} for k, v in out.items()]
+
+
+def _launch_html(name: str, p: dict) -> str:
+    seats = f" with {p['capacity']} seats" if p.get("capacity") else ""
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("New Session Open") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 12px">A new session of {_esc(p["title"])} is open!</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">Hi {_esc(name)}, you showed interest in this program before, so we wanted you to be among the first to know. '
+        f'We just opened a new session{seats}. Spots can fill quickly.</p>'
+        + _btn(f"{PUBLIC_APP_URL}/initiatives/{p['slug']}#join", "Save My Spot", primary=True) +
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">With warmth,<br/>The Caring Sisters Club</p></td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you signed up for or joined the waitlist of an earlier session of this program.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _send_launch_emails(pid: str) -> int:
+    p = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not p or not p.get("published"):
+        return 0
+    sent = 0
+    for r in await _launch_recipients(p):
+        res = await db.session_launch_emails.update_one({"program_id": pid, "email": r["email"]}, {"$setOnInsert": {"at": _now_iso()}}, upsert=True)
+        if res.upserted_id is None:
+            continue
+        try:
+            if await send_email(to=r["email"], subject=f"New session open: {p['title']}"[:150], html=_launch_html((r["name"] or "friend").split(" ")[0], p)) is not None:
+                sent += 1
+        except Exception as ex:
+            logging.error(f"Launch email failed: {ex}")
+        await asyncio.sleep(0.6)
+    await db.programs.update_one({"id": pid}, {"$set": {"launch_sent": True, "launch_sent_at": _now_iso()}, "$inc": {"launch_count": sent}})
+    return sent
+
+
+@api_router.get("/admin/programs/{pid}/launch")
+async def admin_launch_info(pid: str, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return {"pending": len(await _launch_recipients(p)), "sent": await db.session_launch_emails.count_documents({"program_id": pid}),
+            "mode": p.get("launch_email") or "manual", "published": bool(p.get("published"))}
+
+
+@api_router.post("/admin/programs/{pid}/launch")
+async def admin_send_launch(pid: str, background: BackgroundTasks, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    if not p.get("published"):
+        raise HTTPException(status_code=400, detail="Publish this session first so the link works.")
+    n = len(await _launch_recipients(p))
+    if not n:
+        raise HTTPException(status_code=400, detail="Everyone interested has already been emailed or is signed up.")
+    background.add_task(_send_launch_emails, pid)
+    return {"queued": n}
+
+
+# ---------- Appeal template insights ----------
+@api_router.get("/admin/reports/template-insights")
+async def admin_template_insights(user=Depends(require_admin)):
+    templates = await db.appeal_templates.find({}, {"_id": 0}).to_list(200)
+    by_subject = {t["subject"].strip().lower(): t["id"] for t in templates if t.get("subject")}
+    rows = {t["id"]: {"id": t["id"], "name": t["name"], "subject": t.get("subject", ""), "uses": 0, "matched": 0, "recipients": 0, "clicks": 0, "gifts": 0, "raised": 0.0, "appeal_ids": []} for t in templates}
+    for a in await db.segment_emails.find({}, {"_id": 0}).to_list(1000):
+        tid = a.get("template_id") if a.get("template_id") in rows else None
+        if not tid and not a.get("template_id"):
+            tid = by_subject.get((a.get("subject") or "").strip().lower())
+            if tid:
+                rows[tid]["matched"] += 1
+        if not tid:
+            continue
+        r = rows[tid]
+        r["uses"] += 1
+        r["recipients"] += a.get("sent") or a.get("recipients") or 0
+        r["clicks"] += a.get("clicks", 0)
+        r["appeal_ids"].append(a["id"])
+    for r in rows.values():
+        if r["appeal_ids"]:
+            async for g in db.payment_transactions.aggregate([{"$match": {"appeal_id": {"$in": r["appeal_ids"]}, "payment_status": "paid"}},
+                                                               {"$group": {"_id": None, "n": {"$sum": 1}, "amt": {"$sum": "$amount"}}}]):
+                r["gifts"], r["raised"] = g["n"], round(float(g["amt"]), 2)
+        r.pop("appeal_ids")
+        r["click_rate"] = round(100 * r["clicks"] / r["recipients"], 1) if r["recipients"] else None
+        r["per_recipient"] = round(r["raised"] / r["recipients"], 2) if r["recipients"] else None
+    out = sorted(rows.values(), key=lambda r: (r["per_recipient"] or -1, r["raised"]), reverse=True)
+    top = next((r for r in out if r["per_recipient"]), None)
+    for r in out:
+        r["top"] = bool(top) and r["id"] == top["id"]
     return {"items": out}
 
 
@@ -4891,6 +5092,7 @@ async def _hourly_scheduler():
         try:
             await _process_all_waitlists()
             await _send_volunteer_thanks()
+            await _celebrate_badge_wall()
             for p in await db.programs.find({"capacity": {"$gt": 0}}, {"_id": 0, "id": 1}).to_list(200):
                 await _fill_seats(p["id"])
         except Exception as e:

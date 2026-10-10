@@ -5,6 +5,7 @@ import { useToast } from '../hooks/use-toast';
 import { ProgramForecast } from '../components/ProgramForecast';
 import { ForecastHistory } from '../components/ForecastHistory';
 import { AppealComparison } from '../components/AppealComparison';
+import { TemplateInsights } from '../components/TemplateInsights';
 
 const monthLabel = (k) => new Date(`${k}-01T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 const csvCell = (v) => { let t = String(v ?? ''); if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`; return `"${t.replace(/"/g, '""')}"`; };
@@ -311,6 +312,7 @@ export default function AdminReports() {
       <ProgramForecast />
       <ForecastHistory />
       <AppealComparison />
+      <TemplateInsights />
       <StoryRequestResults />
       <SignupReport />
       <HoursReview />
