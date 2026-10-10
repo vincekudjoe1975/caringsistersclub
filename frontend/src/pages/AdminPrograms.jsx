@@ -7,7 +7,8 @@ import { useSignupReport, Trend } from './AdminReports';
 import { uploadImage, imgSrc } from '../lib/useHomeContent';
 import { WaitlistPanel } from '../components/WaitlistPanel';
 import { CloneProgramDialog } from '../components/CloneProgram';
-import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, X, UploadCloud, Tags, ExternalLink, ListOrdered, Copy, Megaphone } from 'lucide-react';
+import { AttendancePanel } from '../components/Attendance';
+import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, X, UploadCloud, Tags, ExternalLink, ListOrdered, Copy, Megaphone, ClipboardCheck } from 'lucide-react';
 
 const EMPTY = { title: '', category: '', image_url: '', summary: '', body: '', goals: [], impact: [], cta_text: 'Get Involved', cta_link: '/volunteer', published: true, gallery: [], testimonials: [], home_testimonial_ids: [], capacity: 0, waitlist_mode: 'claim', start_date: '', end_date: '', schedule: '' };
 const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E] bg-white';
@@ -258,7 +259,7 @@ function LaunchEmailButton({ p }) {
   return <button onClick={go} disabled={busy} className={iconBtn} title={`Session launch email${p.launch_email === 'auto' ? ' (auto on publish)' : ''}`} data-testid="program-launch-email-btn">{busy ? <Loader2 size={15} className="animate-spin" /> : <Megaphone size={15} />}</button>;
 }
 
-function ProgramRow({ p, first, last, onMove, onEdit, onToggle, onDelete, onWaitlist, onClone }) {
+function ProgramRow({ p, first, last, onMove, onEdit, onToggle, onDelete, onWaitlist, onClone, onAttendance }) {
   const iconBtn = 'p-2 text-[#3B0A2E] hover:text-[#B4247E] disabled:opacity-25';
   return (
     <div className={`bg-white rounded-2xl border border-[#3B0A2E]/8 p-4 flex flex-col sm:flex-row gap-4 sm:items-center ${p.published ? '' : 'opacity-60'}`} data-testid="admin-program-row">
@@ -280,6 +281,7 @@ function ProgramRow({ p, first, last, onMove, onEdit, onToggle, onDelete, onWait
         {p.published && <a href={`/initiatives/${p.slug}`} target="_blank" rel="noreferrer" className={iconBtn} title="View"><ExternalLink size={16} /></a>}
         <button onClick={onToggle} className={iconBtn} title={p.published ? 'Unpublish' : 'Publish'} data-testid="program-toggle-publish-btn">{p.published ? <EyeOff size={16} /> : <Eye size={16} />}</button>
         {p.capacity > 0 && <button onClick={onWaitlist} className="px-3 py-1.5 rounded-full text-[12px] font-semibold text-[#B4247E] flex items-center gap-1" style={{ border: '1px solid rgba(180,36,126,0.3)' }} data-testid="program-waitlist-btn"><ListOrdered size={14} /> Waitlist</button>}
+        {p.start_date && <button onClick={onAttendance} className="px-3 py-1.5 rounded-full text-[12px] font-semibold text-[#3B0A2E] flex items-center gap-1" style={{ border: '1px solid rgba(59,10,46,0.15)' }} data-testid="program-attendance-btn"><ClipboardCheck size={14} /> Attendance</button>}
         {p.cloned_from && <LaunchEmailButton p={p} />}
         <button onClick={onClone} className={iconBtn} title="Clone as new session" data-testid="program-clone-btn"><Copy size={15} /></button>
         <button onClick={onEdit} className={iconBtn} data-testid="program-edit-btn"><Pencil size={16} /></button>
@@ -295,6 +297,7 @@ export default function AdminPrograms() {
   const [editing, setEditing] = useState(null);
   const [waitlist, setWaitlist] = useState(null);
   const [clone, setClone] = useState(null);
+  const [attendance, setAttendance] = useState(null);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
@@ -334,9 +337,10 @@ export default function AdminPrograms() {
       {items === null ? <div className="flex justify-center py-16"><Loader2 className="animate-spin text-[#B4247E]" size={30} /></div> : (
         <div className="space-y-3">{items.map((p, i) => (
           <ProgramRow key={p.id} p={p} first={i === 0} last={i === items.length - 1} onMove={(d) => move(i, d)}
-            onEdit={() => setEditing(p)} onToggle={() => toggle(p)} onDelete={() => remove(p)} onWaitlist={() => setWaitlist(p)} onClone={() => setClone(p)} />
+            onEdit={() => setEditing(p)} onToggle={() => toggle(p)} onDelete={() => remove(p)} onWaitlist={() => setWaitlist(p)} onClone={() => setClone(p)} onAttendance={() => setAttendance(p)} />
         ))}</div>
       )}
+      {attendance && <AttendancePanel program={attendance} onClose={() => setAttendance(null)} />}
       {clone && <CloneProgramDialog program={clone} onClose={() => setClone(null)} onDone={load} />}
       {waitlist && <WaitlistPanel program={waitlist} onClose={() => { setWaitlist(null); load(); }} />}
       {editing && <ProgramForm initial={editing} categories={categories} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}

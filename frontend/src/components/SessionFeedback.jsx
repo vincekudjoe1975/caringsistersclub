@@ -34,6 +34,25 @@ function Session({ r, onFeature }) {
   );
 }
 
+function AlertSetting() {
+  const { toast } = useToast();
+  const [th, setTh] = useState(null);
+  useEffect(() => { api.get('/admin/feedback-alert-settings').then(({ data }) => setTh(data.threshold)).catch(() => {}); }, []);
+  if (th === null) return null;
+  const change = async (e) => {
+    const v = Number(e.target.value); setTh(v);
+    try { await api.put('/admin/feedback-alert-settings', { threshold: v }); toast({ title: 'Alert setting saved' }); } catch { toast({ title: 'Save failed', variant: 'destructive' }); }
+  };
+  return (
+    <label className="text-[12.5px] font-semibold text-[#3B0A2E] flex items-center gap-2" data-testid="fb-alert-setting">Alert staff at
+      <select value={th} onChange={change} data-testid="fb-alert-threshold-select" className="rounded-full px-3 py-1.5 border border-[#3B0A2E]/15 font-normal">
+        <option value={2}>2 stars or below</option><option value={3}>3 stars or below</option>
+      </select>
+      <span className="font-normal text-[#241019]/55">or "Would not recommend"</span>
+    </label>
+  );
+}
+
 export const SessionFeedback = () => {
   const { toast } = useToast();
   const [items, setItems] = useState(null);
@@ -47,7 +66,10 @@ export const SessionFeedback = () => {
   return (
     <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 p-6 mb-6" data-testid="session-feedback">
       <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold flex items-center gap-2 mb-1"><Star size={18} className="text-[#B4247E]" /> Session feedback</h3>
-      <p className="text-[12.5px] text-[#241019]/55">Sisters with a seat get a short feedback email the day after a session ends.</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[12.5px] text-[#241019]/55">Sisters with a seat (or marked Attended) get a short feedback email the day after a session ends.</p>
+        <AlertSetting />
+      </div>
       {!items ? <Loader2 className="animate-spin text-[#B4247E] mt-4" /> : items.length === 0 ? <p className="text-[13px] text-[#241019]/55 mt-4" data-testid="session-feedback-empty">No feedback requests sent yet.</p> : items.map((r) => <Session key={r.program_id} r={r} onFeature={feature} />)}
     </div>
   );

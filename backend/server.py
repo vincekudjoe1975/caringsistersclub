@@ -2862,7 +2862,8 @@ async def _program_categories() -> list:
 async def public_programs():
     await _seed_programs()
     items = await db.programs.find({"published": True}, {"_id": 0, "body": 0}).sort("order", 1).to_list(200)
-    return {"items": [await _with_seats(p) for p in items], "categories": await _program_categories()}
+    ratings = await _program_ratings()
+    return {"items": [_with_rating(await _with_seats(p), ratings) for p in items], "categories": await _program_categories()}
 
 
 @api_router.get("/programs/{slug}")
@@ -2874,7 +2875,7 @@ async def public_program(slug: str):
     if ids:
         home = {t["id"]: t for t in (await _get_home_content())["testimonials"]}
         p["testimonials"] = (p.get("testimonials") or []) + [home[i] for i in ids if i in home]
-    return await _with_seats(p)
+    return _with_rating(await _with_seats(p), await _program_ratings())
 
 
 @api_router.get("/admin/programs")
@@ -5060,7 +5061,7 @@ async def session_calendar_file(slug: str):
 
 
 # ---------- Session reminders ----------
-def _session_reminder_html(name: str, p: dict, kind: str) -> str:
+def _session_reminder_html(name: str, p: dict, kind: str, release: str = "") -> str:
     when = "today" if kind == "dayof" else "in 2 days"
     dates = datetime.strptime(p["start_date"], "%Y-%m-%d").strftime("%A, %B %-d")
     return (
@@ -5072,7 +5073,8 @@ def _session_reminder_html(name: str, p: dict, kind: str) -> str:
         f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 14px">Hi {_esc(name)}, this is a friendly reminder that your session begins <strong>{dates}</strong>.</p>'
         + (f'<p style="font-size:14px;color:#3B0A2E;font-weight:bold;margin:0 0 18px">Schedule: {_esc(p["schedule"])}</p>' if p.get("schedule") else "")
         + _btn(_session_gcal(p), "Add to Google Calendar", primary=True) + "&nbsp; "
-        + _btn(f"{PUBLIC_APP_URL}/api/sessions/{p['slug']}/calendar.ics", "Apple / Outlook") +
+        + _btn(f"{PUBLIC_APP_URL}/api/sessions/{p['slug']}/calendar.ics", "Apple / Outlook")
+        + (f'<p style="font-size:13px;color:#6b5560;margin:22px 0 8px">Plans changed? Let a sister on the waitlist have your seat:</p>' + _btn(f"{PUBLIC_APP_URL}/release?token={release}", "I Can't Make It") if release else "") +
         '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">We can\'t wait to see you!<br/>The Caring Sisters Club</p></td></tr>'
         '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you have a seat in this program. Can\'t make it? Just reply to let us know so we can offer your seat to someone on the waitlist.</p></td></tr>'
         '</table></td></tr></table>'
@@ -5088,13 +5090,16 @@ async def _send_session_reminders(now=None) -> int:
     sent = 0
     for day, kind in targets:
         for p in await db.programs.find({"published": True, "start_date": day}, {"_id": 0}).to_list(100):
-            for s in await db.submissions.find(_seats_q(p), {"_id": 0, "id": 1, "data": 1}).to_list(2000):
+            for s in await db.submissions.find(_seats_q(p), {"_id": 0, "id": 1, "data": 1, "release_token": 1}).to_list(2000):
                 r = await db.session_reminders.update_one({"submission_id": s["id"], "kind": kind, "start_date": day}, {"$setOnInsert": {"program_id": p["id"], "at": _now_iso()}}, upsert=True)
                 if r.upserted_id is None:
                     continue
+                rel = s.get("release_token") or secrets.token_urlsafe(24)
+                if not s.get("release_token"):
+                    await db.submissions.update_one({"id": s["id"]}, {"$set": {"release_token": rel}})
                 try:
                     await send_email(to=s["data"].get("email"), subject=(f"Today: {p['title']}" if kind == "dayof" else f"Reminder: {p['title']} starts in 2 days")[:150],
-                                     html=_session_reminder_html((s["data"].get("name") or "friend").split(" ")[0], p, kind))
+                                     html=_session_reminder_html((s["data"].get("name") or "friend").split(" ")[0], p, kind, rel))
                     sent += 1
                 except Exception as ex:
                     logging.error(f"Session reminder failed: {ex}")
@@ -5125,7 +5130,10 @@ async def _send_session_feedback(today=None) -> int:
     for p in await db.programs.find({"start_date": {"$nin": [None, ""]}}, {"_id": 0}).to_list(300):
         if not lo <= _session_end(p) <= hi:
             continue
-        for s in await db.submissions.find(_seats_q(p), {"_id": 0, "id": 1, "data": 1}).to_list(2000):
+        seated = await db.submissions.find(_seats_q(p), {"_id": 0, "id": 1, "data": 1, "attendance": 1}).to_list(2000)
+        if any(x.get("attendance") for x in seated):
+            seated = [x for x in seated if x.get("attendance") == "attended"]
+        for s in seated:
             tok = secrets.token_urlsafe(24)
             r = await db.session_feedback.update_one({"submission_id": s["id"], "session_end": _session_end(p)},
                                                      {"$setOnInsert": {"id": str(uuid.uuid4()), "token": tok, "program_id": p["id"], "email": (s["data"].get("email") or "").lower(),
@@ -5159,7 +5167,7 @@ class FeedbackIn(BaseModel):
 
 
 @api_router.post("/feedback")
-async def submit_feedback(payload: FeedbackIn, request: Request):
+async def submit_feedback(payload: FeedbackIn, request: Request, background: BackgroundTasks):
     _rate_limit(request, "feedback-post", max_hits=10, window_s=60)
     if not 1 <= payload.rating <= 5:
         raise HTTPException(status_code=400, detail="Please choose a rating from 1 to 5.")
@@ -5167,6 +5175,11 @@ async def submit_feedback(payload: FeedbackIn, request: Request):
                                                                                     "comment": payload.comment.strip()[:1500], "submitted_at": _now_iso()}})
     if not res.matched_count:
         raise HTTPException(status_code=404, detail="This feedback link is invalid.")
+    th = int((await _site()).get("fb_alert_threshold") or 2)
+    if payload.rating <= th or payload.recommend is False:
+        f = await db.session_feedback.find_one_and_update({"token": payload.token[:64], "alerted": {"$ne": True}}, {"$set": {"alerted": True}})
+        if f:
+            background.add_task(_feedback_alert, {**f, "rating": payload.rating, "recommend": payload.recommend, "comment": payload.comment.strip()[:1500]})
     return {"message": "Thank you for your feedback!"}
 
 
@@ -5220,6 +5233,181 @@ async def anniversary_shoutouts():
         last = await db.volunteer_hours.find_one({"email": r["_id"], "status": "approved"}, {"_id": 0, "name": 1}, sort=[("created_at", -1)])
         out.append({"name": _short_name((last or {}).get("name", "")), "years": now.year - int(first[:4]), "day": int(first[8:10])})
     return {"month": now.strftime("%B"), "items": sorted(out, key=lambda x: x["day"])[:24]}
+
+
+# ---------- Program ratings ----------
+RATING_MIN_REVIEWS = 3
+
+
+async def _program_ratings() -> dict:
+    roots = {p["id"]: p.get("cloned_from") or p["id"] for p in await db.programs.find({}, {"_id": 0, "id": 1, "cloned_from": 1}).to_list(500)}
+    agg = {}
+    async for r in db.session_feedback.aggregate([{"$match": {"submitted_at": {"$exists": True}, "rating": {"$gte": 1}}},
+                                                  {"$group": {"_id": "$program_id", "n": {"$sum": 1}, "sum": {"$sum": "$rating"}}}]):
+        root = roots.get(r["_id"], r["_id"])
+        a = agg.setdefault(root, [0, 0])
+        a[0] += r["n"]
+        a[1] += r["sum"]
+    return {pid: agg.get(root) for pid, root in roots.items() if agg.get(root)}
+
+
+def _with_rating(p: dict, ratings: dict) -> dict:
+    r = ratings.get(p["id"])
+    if r and r[0] >= RATING_MIN_REVIEWS:
+        p["rating_avg"], p["rating_count"] = round(r[1] / r[0], 1), r[0]
+    return p
+
+
+# ---------- Attendance ----------
+@api_router.get("/admin/programs/{pid}/attendance")
+async def admin_get_attendance(pid: str, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    rows = await db.submissions.find(_seats_q(p), {"_id": 0, "id": 1, "data": 1, "attendance": 1}).sort("created_at", 1).to_list(2000)
+    return {"program": p["title"], "start_date": p.get("start_date"), "end_date": p.get("end_date"),
+            "items": [{"id": r["id"], "name": r["data"].get("name"), "email": r["data"].get("email"), "attendance": r.get("attendance")} for r in rows]}
+
+
+class AttendanceIn(BaseModel):
+    updates: dict = {}
+    all: Optional[str] = None
+
+
+@api_router.post("/admin/programs/{pid}/attendance")
+async def admin_set_attendance(pid: str, payload: AttendanceIn, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    ok = ("attended", "no_show", None)
+    if payload.all is not None:
+        if payload.all not in ok:
+            raise HTTPException(status_code=400, detail="Invalid attendance value")
+        res = await db.submissions.update_many(_seats_q(p), {"$set": {"attendance": payload.all, "attendance_at": _now_iso()}})
+        return {"updated": res.modified_count}
+    n = 0
+    for sid, v in list(payload.updates.items())[:2000]:
+        if v not in ok:
+            raise HTTPException(status_code=400, detail="Invalid attendance value")
+        n += (await db.submissions.update_one({**_seats_q(p), "id": sid}, {"$set": {"attendance": v, "attendance_at": _now_iso()}})).modified_count
+    return {"updated": n}
+
+
+@api_router.get("/admin/reports/attendance")
+async def admin_attendance_report(user=Depends(require_admin)):
+    out = []
+    for p in await db.programs.find({"start_date": {"$nin": [None, ""]}}, {"_id": 0}).sort("start_date", -1).to_list(200):
+        rows = await db.submissions.find(_seats_q(p), {"_id": 0, "attendance": 1}).to_list(2000)
+        att, ns = sum(1 for r in rows if r.get("attendance") == "attended"), sum(1 for r in rows if r.get("attendance") == "no_show")
+        out.append({"id": p["id"], "title": p["title"], "start_date": p["start_date"], "end_date": p.get("end_date") or p["start_date"], "seated": len(rows),
+                    "attended": att, "no_show": ns, "unmarked": len(rows) - att - ns, "attendance_pct": round(100 * att / (att + ns)) if att + ns else None})
+    return {"items": out}
+
+
+# ---------- Seat release ("I can't make it") ----------
+async def _release_sub(token: str):
+    sub = await db.submissions.find_one({"release_token": token[:64], "type": "program_signup"}, {"_id": 0}) if token else None
+    if not sub:
+        raise HTTPException(status_code=404, detail="This link is invalid.")
+    prog = await db.programs.find_one({"id": sub.get("program_id")}, {"_id": 0}) or {}
+    return sub, prog
+
+
+@api_router.get("/seat-release")
+async def seat_release_info(token: str, request: Request):
+    _rate_limit(request, "release", max_hits=20, window_s=60)
+    sub, prog = await _release_sub(token)
+    return {"program": prog.get("title", sub["data"].get("program")), "start_date": prog.get("start_date"), "schedule": prog.get("schedule", ""),
+            "name": (sub["data"].get("name") or "").split(" ")[0], "released": bool(sub.get("released"))}
+
+
+class ReleaseIn(BaseModel):
+    token: str
+
+
+def _release_staff_html(sub: dict, prog: dict) -> str:
+    d = sub["data"]
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Seat Released") +
+        '<tr><td style="padding:30px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:22px;margin:0 0 12px">{_esc(d.get("name", ""))} can\'t make {_esc(prog.get("title", ""))}</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 16px">{_esc(d.get("email", ""))} released her seat from a reminder email. '
+        'The sign-up is now marked "Not a fit" and the seat has been offered to the waitlist according to the program\'s waitlist setting.</p>'
+        + _btn(f"{PUBLIC_APP_URL}/admin", "Open Admin", primary=True) + '</td></tr></table></td></tr></table>'
+    )
+
+
+async def _after_release(sub: dict, prog: dict):
+    if prog.get("id"):
+        await _fill_seats(prog["id"])
+    to = (await _site()).get("staff_notify_email")
+    if to:
+        try:
+            await send_email(to=to, subject=f"Seat released: {sub['data'].get('name', '')} can't make {prog.get('title', '')}"[:150], html=_release_staff_html(sub, prog))
+        except Exception as ex:
+            logging.error(f"Release staff alert failed: {ex}")
+
+
+@api_router.post("/seat-release")
+async def seat_release(payload: ReleaseIn, request: Request, background: BackgroundTasks):
+    _rate_limit(request, "release-post", max_hits=10, window_s=60)
+    sub, prog = await _release_sub(payload.token)
+    if sub.get("released"):
+        return {"released": True}
+    res = await db.submissions.update_one({"id": sub["id"], "released": {"$ne": True}}, {"$set": {"released": True, "released_at": _now_iso(), "stage": "not_fit",
+                                                                                               "stage_at": _now_iso(), "data.list": "Cancelled by sister"}})
+    if res.modified_count:
+        background.add_task(_after_release, sub, prog)
+    return {"released": True}
+
+
+# ---------- Low-rating alerts ----------
+def _fb_alert_html(f: dict, prog: dict) -> str:
+    rec = {True: "Yes", False: "No", None: "Not answered"}[f.get("recommend")]
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Feedback Alert") +
+        '<tr><td style="padding:30px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#9b3b4f;font-size:22px;margin:0 0 12px">{f["rating"]}-star feedback for {_esc(prog.get("title", ""))}</h1>'
+        '<table role="presentation" width="100%" style="background:#faf2f7;border-radius:12px;margin:0 0 18px">'
+        f'<tr><td style="padding:10px 16px;font-size:13px;color:#6b5560">Sister</td><td style="padding:10px 16px;font-size:13px;color:#3B0A2E;font-weight:bold">{_esc(f.get("name", ""))} · {_esc(f.get("email", ""))}</td></tr>'
+        f'<tr><td style="padding:10px 16px;font-size:13px;color:#6b5560">Rating</td><td style="padding:10px 16px;font-size:13px;color:#3B0A2E;font-weight:bold">{f["rating"]} / 5</td></tr>'
+        f'<tr><td style="padding:10px 16px;font-size:13px;color:#6b5560">Would recommend</td><td style="padding:10px 16px;font-size:13px;color:#3B0A2E;font-weight:bold">{rec}</td></tr>'
+        f'<tr><td style="padding:10px 16px;font-size:13px;color:#6b5560;vertical-align:top">Comment</td><td style="padding:10px 16px;font-size:13px;color:#3B0A2E">{_esc(f.get("comment") or "(none)")}</td></tr></table>'
+        '<p style="font-size:13px;color:#4a3340;margin:0 0 16px">A quick personal follow-up can turn this experience around.</p>'
+        + _btn(f"{PUBLIC_APP_URL}/admin", "Open Reports", primary=True) + '</td></tr></table></td></tr></table>'
+    )
+
+
+async def _feedback_alert(f: dict):
+    to = (await _site()).get("staff_notify_email")
+    if not to:
+        return
+    prog = await db.programs.find_one({"id": f.get("program_id")}, {"_id": 0, "title": 1}) or {}
+    try:
+        await send_email(to=to, subject=f"Low rating ({f['rating']}★) for {prog.get('title', 'a session')}"[:150], html=_fb_alert_html(f, prog))
+    except Exception as ex:
+        logging.error(f"Feedback alert failed: {ex}")
+
+
+class FbAlertIn(BaseModel):
+    threshold: int
+
+
+@api_router.get("/admin/feedback-alert-settings")
+async def admin_get_fb_alert(user=Depends(require_admin)):
+    return {"threshold": int((await _site()).get("fb_alert_threshold") or 2)}
+
+
+@api_router.put("/admin/feedback-alert-settings")
+async def admin_set_fb_alert(payload: FbAlertIn, user=Depends(require_admin)):
+    if payload.threshold not in (2, 3):
+        raise HTTPException(status_code=400, detail="Threshold must be 2 or 3 stars")
+    await db.settings.update_one({"key": "site"}, {"$set": {"fb_alert_threshold": payload.threshold}}, upsert=True)
+    return {"threshold": payload.threshold}
 
 
 @api_router.get("/volunteer-hours/leaderboard")

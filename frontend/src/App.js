@@ -30,6 +30,7 @@ import WaitlistStatus from './pages/WaitlistStatus';
 import BadgePage from './pages/BadgePage';
 import Sessions from './pages/Sessions';
 import Feedback from './pages/Feedback';
+import SeatRelease from './pages/SeatRelease';
 import { Loader2 } from 'lucide-react';
 
 function ScrollToTop() {
@@ -81,6 +82,7 @@ function Shell() {
           <Route path="/badge/:token" element={<BadgePage />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/feedback" element={<Feedback />} />
+          <Route path="/release" element={<SeatRelease />} />
           <Route path="/events" element={<Events />} />
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/transparency" element={<Transparency />} />

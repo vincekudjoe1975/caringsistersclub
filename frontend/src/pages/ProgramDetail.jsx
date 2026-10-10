@@ -6,7 +6,7 @@ import { CtaLink } from './Initiatives';
 import Reveal from '../components/Reveal';
 import { TestimonialCard } from '../components/TestimonialCard';
 import { ShareStory } from '../components/ShareStory';
-import { ProgramSignup, SeatsBadge } from '../components/ProgramSignup';
+import { ProgramSignup, SeatsBadge, RatingBadge } from '../components/ProgramSignup';
 import { sessionDates } from './Sessions';
 import { imgSrc } from '../lib/useHomeContent';
 import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
@@ -82,6 +82,7 @@ export default function ProgramDetail() {
               <h3 className="font-serif text-[20px] font-semibold mb-2">Be part of it</h3>
               <p className="text-[#F7EFE9]/75 text-[14px] mb-4">Your time and generosity keep this program growing.</p>
               {p.start_date && <p className="text-[13px] text-[#CBA24B] font-semibold mb-3 flex items-center gap-1.5" data-testid="program-session-dates"><CalendarDays size={14} /> {sessionDates(p)}{p.schedule ? ` · ${p.schedule}` : ''}</p>}
+              <RatingBadge p={p} dark className="mb-3 flex" />
               <SeatsBadge p={p} className="mb-4" />
               <div className="flex flex-wrap gap-3">
                 <CtaLink to={p.cta_link} testid="program-cta" className="btn-gold rounded-full px-6 py-2.5 font-semibold text-[14px]">{p.cta_text}</CtaLink>

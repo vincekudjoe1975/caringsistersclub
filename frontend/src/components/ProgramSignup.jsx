@@ -1,10 +1,19 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, CheckCircle2, UserPlus, Users, Hourglass } from 'lucide-react';
+import { Loader2, CheckCircle2, UserPlus, Users, Hourglass, Star } from 'lucide-react';
 import { api } from '../lib/api';
 import { errMsg } from '../pages/Events';
 
 const inp = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E] bg-white';
+
+export const RatingBadge = ({ p, className = '', dark = false }) => {
+  if (!p.rating_count) return null;
+  return (
+    <span className={`inline-flex items-center gap-1 text-[12.5px] font-semibold ${dark ? 'text-[#CBA24B]' : 'text-[#3B0A2E]'} ${className}`} data-testid="program-rating">
+      <Star size={14} className="text-[#CBA24B]" fill="#CBA24B" /> {p.rating_avg.toFixed(1)} <span className={`font-normal ${dark ? 'text-[#F7EFE9]/70' : 'text-[#241019]/55'}`}>({p.rating_count} review{p.rating_count === 1 ? '' : 's'})</span>
+    </span>
+  );
+};
 
 export const SeatsBadge = ({ p, className = '' }) => {
   if (!p.capacity) return null;
