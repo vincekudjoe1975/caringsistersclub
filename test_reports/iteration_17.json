@@ -1,0 +1,51 @@
+{
+  "summary": "Iter-17 (Program dates + Launch-email attribution/results + Volunteer anniversaries + Public session calendar + Donor top-template banner + From-launch badge). Backend pytest 12/12 PASS. Frontend 5/5 flows PASS end-to-end. All features work as specified; no bugs found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_results": [
+    {"case": "PUT /admin/programs/{pid} with start/end/schedule persists", "status": "PASS"},
+    {"case": "Invalid date 'abc' -> 400", "status": "PASS"},
+    {"case": "end_date before start_date -> 400", "status": "PASS"},
+    {"case": "end_date without start_date -> 400", "status": "PASS"},
+    {"case": "GET /api/sessions returns only future published, sorted asc, required fields", "status": "PASS"},
+    {"case": "Launch attribution: fresh launch -> from_launch=true + converted_at + submission_id", "status": "PASS"},
+    {"case": "Second signup does not double count (converted_at/submission_id unchanged)", "status": "PASS"},
+    {"case": "Launch doc older than 30 days does not convert (no from_launch)", "status": "PASS"},
+    {"case": "GET /admin/reports/launch-results: emailed=2, signed_up=1, conversion=50.0, window_days=30", "status": "PASS"},
+    {"case": "_send_anniversaries creates doc {year, years=2, cert_token}; idempotent re-run", "status": "PASS"},
+    {"case": "GET /certificates/anniversary/{token}.pdf -> application/pdf (%PDF header); bad token -> 404", "status": "PASS"},
+    {"case": "Non-anniversary volunteer skipped", "status": "PASS"},
+    {"case": "_is_anniversary('2024-02-29', date(2027,2,28)) is True (Feb 29 leap fallback)", "status": "PASS"},
+    {"case": "UI Admin>Programs edit form has start/end/schedule inputs; saving persists via PUT (toast 'Program updated')", "status": "PASS"},
+    {"case": "UI /sessions: nav link visible (desktop + mobile), sessions-page, calendar/list tabs, month-label + prev/next, day-event chips, session-card + title/dates/signup-link, mobile responsive", "status": "PASS"},
+    {"case": "UI Program detail page shows program-session-dates with formatted range + schedule", "status": "PASS"},
+    {"case": "UI Admin>Reports launch-results card: row with emailed=2 signed=1 conv=50%", "status": "PASS"},
+    {"case": "UI Admin>Form Submissions > Program Sign-Ups: signup-from-launch-badge rendered on attributed sub", "status": "PASS"},
+    {"case": "UI Admin>Donors email composer: top-template-banner + use-top-template-btn (fills Subject='top subj', Message='hi') + 2 template-chip-perf ($10/recipient and $2/recipient)", "status": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter17_dates_launch_anniv_sessions.py",
+    "/app/test_reports/pytest/iter17.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "backend/server.py is now 5410 lines (grew from 5283). Launch results + anniversaries + public sessions all added to the same monolith. Split into routers (sessions, anniversaries, launch_reports) before 6k. Prior reviewer flagged the same.",
+    "Public /api/sessions filter `start_date: {$nin:[None,''}}` won't use an index optimally and still fetches with projection excluding body/gallery/testimonials -- fine for 200 docs but add partial index `{published:1, start_date:1} where start_date>''` for scale.",
+    "_send_anniversaries aggregates ALL approved volunteer_hours each day, then checks today's anniversary in Python. For large tables, add $expr/$month/$dayOfMonth match on first-approved aggregation (pre-filter in Mongo).",
+    "program_signup launch attribution runs find_one_and_update with projection missing -- fine, but the implicit `at` ISO string compare assumes consistent timezone format on insert; could silently fail if a seeded doc uses naive datetime. Document expected ISO.",
+    "Certificate endpoint uses `datetime.fromisoformat(a['at']).strftime('%B %-d, %Y')` -- the '%-d' is a GNU extension that fails on Windows; harmless on Linux containers but non-portable.",
+    "LaunchResults table lacks a sort indicator; UI shows sent_at '—' when launch_sent_at is unset (fine). Consider showing window_days in column header instead of banner text for compactness.",
+    "Sessions.jsx: on load the month auto-advances to first upcoming session's month -- but if user clicks prev/next and then the fetch re-runs due to state change, it would reset. Currently it doesn't because effect deps=[]. OK.",
+    "Admin seed warning banner 'Your website address isn't set' is noisy on every Admin tab; consider dismissible."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter17_dates_launch_anniv_sessions.py"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (5/5 flows)"},
+  "test_credentials": "QA temp admin via /app/backend/tests/qa_session.py up (session_token=qa_tok_123). qa_session down executed at teardown.",
+  "seed_data_creation": "Created and cleaned: 1 program 'QA UI Future Session' (qa-ui-sess-1 slug), 3 class-scoped QA Sess programs (deleted via API), 2 session_launch_emails + 1 submission for qa.ui.launch@example.com (cleaned), 2 appeal_templates qa-ui17-tpl-top/low + 2 segment_emails + 2 payment_transactions (cleaned). All seeded QA data has been removed. business-elevation-lab start/end/schedule reset to ''.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter-17 features all pass. No code changes required. Backend test file test_iter17_dates_launch_anniv_sessions.py uses a single asyncio event loop (_LOOP) so motor doesn't crash between asyncio.run calls -- re-use this pattern for any future tests that import server.py directly to call async helpers.",
+  "rca of the issue": "No bugs found."
+}

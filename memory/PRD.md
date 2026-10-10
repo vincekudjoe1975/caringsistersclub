@@ -233,3 +233,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - _celebrate_badge_wall hourly → db.badge_wall_notified {email,scope,threshold} once each; first one "You're on our Badge Wall!".
 - segment_emails.template_id (segment-email + scheduled-appeals accept template_id); GET /api/admin/reports/template-insights (subject-line matching for old appeals).
 - Clone launch_email auto|manual; _launch_recipients (program family, excludes current session + already emailed); db.session_launch_emails; GET/POST /api/admin/programs/{pid}/launch; megaphone button on clone rows.
+
+## 2026 — Launch results, anniversaries, template suggestions, session calendar (iteration_17: 100%)
+- Signup within LAUNCH_WINDOW_DAYS(30) of a session_launch_emails doc → submission.from_launch + launch doc converted_at; GET /api/admin/reports/launch-results; LaunchResults.jsx.
+- _send_anniversaries (daily) → db.volunteer_anniversaries {email, year, years, cert_token}; GET /api/certificates/anniversary/{token}.pdf (_cert_pdf lines/seal params).
+- Donors composer: top-template-banner + chips ranked by $/recipient (uses /admin/reports/template-insights).
+- Programs: start_date/end_date/schedule; public GET /api/sessions; /sessions page (calendar + list), nav link 'Sessions'.
