@@ -250,3 +250,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Reminders add submission.release_token + "I Can't Make It" → /release; GET/POST /api/seat-release → stage not_fit, released, _fill_seats + staff email.
 - settings.site.fb_alert_threshold (2|3); GET/PUT /api/admin/feedback-alert-settings; submit_feedback alerts once (session_feedback.alerted) when rating<=threshold or recommend false.
 - _program_ratings (family-wide, min 3) → rating_avg/rating_count on public /programs and /programs/{slug}; RatingBadge.
+
+## 2026 — No-show follow-up, review highlights, Faithful Sister badge, waitlist speed (iteration_20: 100%; hide-quote `is None` fix)
+- db.noshow_emails {submission_id}; _send_noshow_followups (daily, sessions ended 1-7 days ago) + GET/POST /api/admin/programs/{pid}/noshow-followup; _next_session (family, future start_date).
+- _program_ratings returns (n, sum, highlight); review_highlight on public programs (180 days, quote_hidden excluded); POST /api/admin/feedback/{id}/hide-quote toggle.
+- db.participant_badges {email, kind 'faithful', share_token, seal '3x'}; _check_streaks on attendance updates; _badge falls back to participant_badges (kind participant).
+- GET /api/admin/reports/waitlist-speed; WaitlistSpeed.jsx.
+- Gotcha: find_one with projection excluding _id can return {} (falsy) — use `is None`.

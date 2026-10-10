@@ -5566,7 +5566,7 @@ def _faithful_html(first: str, tok: str) -> str:
 @api_router.post("/admin/feedback/{fid}/hide-quote")
 async def admin_hide_quote(fid: str, user=Depends(require_admin)):
     f = await db.session_feedback.find_one({"id": fid}, {"_id": 0, "quote_hidden": 1})
-    if not f:
+    if f is None:
         raise HTTPException(status_code=404, detail="Comment not found")
     hidden = not f.get("quote_hidden")
     await db.session_feedback.update_one({"id": fid}, {"$set": {"quote_hidden": hidden}})

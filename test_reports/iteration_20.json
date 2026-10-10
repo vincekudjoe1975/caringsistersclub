@@ -1,0 +1,64 @@
+{
+  "summary": "Iter-20 (No-show follow-ups, Next-session helper, Review highlight + hide-quote, Faithful Sister badge, Waitlist speed). Backend pytest 8/8 PASS (serial -n 0). Found and fixed 1 backend bug in admin_hide_quote. Frontend 5/5 flows PASS: /initiatives + /initiatives/{slug} show program-review-highlight + program-rating; /badge/<token> shows 3x seal / Faithful Sister / Join a session (and 'Sisterhood badge' label, rendered uppercase via CSS); Admin>Reports waitlist-speed card renders and feedback-hide-quote-btn toggles 'Hide from highlights'<->'Show in highlights'; Admin>Programs attendance panel on QA20FE shows noshow-followup-btn 'Send we-missed-you (2)' and after click flips to 'We-missed-you sent (2)'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/feedback/{fid}/hide-quote", "issue": "Handler used `if not f:` after a Mongo find_one with projection `{_id:0, quote_hidden:1}`. For a feedback doc that had never been hidden, the projection returned `{}` (truthy-empty), which is falsy in Python → endpoint returned 404 'Comment not found' even though the comment exists. First Hide click thus never succeeded for brand-new comments. FIXED in-place by changing to `if f is None:`."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": [
+    {"case": "POST attendance updates {sid:'no_show'} marks 1 no-show (updated=1); GET noshow-followup -> {no_shows:1, emailed:0, pending:1}", "status": "PASS"},
+    {"case": "POST noshow-followup creates db.noshow_emails doc even when SMTP fails (@example.com 422); subsequent GET -> pending=0, emailed=1; repeat POST -> sent=0", "status": "PASS"},
+    {"case": "Daily-loop idempotence: two POSTs on same program keep noshow_emails count at 1 per submission", "status": "PASS"},
+    {"case": "_next_session logic: future-dated published clone with cloned_from=root is picked as next; orphan with no future clone -> None (verified via Mongo query mirror + end-to-end POST noshow-followup success)", "status": "PASS"},
+    {"case": "Review highlight: seeded 3 session_feedback (older 5★, newer 5★, 3★) -> GET /api/programs/{slug} returns rating_count=3, rating_avg=4.3, review_highlight.quote='Newer...', name='Nancy N.', rating=5", "status": "PASS"},
+    {"case": "POST /api/admin/feedback/{fid}/hide-quote on newer 5★ -> {quote_hidden:true}; highlight switches to older 5★; second POST -> {quote_hidden:false} (toggle). Admin reports/session-feedback comments include quote_hidden field", "status": "PASS"},
+    {"case": "Faithful badge: 3 consecutive attended sessions -> within 3s db.participant_badges doc {kind:'faithful', seal:'3x', label:'Faithful Sister', share_token}. GET /api/badges/{token} -> label 'Faithful Sister', seal '3x', kind 'participant'. GET /api/share/badge/{token}/card.png -> 200 image/png. Re-marking attended does not create a 2nd badge (idempotent).", "status": "PASS"},
+    {"case": "Broken-streak variant (attended, no_show, attended, attended) does NOT award a faithful badge", "status": "PASS"},
+    {"case": "Waitlist speed report: 1 claimed-at-2h + 1 expired + 1 open-future-expiry + 1 moved_at-only -> row offers=3, claimed=1, expired=1, pending=1, auto_moved=1, claim_rate=50, median_hours≈2.0", "status": "PASS"},
+    {"case": "UI /initiatives list: QA20FE card shows program-rating + program-review-highlight (newer 5★ quote by Nancy N.)", "status": "PASS"},
+    {"case": "UI /initiatives/qa20fe-slug detail hero shows program-rating + program-review-highlight (dark variant)", "status": "PASS"},
+    {"case": "UI /badge/qa20fetok1234567: badge-threshold='3x', badge-label='Faithful Sister', badge-volunteer-link='Join a session', kind-participant label renders ('SISTERHOOD BADGE' - uppercase via CSS text-transform)", "status": "PASS"},
+    {"case": "UI Admin>Reports: waitlist-speed card renders (empty-state since no seeded offers); feedback-hide-quote-btn present (3 comments), click toggles 'Hide from highlights' <-> 'Show in highlights'", "status": "PASS"},
+    {"case": "UI Admin>Programs QA20FE attendance panel: noshow-followup-btn initially 'Send we-missed-you (2)'; after click (confirm accepted) flips to 'We-missed-you sent (2)' and toast 'We missed you sent to 2' appears", "status": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter20_noshow_faithful_highlight_wspeed.py",
+    "/app/backend/tests/_seed_iter20_fe.py",
+    "/app/test_reports/pytest/iter20.xml"
+  ],
+  "action_items": [
+    "(Already fixed by tester) admin_hide_quote now uses `if f is None`. Please review the one-line change at server.py:5569.",
+    "Harden `CtaLink` (Initiatives.jsx:10) against missing `cta_link`: `to.startsWith('https://')` crashes the whole /initiatives + /initiatives/{slug} tree with a React runtime error if a program document is missing cta_link. Real seed/_clean_program always populate it, but a legacy or manually-inserted doc without cta_link breaks the pages. Suggest: `const safe = to || '/volunteer';` or guard with `(to || '').startsWith('https://')`.",
+    "Attendance report (/admin/reports/attendance) currently iterates `programs.find({start_date:{$nin:[None,'']}})`. Consider also indexing programs.start_date for scale (noted in prev iter)."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py: 6016 lines — crossed the 6k line marker flagged by iter-19. The new no-show / faithful-badge / review-moderation / waitlist-speed blocks are logically distinct and can live in separate routers/services (routers/noshow.py, routers/badges_participant.py, routers/moderation.py, services/waitlist_report.py).",
+    "server.py admin_hide_quote had a subtle Python falsy-dict bug (fixed). Audit similar handlers that do `find_one(..., projection)` + `if not f:` — grep found this is the only occurrence of that pattern on session_feedback, but a one-liner lint rule could catch it generally.",
+    "_check_streaks (server.py ~5518) marks only `attended` as streak-advancing and `no_show` as streak-breaking, but silently ignores unmarked attendance. If a middle session is never marked, run resets to 0 — which matches the spec but is non-obvious. Add an inline comment.",
+    "_next_session filters `published:True` but does not filter out the current program itself. In practice `start_date>today` already excludes the just-ended session (end_date is in past). OK, but add a comment noting the implicit guarantee.",
+    "_program_ratings scans ALL session_feedback and ALL programs on every public /api/programs and /api/programs/{slug} call. For large catalogs, cache for 60s (noted iter-19 too).",
+    "frontend/src/pages/Initiatives.jsx::CtaLink crashes the whole page tree if `to` is undefined (observed with my unseeded program). React error boundary caught by the Emergent overlay. Please defensive-null-guard.",
+    "WaitlistSpeed empty-state hides all ws-* testids by rendering `waitlist-speed-empty` only. If tests want to verify presence of stats always, consider rendering zeros. Not a bug — just a test-affordance note.",
+    "SessionFeedback.jsx line 70 calls `data.quote_hidden` only on the response — the `comments` list from /api/admin/reports/session-feedback must include `quote_hidden` for the button's label text to reflect state across reloads. Verified it does."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (admin_hide_quote: `if not f:` -> `if f is None:`)",
+    "/app/backend/tests/test_iter20_noshow_faithful_highlight_wspeed.py (new)",
+    "/app/backend/tests/_seed_iter20_fe.py (new)",
+    "/app/test_reports/iteration_20.json",
+    "/app/test_reports/pytest/iter20.xml"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (5/5 flows)"},
+  "test_credentials": "QA admin via /app/backend/tests/qa_session.py up (session_token=qa_tok_123). qa_session.py down executed at teardown.",
+  "seed_data_creation": "Backend tests self-seed per-class under PID prefix `qa20-<uuid>` with teardown via module-scope fixture (programs/submissions/noshow_emails/session_feedback/participant_badges deleted by qa20-* id regex and qa.(faith|iter20) email regex). Frontend seed via _seed_iter20_fe.py up (program qa20fe-prog/slug=qa20fe-slug + 2 no_show submissions + 3 session_feedback + 1 participant_badges doc with share_token=qa20fetok1234567) and cleaned via _seed_iter20_fe.py down (verified 0 remaining).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "pytest.ini still forces -n 2 --dist loadscope; this module shares no module-level program id (uuid-per-run), but when running larger suites that touch session_feedback/participant_badges concurrently, prefer `-n 0`. The admin_hide_quote fix must stay (`if f is None`); if main agent reverts to `if not f:` the FE Session Feedback Hide-from-highlights button will silently 404 on freshly-created comments. Faithful-badge streak uses `start_date` chronological ordering of ALL attended sessions for an email (case-insensitive match) — PID family does NOT matter per current spec. Review highlight ignores quote_hidden docs and picks (max rating, newest submitted_at) tiebreak. For FE regressions, re-add cta_link/cta_text to any manually-inserted test programs or /initiatives will crash.",
+  "rca of the issue": "admin_hide_quote (POST /api/admin/feedback/{fid}/hide-quote) returned 404 'Comment not found' for existing feedback docs that had no `quote_hidden` field yet. Root cause: `find_one({'id':fid}, {'_id':0,'quote_hidden':1})` with the inclusive projection returns `{}` (empty-but-non-None) for docs missing `quote_hidden`. The handler then evaluated `if not f:` which is True for `{}` — raising 404 even though the document was found. Reproduction: POST on a fresh session_feedback doc from either curl or the UI's Hide-from-highlights button. Fix: `if f is None:` (applied at server.py:5569). Verified via pytest + UI toggle (3 feedback comments cycled Hide→Show→Hide)."
+}
