@@ -13,7 +13,6 @@ export const org = {
   name: 'The Caring Sisters Club, Inc.',
   shortName: 'Caring Sisters Club',
   tagline: 'Where care, community, and compassion meet.',
-  ein: '88-1234567', // DEMO placeholder EIN
   status: '501(c)(3) Tax-Exempt Nonprofit Organization',
   founded: 2019,
   address: '1450 Community Way, Suite 210, Atlanta, GA 30303', // DEMO
@@ -175,7 +174,7 @@ export const testimonials = [
 
 export const faqs = [
   { q: 'How do I become a member?', a: 'Complete the membership form on our Volunteer & Join page. A chapter lead will reach out within 3 business days.' },
-  { q: 'Are my donations tax-deductible?', a: 'Yes. Caring Sisters Club, Inc. is a 501(c)(3) organization (EIN 88-1234567, demo). Donations are tax-deductible to the extent allowed by law.' },
+  { q: 'Are my donations tax-deductible?', a: 'Yes. Caring Sisters Club, Inc. is a 501(c)(3) organization. Donations are tax-deductible to the extent allowed by law.' },
   { q: 'How are funds used?', a: '82 cents of every dollar goes directly to programs. See our Transparency page for Form 990 filings and annual reports.' },
   { q: 'Can I volunteer without becoming a member?', a: 'Absolutely. Volunteers are welcome at all community events—just fill out the volunteer form.' },
 ];

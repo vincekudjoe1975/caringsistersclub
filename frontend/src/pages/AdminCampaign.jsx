@@ -187,7 +187,7 @@ export default function AdminCampaign() {
             <label className="text-[13px] font-semibold text-[#3B0A2E]">Organization EIN (Tax ID)</label>
             <input value={form.org_ein} data-testid="org-ein-input"
               onChange={(e) => setForm({ ...form, org_ein: e.target.value })}
-              placeholder="e.g. 88-1234567"
+              placeholder="XX-XXXXXXX"
               className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
             <p className="text-[12px] text-[#241019]/50 mt-1.5">Leave blank to omit the EIN line from receipts.</p>
           </div>

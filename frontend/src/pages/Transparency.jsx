@@ -126,7 +126,7 @@ export default function Transparency() {
           </div>
         )}
         <p className="max-w-5xl mx-auto px-5 lg:px-8 text-[#241019]/55 text-[13px] italic mt-8">
-          Sample placeholders shown for demonstration; published documents above are managed by staff. {org.name} (EIN {org.ein}) is a {org.status}.
+          Sample placeholders shown for demonstration; published documents above are managed by staff. {org.name} is a {org.status}.
         </p>
       </section>
     </div>

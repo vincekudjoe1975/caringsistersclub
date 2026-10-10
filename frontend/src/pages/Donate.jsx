@@ -134,7 +134,7 @@ export default function Donate() {
               <ShieldCheck className="text-[#CBA24B] mb-4" size={28} />
               <h3 className="font-serif text-[20px] font-semibold mb-2">Tax-deductible & secure</h3>
               <p className="text-[#F7EFE9]/75 text-[14px] leading-relaxed">
-                {org.name} is a {org.status} (EIN {org.ein}). Gifts are tax-deductible to the extent allowed by law.
+                {org.name} is a {org.status}. Gifts are tax-deductible to the extent allowed by law.
               </p>
             </div>
             <div className="rounded-2xl p-7 bg-white border border-[#3B0A2E]/8">

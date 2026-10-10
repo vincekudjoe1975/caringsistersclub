@@ -65,7 +65,7 @@ export default function Footer() {
         <div className="mt-12 pt-7 border-t border-white/10">
           <div className="rounded-xl px-5 py-4 text-[12.5px] text-[#F7EFE9]/70 leading-relaxed" style={{ background: 'rgba(255,255,255,0.04)' }}>
             <strong className="text-[#F7EFE9]/90">{org.name}</strong> is a registered {org.status}.
-            Federal Tax ID (EIN): <span className="text-[#CBA24B]">{org.ein}</span>. Mailing address: {org.address}.
+            Mailing address: {org.address}.
             Contributions are tax-deductible to the extent permitted by law. <span className="italic">(Sample compliance details for demonstration.)</span>
           </div>
           <div className="flex flex-col md:flex-row items-center justify-between gap-4 mt-6">

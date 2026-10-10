@@ -28,7 +28,7 @@ export default function About() {
             <div className="flex items-start gap-3 rounded-xl p-4" style={{ background: '#F7EFE9' }}>
               <BadgeCheck className="text-[#B4247E] shrink-0 mt-0.5" size={22} />
               <p className="text-[14px] text-[#3B0A2E]/85 leading-relaxed">
-                {org.name} is a registered <strong>{org.status}</strong> (EIN {org.ein}). All contributions are tax-deductible to the extent permitted by law. <span className="italic">Sample details for demo.</span>
+                {org.name} is a registered <strong>{org.status}</strong>. All contributions are tax-deductible to the extent permitted by law. <span className="italic">Sample details for demo.</span>
               </p>
             </div>
           </Reveal>
