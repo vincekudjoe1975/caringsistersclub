@@ -66,23 +66,23 @@ export default function Contact() {
               <div className="grid sm:grid-cols-2 gap-5">
                 <div>
                   <label className="text-[13px] font-semibold text-[#3B0A2E]">Name</label>
-                  <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="contact-name-input"
                     className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
                 </div>
                 <div>
                   <label className="text-[13px] font-semibold text-[#3B0A2E]">Email</label>
-                  <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} data-testid="contact-email-input"
                     className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
                 </div>
               </div>
               <div>
                 <label className="text-[13px] font-semibold text-[#3B0A2E]">Subject</label>
-                <input required value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })}
+                <input required value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} data-testid="contact-subject-input"
                   className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
               </div>
               <div>
                 <label className="text-[13px] font-semibold text-[#3B0A2E]">Message</label>
-                <textarea required rows={5} value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })}
+                <textarea required rows={5} value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} data-testid="contact-message-input"
                   className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-3 text-[14px] focus:outline-none focus:border-[#B4247E] resize-none" />
               </div>
               <button type="submit" disabled={sending} data-testid="contact-submit-btn" className="btn-magenta rounded-full px-8 py-3.5 font-semibold flex items-center gap-2 disabled:opacity-60">

@@ -75,7 +75,7 @@ export default function Volunteer() {
               </div>
               <div>
                 <label className="text-[13px] font-semibold text-[#3B0A2E]">Tell us about yourself</label>
-                <textarea rows={4} value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })}
+                <textarea rows={4} value={form.message} data-testid="volunteer-message-input" onChange={(e) => setForm({ ...form, message: e.target.value })}
                   className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-3 text-[14px] focus:outline-none focus:border-[#B4247E] resize-none"
                   placeholder={tab === 'volunteer' ? 'What draws you to volunteer with us?' : 'Why do you want to join the sisterhood?'} />
               </div>
@@ -94,7 +94,7 @@ function Field({ label, type = 'text', required, value, onChange }) {
   return (
     <div>
       <label className="text-[13px] font-semibold text-[#3B0A2E]">{label}{required && <span className="text-[#B4247E]">*</span>}</label>
-      <input type={type} required={required} value={value} onChange={(e) => onChange(e.target.value)}
+      <input type={type} required={required} value={value} onChange={(e) => onChange(e.target.value)} data-testid={`volunteer-${label.toLowerCase().replace(/\s+/g, '-')}-input`}
         className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
     </div>
   );

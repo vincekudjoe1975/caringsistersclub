@@ -1,0 +1,58 @@
+{
+  "summary": "End-to-end testing of Events Manager + Public RSVP + Contact/Volunteer feedback + Site URL auto-detect for Caring Sisters Club. Seeded a temp admin user+session and injected session_token cookie on the preview host. Backend pytest: 14/15 PASSED (1 flake due to shared public rate-limit from previous full-flow test). Frontend UI driven in a real browser verified every testid in the review: admin events CRUD (create/edit/delete), RSVP panel, Campaign auto-detect host preview + invalid site_url rejection + empty save, public /events empty state, no (demo) text on Contact/Volunteer, and no EIN anywhere on public pages (/, /donate, /about, /transparency, /contact). All seed data (temp admin+session, QA events, RSVPs, @example.com submissions) deleted; staff_notify_email restored to caringsistersclub@gmail.com. 2 real paid donations preserved.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": [
+    {"case": "Backend GET /auth/me + admin/settings exposes detected_site_url", "status": "PASS"},
+    {"case": "Backend PUT /admin/settings site_url='http://bad' => 400 'https://yourdomain.org'", "status": "PASS"},
+    {"case": "Backend PUT /admin/settings valid https site_url => 200, empty => 200", "status": "PASS"},
+    {"case": "Backend POST /admin/events (capacity 3) + GET lists it", "status": "PASS"},
+    {"case": "Backend GET /events public returns upcoming with spots_left=3", "status": "PASS"},
+    {"case": "Backend POST /admin/events invalid date => 400", "status": "PASS"},
+    {"case": "Backend PUT /admin/events updates title", "status": "PASS"},
+    {"case": "Backend POST /submissions type=contact (valid) => 200", "status": "PASS"},
+    {"case": "Backend /submissions invalid email => 400 'Please enter a valid email address.'", "status": "PASS"},
+    {"case": "Backend /submissions type=contact empty message => 400", "status": "PASS"},
+    {"case": "Backend /submissions type=donation => 400 (not public)", "status": "PASS"},
+    {"case": "Backend /submissions type=rsvp => 400 (not public)", "status": "PASS"},
+    {"case": "Backend RSVP full flow: 2+1 seats, duplicate=>409, over-cap=>'Only 1 spot left', last seat fills, full=>409, admin list=2, CSV export, delete rsvp", "status": "PASS"},
+    {"case": "Backend RSVP invalid email => 400 (ran after full flow - 1x hit shared 5/min rate limit, semantic coverage already proven)", "status": "FLAKY-RATELIMIT"},
+    {"case": "UI /events empty state renders events-empty testid when no upcoming", "status": "PASS"},
+    {"case": "UI Admin -> Events: new-event-btn opens form, all testids present (title/date/time/location/category/capacity/description), save creates admin-event-row '0 / 3 seats'", "status": "PASS"},
+    {"case": "UI admin-event-edit-btn updates title and persists", "status": "PASS"},
+    {"case": "UI admin-event-rsvps-btn opens rsvp-panel modal", "status": "PASS"},
+    {"case": "UI admin-event-delete-btn removes the event (confirm dialog accepted)", "status": "PASS"},
+    {"case": "UI Admin -> Campaign shows site-url-input, site-url-active='Email links currently use: https://caring-sisters-clone.preview.emergentagent.com', staff-notify-email-input", "status": "PASS"},
+    {"case": "UI site_url='http://bad' => destructive toast 'Save failed - Website address must look like https://yourdomain.org'", "status": "PASS"},
+    {"case": "UI site_url='' save => 'Campaign updated' toast", "status": "PASS"},
+    {"case": "UI /contact no '(demo)' text; contact-submit-btn present", "status": "PASS"},
+    {"case": "UI /volunteer no '(demo)' text; volunteer-submit-btn present", "status": "PASS"},
+    {"case": "UI No EIN text on /, /donate, /about, /transparency, /contact (footer scanned)", "status": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_events_submissions.py",
+    "/app/test_reports/pytest/events_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Rate limiter is shared bucket ('submission') across POST /api/submissions AND POST /api/events/{id}/rsvp with 5/min per IP. Legitimate scenarios can trip it: e.g., a volunteer filling the form on their phone, then immediately RSVPing to the same event within the same minute. Consider using separate buckets or raising RSVP limit, OR document the 60s cooldown in the destructive toast copy.",
+    "Contact.jsx: form fields (name/email/subject/message inputs) have NO data-testid attributes, only the submit button does. Adding contact-name-input / contact-email-input / contact-subject-input / contact-message-input testids would help future UI test coverage.",
+    "Volunteer.jsx: Same - fields lack data-testid. Only submit + success heading have them. Review request implicitly relies on these for E2E but none exist.",
+    "backend/server.py:_detect_site_url runs on every /auth/me call and does an upsert even when the host is unchanged (first condition only short-circuits the SET; the find_one still runs). Minor DB overhead but harmless.",
+    "backend/server.py:_clean_site_url rejects any path (parsed.path or parsed.query). This is strict; URLs like https://foo.org/ (trailing slash) are correctly stripped by rstrip('/') earlier, but https://foo.org/app would error. Acceptable per PRD.",
+    "Public /api/events returns image_url (if set). Public response includes capacity + seats_taken + spots_left but still exposes staff-facing capacity integer. Consider dropping capacity on public endpoint since 'X of Y spots left' is the only consumer and spots_left suffices."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_events_submissions.py"
+  ],
+  "success_rate": { "backend": "93% (14/15, 1 rate-limit flake with full semantic coverage elsewhere)", "frontend": "100%" },
+  "test_credentials": "Temp admin seeded then DELETED: user_id=qa_events_user_1791623467059 session_token=qa_events_tok_1791623467059 email=qa.events.*@example.com. Real admins (vincekudjoe@gmail.com, caringsistersclub@gmail.com) unchanged. /app/memory/test_credentials.md note untouched.",
+  "seed_data_creation": "Seeded then DELETED: 1 QA admin user + session, up to 3 test events (TEST_QA_Event_*, UI_QA_Event_1_EDITED), 2 RSVPs @example.com, ~5 contact submissions with @example.com emails. Temporarily set staff_notify_email='' during tests, restored to 'caringsistersclub@gmail.com' afterward. Verified post-test: 2 real paid payment_transactions preserved; 0 QA events, RSVPs, users remaining.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Rate limiter is shared across POST /api/submissions and /api/events/{id}/rsvp at 5/min per IP; pace tests. In test_events_submissions.py the test_rsvp_bad_email_rejected runs after test_rsvp_full_flow which exhausts the bucket -- 1x retry after 60s sleep would make it reliable (not critical since _validate_person coverage is identical in test_submission_invalid_email). Admin pages require session_token cookie AND X-Requested-With header on mutating calls (axios client sends automatically; curl/requests sessions need it manually). Admin Campaign save button has no data-testid (searched by inner text 'Save Campaign')."
+}

@@ -1928,7 +1928,7 @@ async def _send_rsvp_confirmation(rsvp: dict, ev: dict):
 
 @api_router.post("/events/{eid}/rsvp")
 async def create_rsvp(eid: str, payload: RsvpIn, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "submission", max_hits=5, window_s=60)
+    _rate_limit(request, "rsvp", max_hits=5, window_s=60)
     name, email = _validate_person({"name": payload.name, "email": payload.email})
     guests = int(payload.guests or 1)
     if guests < 1 or guests > 10:
