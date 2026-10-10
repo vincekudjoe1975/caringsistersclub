@@ -4,7 +4,7 @@ import { useToast } from '../hooks/use-toast';
 import { fmtDate, eventImg } from './Events';
 import { Loader2, Plus, Pencil, Trash2, Users, Download, X, UploadCloud, CalendarDays, MapPin, Clock, BellRing } from 'lucide-react';
 
-const EMPTY = { title: '', date: '', time: '', location: '', category: '', description: '', image_url: '', capacity: 50 };
+const EMPTY = { title: '', date: '', time: '', location: '', category: '', description: '', image_url: '', capacity: 50, waitlist_mode: 'auto' };
 const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
 const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -57,13 +57,19 @@ function EventForm({ initial, onClose, onSaved }) {
         <Field label="Title *"><input required value={form.title} onChange={set('title')} data-testid="event-title-input" className={input} /></Field>
         <div className="grid sm:grid-cols-3 gap-4">
           <Field label="Date *"><input required type="date" min={initial.id ? undefined : todayStr} value={form.date} onChange={set('date')} data-testid="event-date-input" className={input} /></Field>
-          <Field label="Time"><input value={form.time} onChange={set('time')} placeholder="6:00 PM" data-testid="event-time-input" className={input} /></Field>
+          <Field label="Time (ET)"><input value={form.time} onChange={set('time')} placeholder="6:00 PM" data-testid="event-time-input" className={input} /></Field>
           <Field label="Capacity *"><input required type="number" min={1} value={form.capacity} onChange={set('capacity')} data-testid="event-capacity-input" className={input} /></Field>
         </div>
         <div className="grid sm:grid-cols-[2fr_1fr] gap-4">
           <Field label="Location"><input value={form.location} onChange={set('location')} placeholder="Venue, City or Virtual (Zoom)" data-testid="event-location-input" className={input} /></Field>
           <Field label="Category"><input value={form.category} onChange={set('category')} placeholder="Workshop" data-testid="event-category-input" className={input} /></Field>
         </div>
+        <Field label="When a spot opens up">
+          <select value={form.waitlist_mode || 'auto'} onChange={set('waitlist_mode')} data-testid="event-waitlist-mode-select" className={`${input} bg-white`}>
+            <option value="auto">Auto-register the next person on the waitlist and email "You're in!"</option>
+            <option value="invite">Email the next person an invite to claim the spot within 24 hours</option>
+          </select>
+        </Field>
         <Field label="Description"><textarea rows={4} value={form.description} onChange={set('description')} data-testid="event-description-input" className={`${input} resize-none`} /></Field>
         <div className="flex items-center gap-4">
           <img src={eventImg(form.image_url)} alt="" className="w-28 h-20 rounded-lg object-cover border border-[#3B0A2E]/10" />
@@ -86,10 +92,12 @@ function EventForm({ initial, onClose, onSaved }) {
 
 function RsvpPanel({ ev, onClose, onChanged }) {
   const [items, setItems] = useState(null);
+  const [waitlist, setWaitlist] = useState([]);
   const { toast } = useToast();
   const load = useCallback(async () => {
-    const { data } = await api.get(`/admin/events/${ev.id}/rsvps`);
-    setItems(data.items || []);
+    const [r, w] = await Promise.all([api.get(`/admin/events/${ev.id}/rsvps`), api.get(`/admin/events/${ev.id}/waitlist`)]);
+    setItems(r.data.items || []);
+    setWaitlist(w.data.items || []);
   }, [ev.id]);
   useEffect(() => { load().catch(() => setItems([])); }, [load]);
 
@@ -106,6 +114,12 @@ function RsvpPanel({ ev, onClose, onChanged }) {
   const remove = async (r) => {
     if (!window.confirm(`Remove ${r.name}'s RSVP?`)) return;
     try { await api.delete(`/admin/events/${ev.id}/rsvps/${r.id}`); load(); onChanged(); }
+    catch { toast({ title: 'Remove failed', variant: 'destructive' }); }
+  };
+
+  const removeWaiting = async (w) => {
+    if (!window.confirm(`Remove ${w.name} from the waitlist?`)) return;
+    try { await api.delete(`/admin/events/${ev.id}/waitlist/${w.id}`); load(); onChanged(); }
     catch { toast({ title: 'Remove failed', variant: 'destructive' }); }
   };
 
@@ -140,7 +154,40 @@ function RsvpPanel({ ev, onClose, onChanged }) {
             ))}</tbody>
           </table>
         )}
+        <WaitlistTable entries={waitlist} onRemove={removeWaiting} />
       </div>
+    </div>
+  );
+}
+
+const WL_STYLE = {
+  waiting: ['#fdf3e1', '#8a6a2c', 'Waiting'], invited: ['#f2e6ee', '#B4247E', 'Invited'], promoted: ['#e9f3e6', '#3c7a2f', 'Registered'],
+  expired: ['#eef1f5', '#53657d', 'Expired'], removed: ['#eef1f5', '#53657d', 'Removed'],
+};
+
+function WaitlistTable({ entries, onRemove }) {
+  if (!entries.length) return null;
+  return (
+    <div className="border-t border-[#3B0A2E]/10" data-testid="waitlist-section">
+      <p className="px-5 pt-5 pb-2 font-serif text-[17px] text-[#3B0A2E] font-semibold">Waitlist ({entries.filter((w) => ['waiting', 'invited'].includes(w.status)).length} active)</p>
+      <table className="w-full text-left">
+        <tbody>{entries.map((w, i) => {
+          const [bg, fg, label] = WL_STYLE[w.status] || WL_STYLE.expired;
+          const active = ['waiting', 'invited'].includes(w.status);
+          return (
+            <tr key={w.id} className="border-t border-[#3B0A2E]/8 text-[13px]" data-testid="waitlist-row">
+              <td className="px-5 py-3 text-[#241019]/50 w-8">{i + 1}</td>
+              <td className="px-5 py-3"><p className="font-semibold text-[#3B0A2E]">{w.name}</p><p className="text-[#241019]/55 text-[12px]">{w.email}</p></td>
+              <td className="px-5 py-3">{w.guests}</td>
+              <td className="px-5 py-3">
+                <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full" style={{ background: bg, color: fg }} data-testid="waitlist-status">{label}</span>
+                {w.status === 'invited' && w.invite_expires && <span className="block text-[11px] text-[#241019]/50 mt-1">until {new Date(w.invite_expires).toLocaleString()}</span>}
+              </td>
+              <td className="px-5 py-3 text-right">{active && <button onClick={() => onRemove(w)} data-testid="waitlist-remove-btn" className="text-red-500 hover:text-red-700"><Trash2 size={15} /></button>}</td>
+            </tr>
+          );
+        })}</tbody>
+      </table>
     </div>
   );
 }
@@ -163,7 +210,7 @@ function AdminEventRow({ ev, onEdit, onRsvps, onDelete }) {
         </p>
         <div className="mt-2.5 flex items-center gap-3">
           <div className="h-2 flex-1 max-w-[220px] rounded-full bg-[#eadfe6] overflow-hidden"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: '#B4247E' }} /></div>
-          <span className="text-[12px] font-semibold text-[#3B0A2E]" data-testid="admin-event-seats">{ev.seats_taken}/{ev.capacity} seats &middot; {ev.rsvp_count} RSVPs</span>
+          <span className="text-[12px] font-semibold text-[#3B0A2E]" data-testid="admin-event-seats">{ev.seats_taken}/{ev.capacity} seats &middot; {ev.rsvp_count} RSVPs{ev.waitlist_count > 0 && <> &middot; <span className="text-[#B4247E]" data-testid="admin-event-waitlist-count">{ev.waitlist_count} waitlisted</span></>}</span>
         </div>
       </div>
       <div className="flex items-center gap-2">

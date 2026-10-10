@@ -9,8 +9,9 @@ import AdminTeam from './AdminTeam';
 import AdminCampaign from './AdminCampaign';
 import AdminDonors from './AdminDonors';
 import AdminEvents from './AdminEvents';
+import AdminTransparency from './AdminTransparency';
 import { useToast } from '../hooks/use-toast';
-import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart } from 'lucide-react';
+import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart } from 'lucide-react';
 
 const TABS = [
   { key: 'gallery', label: 'Gallery Photos', icon: ImageIcon, accept: 'image/*', titleLabel: 'Caption', subLabel: '' },
@@ -137,6 +138,7 @@ export default function Admin() {
             { k: 'media', l: 'Media Library', icon: Images },
             { k: 'inbox', l: 'Form Submissions', icon: Inbox },
             { k: 'events', l: 'Events', icon: CalendarHeart },
+            { k: 'transparency', l: 'Transparency', icon: PieChart },
             { k: 'donations', l: 'Donations', icon: DollarSign },
             { k: 'donors', l: 'Donors', icon: UserSearch },
             { k: 'campaign', l: 'Campaign', icon: Target },
@@ -155,6 +157,8 @@ export default function Admin() {
 
         {view === 'inbox' ? (
           <AdminSubmissions />
+        ) : view === 'transparency' ? (
+          <AdminTransparency />
         ) : view === 'events' ? (
           <AdminEvents />
         ) : view === 'donations' ? (

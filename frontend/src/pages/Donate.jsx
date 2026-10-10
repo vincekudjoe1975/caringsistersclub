@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { donationTiers, org } from '../mock/mock';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
@@ -124,6 +125,11 @@ export default function Donate() {
               <p className="text-[12.5px] text-[#3B0A2E]/70">Secure checkout by Stripe. Test mode: use card <strong>4242 4242 4242 4242</strong>, any future expiry & CVC.</p>
             </div>
 
+            {freq === 'monthly' && (
+              <p className="text-[12.5px] text-[#241019]/60 mb-4" data-testid="donate-manage-note">
+                Update your card or cancel anytime from <Link to="/manage-gift" className="text-[#B4247E] font-semibold hover:underline">Manage My Monthly Gift</Link>.
+              </p>
+            )}
             <button type="submit" disabled={loading} className="btn-magenta rounded-full w-full py-4 font-semibold text-[16px] flex items-center justify-center gap-2 disabled:opacity-60">
               {loading ? <><Loader2 className="animate-spin" size={18} /> Redirecting…</> : <><Heart size={18} className="fill-white" /> Give ${finalAmount || 0} {freq === 'monthly' ? '/ month' : ''}</>}
             </button>

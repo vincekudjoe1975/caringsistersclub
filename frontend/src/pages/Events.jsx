@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
-import { Calendar, MapPin, Clock, Users, Loader2, CheckCircle2, CalendarHeart } from 'lucide-react';
+import { Calendar, MapPin, Clock, Users, Loader2, CheckCircle2, CalendarHeart, CalendarPlus, Hourglass } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { useToast } from '../hooks/use-toast';
-import { api, mediaSrc } from '../lib/api';
+import { api, mediaSrc, BACKEND_URL } from '../lib/api';
 
 const FALLBACK_IMG = 'https://images.pexels.com/photos/7648057/pexels-photo-7648057.jpeg?auto=compress&cs=tinysrgb&h=650&w=940';
 
@@ -14,9 +14,23 @@ export function fmtDate(d) {
 
 export const eventImg = (url) => (!url ? FALLBACK_IMG : url.startsWith('/api/') ? mediaSrc(url) : url);
 
-const errMsg = (err) => (err?.response?.status === 429
+export const errMsg = (err) => (err?.response?.status === 429
   ? "You've sent a few requests in a row. Please wait a minute and try again."
   : err?.response?.data?.detail || 'Something went wrong. Please check your connection and try again.');
+
+export function CalendarButtons({ gcal, ics }) {
+  const cls = 'rounded-full px-4 py-2 text-[12.5px] font-semibold flex items-center gap-1.5 transition-colors';
+  return (
+    <div className="flex flex-wrap justify-center gap-2 mt-4">
+      <a href={gcal} target="_blank" rel="noopener noreferrer" data-testid="add-google-calendar" className={`${cls} btn-magenta`}>
+        <CalendarPlus size={14} /> Google Calendar
+      </a>
+      <a href={`${BACKEND_URL}${ics}`} data-testid="add-apple-calendar" className={`${cls} text-[#3B0A2E] hover:bg-[#faf2f7]`} style={{ border: '1px solid rgba(59,10,46,0.18)' }}>
+        <CalendarPlus size={14} /> Apple / Outlook
+      </a>
+    </div>
+  );
+}
 
 function EventCard({ ev, onRsvp }) {
   const full = ev.spots_left <= 0;
@@ -29,60 +43,84 @@ function EventCard({ ev, onRsvp }) {
         <div className="flex items-center gap-3 mb-3">
           {ev.category && <span className="text-[11px] font-semibold px-3 py-1 rounded-full text-white" style={{ background: '#B4247E' }}>{ev.category}</span>}
           <span className="flex items-center gap-1.5 text-[#241019]/60 text-[13px]" data-testid="event-spots-left">
-            <Users size={14} /> {full ? 'Fully booked' : `${ev.spots_left} of ${ev.capacity} spots left`}
+            <Users size={14} /> {full ? 'Fully booked · waitlist open' : `${ev.spots_left} of ${ev.capacity} spots left`}
           </span>
         </div>
         <h3 className="font-serif text-[26px] text-[#3B0A2E] font-semibold mb-3">{ev.title}</h3>
         {ev.description && <p className="text-[#241019]/70 text-[14.5px] leading-relaxed mb-5 max-w-2xl whitespace-pre-line">{ev.description}</p>}
         <div className="flex flex-wrap gap-x-7 gap-y-2 text-[#3B0A2E] text-[13.5px] mb-6">
           <span className="flex items-center gap-2"><Calendar size={16} className="text-[#CBA24B]" /> {fmtDate(ev.date)}</span>
-          {ev.time && <span className="flex items-center gap-2"><Clock size={16} className="text-[#CBA24B]" /> {ev.time}</span>}
+          {ev.time && <span className="flex items-center gap-2"><Clock size={16} className="text-[#CBA24B]" /> {ev.time} ET</span>}
           {ev.location && <span className="flex items-center gap-2"><MapPin size={16} className="text-[#CBA24B]" /> {ev.location}</span>}
         </div>
-        <button onClick={() => onRsvp(ev)} disabled={full} data-testid="event-rsvp-btn"
-          className="btn-magenta rounded-full px-7 py-3 font-semibold text-[14px] self-start disabled:opacity-50 disabled:cursor-not-allowed">
-          {full ? 'Event Full' : 'RSVP Now'}
-        </button>
+        <div className="flex flex-wrap items-center gap-4">
+          <button onClick={() => onRsvp(ev, full ? 'waitlist' : 'rsvp')} data-testid={full ? 'event-waitlist-btn' : 'event-rsvp-btn'}
+            className={`rounded-full px-7 py-3 font-semibold text-[14px] ${full ? 'text-[#3B0A2E] hover:bg-[#faf2f7]' : 'btn-magenta'}`}
+            style={full ? { border: '1.5px solid #B4247E' } : undefined}>
+            {full ? 'Join the Waitlist' : 'RSVP Now'}
+          </button>
+          <a href={ev.gcal_url} target="_blank" rel="noopener noreferrer" data-testid="event-gcal-link" className="text-[13px] font-semibold text-[#B4247E] flex items-center gap-1.5 hover:text-[#D14FA0]">
+            <CalendarPlus size={15} /> Add to calendar
+          </a>
+        </div>
       </div>
     </div>
   );
 }
 
-function RsvpForm({ ev, onDone }) {
+function RsvpSuccess({ mode, email, result }) {
+  if (mode === 'waitlist') {
+    return (
+      <div className="text-center py-4" data-testid="waitlist-success">
+        <Hourglass size={44} className="text-[#B4247E] mx-auto mb-3" />
+        <p className="font-serif text-[20px] text-[#3B0A2E] font-semibold mb-1">You're on the waitlist (#{result.position})</p>
+        <p className="text-[13.5px] text-[#241019]/65">We'll email <strong>{email}</strong> the moment a spot opens up.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="text-center py-4" data-testid="rsvp-success">
+      <CheckCircle2 size={48} className="text-[#B4247E] mx-auto mb-3" />
+      <p className="font-serif text-[20px] text-[#3B0A2E] font-semibold mb-1">You're registered!</p>
+      <p className="text-[13.5px] text-[#241019]/65">A confirmation is on its way to <strong>{email}</strong>, and we'll send a reminder the day before.</p>
+      <CalendarButtons gcal={result.gcal_url} ics={result.ics_url} />
+    </div>
+  );
+}
+
+function RsvpForm({ ev, initialMode, onDone }) {
+  const [mode, setMode] = useState(initialMode);
   const [form, setForm] = useState({ name: '', email: '', guests: 1 });
   const [sending, setSending] = useState(false);
-  const [done, setDone] = useState(false);
+  const [result, setResult] = useState(null);
   const { toast } = useToast();
-  const maxGuests = Math.min(10, ev.spots_left);
+  const tooMany = mode === 'rsvp' && Number(form.guests) > ev.spots_left;
 
   const submit = async (e) => {
     e.preventDefault();
     setSending(true);
     try {
-      await api.post(`/events/${ev.id}/rsvp`, { ...form, guests: Number(form.guests) || 1 });
-      setDone(true);
+      const { data } = await api.post(`/events/${ev.id}/${mode === 'waitlist' ? 'waitlist' : 'rsvp'}`, { ...form, guests: Number(form.guests) || 1 });
+      setResult(data);
       onDone();
     } catch (err) {
-      toast({ title: 'RSVP not completed', description: errMsg(err), variant: 'destructive' });
+      toast({ title: mode === 'waitlist' ? 'Could not join waitlist' : 'RSVP not completed', description: errMsg(err), variant: 'destructive' });
     } finally {
       setSending(false);
     }
   };
 
-  if (done) {
-    return (
-      <div className="text-center py-4" data-testid="rsvp-success">
-        <CheckCircle2 size={48} className="text-[#B4247E] mx-auto mb-3" />
-        <p className="font-serif text-[20px] text-[#3B0A2E] font-semibold mb-1">You're registered!</p>
-        <p className="text-[13.5px] text-[#241019]/65">A confirmation is on its way to <strong>{form.email}</strong>, and we'll send a reminder the day before.</p>
-      </div>
-    );
-  }
+  if (result) return <RsvpSuccess mode={mode} email={form.email} result={result} />;
 
   const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
   return (
     <form onSubmit={submit} className="space-y-4 mt-2">
-      <p className="text-[13px] text-[#241019]/60">{fmtDate(ev.date)}{ev.time && <> &middot; {ev.time}</>}{ev.location && <> &middot; {ev.location}</>}</p>
+      <p className="text-[13px] text-[#241019]/60">{fmtDate(ev.date)}{ev.time && <> &middot; {ev.time} ET</>}{ev.location && <> &middot; {ev.location}</>}</p>
+      {mode === 'waitlist' && (
+        <p className="text-[13px] rounded-lg px-4 py-3" style={{ background: '#faf2f7', color: '#3B0A2E' }} data-testid="waitlist-note">
+          This event is full. Join the waitlist and we'll email you as soon as a spot opens.
+        </p>
+      )}
       <div>
         <label className="text-[13px] font-semibold text-[#3B0A2E]">Full Name</label>
         <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="rsvp-name-input" className={input} />
@@ -93,10 +131,16 @@ function RsvpForm({ ev, onDone }) {
       </div>
       <div>
         <label className="text-[13px] font-semibold text-[#3B0A2E]">Number of Guests (including you)</label>
-        <input type="number" min={1} max={maxGuests} value={form.guests} onChange={(e) => setForm({ ...form, guests: e.target.value })} data-testid="rsvp-guests-input" className={input} />
+        <input type="number" min={1} max={10} value={form.guests} onChange={(e) => setForm({ ...form, guests: e.target.value })} data-testid="rsvp-guests-input" className={input} />
+        {tooMany && (
+          <p className="text-[12.5px] text-[#B4247E] mt-1.5" data-testid="rsvp-too-many">
+            Only {ev.spots_left} spot{ev.spots_left !== 1 ? 's' : ''} left.{' '}
+            <button type="button" onClick={() => setMode('waitlist')} className="underline font-semibold" data-testid="switch-to-waitlist-btn">Join the waitlist instead</button>
+          </p>
+        )}
       </div>
-      <button type="submit" disabled={sending} data-testid="rsvp-submit-btn" className="btn-magenta rounded-full w-full py-3 font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
-        {sending ? <><Loader2 size={16} className="animate-spin" /> Confirming…</> : 'Confirm RSVP'}
+      <button type="submit" disabled={sending || tooMany} data-testid="rsvp-submit-btn" className="btn-magenta rounded-full w-full py-3 font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
+        {sending ? <><Loader2 size={16} className="animate-spin" /> Sending…</> : mode === 'waitlist' ? 'Join Waitlist' : 'Confirm RSVP'}
       </button>
     </form>
   );
@@ -138,7 +182,7 @@ export default function Events() {
             </div>
           ) : events.map((ev, i) => (
             <Reveal key={ev.id} delay={(i % 2) * 100}>
-              <EventCard ev={ev} onRsvp={setSelected} />
+              <EventCard ev={ev} onRsvp={(e, mode) => setSelected({ ev: e, mode })} />
             </Reveal>
           ))}
         </div>
@@ -147,9 +191,9 @@ export default function Events() {
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-serif text-[22px] text-[#3B0A2E]">RSVP: {selected?.title}</DialogTitle>
+            <DialogTitle className="font-serif text-[22px] text-[#3B0A2E]">{selected?.mode === 'waitlist' ? 'Waitlist' : 'RSVP'}: {selected?.ev.title}</DialogTitle>
           </DialogHeader>
-          {selected && <RsvpForm key={selected.id} ev={selected} onDone={load} />}
+          {selected && <RsvpForm key={selected.ev.id + selected.mode} ev={selected.ev} initialMode={selected.mode} onDone={load} />}
         </DialogContent>
       </Dialog>
     </div>

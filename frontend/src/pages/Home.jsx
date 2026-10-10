@@ -1,12 +1,14 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { hero, mission, pillars, stats, testimonials } from '../mock/mock';
+import { hero, mission, pillars, testimonials } from '../mock/mock';
+import { useTransparency } from '../lib/useTransparency';
 import Reveal from '../components/Reveal';
 import Marquee from '../components/Marquee';
 import * as Icons from 'lucide-react';
 import { ArrowRight, Quote, Heart } from 'lucide-react';
 
 export default function Home() {
+  const { stats: impactStats = [] } = useTransparency();
   return (
     <div>
       {/* HERO */}
@@ -98,7 +100,7 @@ export default function Home() {
       {/* STATS */}
       <section className="csc-plum-bg py-16 lg:py-20">
         <div className="max-w-7xl mx-auto px-5 lg:px-8 grid grid-cols-2 lg:grid-cols-4 gap-8">
-          {stats.map((s, i) => (
+          {impactStats.map((s, i) => (
             <Reveal key={s.label} delay={i * 100} className="text-center">
               <p className="font-serif text-[#CBA24B] text-[40px] lg:text-[52px] font-bold leading-none">{s.value}</p>
               <p className="text-[#F7EFE9]/75 text-[14px] mt-3 tracking-wide">{s.label}</p>

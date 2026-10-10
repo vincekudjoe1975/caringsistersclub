@@ -120,7 +120,7 @@ def get_object(path: str):
 
 
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
-ALLOWED_CATEGORIES = {"gallery", "board", "document", "event"}
+ALLOWED_CATEGORIES = {"gallery", "board", "document", "event", "report"}
 
 
 class SessionRequest(BaseModel):
@@ -260,9 +260,10 @@ async def upload_media(
         raise HTTPException(status_code=400, detail="Invalid category")
     item_id = str(uuid.uuid4())
     ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else ""
-    allowed = _DOC_EXT if category == "document" else _IMAGE_EXT
+    is_doc = category in ("document", "report")
+    allowed = _DOC_EXT if is_doc else _IMAGE_EXT
     if ext not in allowed:
-        kinds = "PDF" if category == "document" else "PNG, JPG, WEBP or GIF image"
+        kinds = "PDF" if is_doc else "PNG, JPG, WEBP or GIF image"
         raise HTTPException(status_code=400, detail=f"Unsupported file type. Please upload a {kinds}.")
     # Derive content type from the validated extension (never trust client-supplied type).
     content_type = allowed[ext]
@@ -495,7 +496,8 @@ async def _record_paid_donation(session_id: str, txn: dict, recipient_email: str
     })
     if donor_email:
         _s = await _get_settings()
-        html = _receipt_html(donor_name, txn.get("amount"), txn.get("frequency"), ein=_s.get("org_ein", ""))
+        manage = await _manage_url(donor_email) if txn.get("frequency") == "monthly" else None
+        html = _receipt_html(donor_name, txn.get("amount"), txn.get("frequency"), ein=_s.get("org_ein", ""), manage_url=manage)
         await send_email(
             to=donor_email,
             subject="Thank you for your gift to The Caring Sisters Club",
@@ -606,7 +608,7 @@ async def _handle_recurring_renewal(invoice: dict):
     if email:
         donor_name = (txn["donor_name"] or "").strip() or "Friend"
         _s = await _get_settings()
-        html = _receipt_html(donor_name, amount, "monthly", ein=_s.get("org_ein", ""))
+        html = _receipt_html(donor_name, amount, "monthly", ein=_s.get("org_ein", ""), manage_url=await _manage_url(email))
         await send_email(
             to=email,
             subject="Your recurring gift to The Caring Sisters Club",
@@ -875,7 +877,12 @@ def _brand_header(eyebrow: str) -> str:
     )
 
 
-def _receipt_html(name: str, amount, frequency: str, ein: str = "") -> str:
+def _receipt_html(name: str, amount, frequency: str, ein: str = "", manage_url: str = None) -> str:
+    manage_html = (
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:0 0 8px">Need to update your card or change your plans? '
+        f'<a href="{manage_url}" style="color:#B4247E;font-weight:bold">Manage your gift</a> securely anytime.</p>'
+        if manage_url else ""
+    )
     freq_txt = "monthly" if frequency == "monthly" else "one-time"
     ein_txt = f" (EIN {_esc(ein)})" if ein else ""
     return (
@@ -891,6 +898,7 @@ def _receipt_html(name: str, amount, frequency: str, ein: str = "") -> str:
         f'<td align="right" style="padding:18px 22px;font-size:20px;font-weight:bold;color:#B4247E">${_esc(str(amount))}{" / month" if frequency=="monthly" else ""}</td></tr>'
         '</table>'
         f'<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:0 0 8px">This email serves as your donation receipt. The Caring Sisters Club, Inc. is a 501(c)(3) tax-exempt organization{ein_txt}. Your contribution is tax-deductible to the extent allowed by law. No goods or services were provided in exchange for this gift.</p>'
+        + manage_html +
         '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:16px 0 0">With gratitude,<br/>The Caring Sisters Club</p>'
         '</td></tr>'
         '<tr><td style="background:#29061F;padding:18px 32px;font-family:Arial,sans-serif">'
@@ -1750,6 +1758,15 @@ async def _run_scheduled_appeals() -> dict:
 
 
 # ---------- Events & RSVPs ----------
+import secrets
+from urllib.parse import quote as _urlquote
+from zoneinfo import ZoneInfo
+
+EVENT_TZ = ZoneInfo("America/New_York")
+WAITLIST_MODES = ("auto", "invite")
+INVITE_HOURS = 24
+
+
 def _csv_safe(v) -> str:
     v = str(v or "")
     return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
@@ -1764,6 +1781,7 @@ class EventIn(BaseModel):
     category: str = ""
     image_url: str = ""
     capacity: int = 50
+    waitlist_mode: str = "auto"
 
 
 class RsvpIn(BaseModel):
@@ -1785,11 +1803,19 @@ def _clean_event(p: EventIn) -> dict:
     img = (p.image_url or "").strip()
     if img and not (img.startswith("/api/media/file/") or img.startswith("https://")):
         raise HTTPException(status_code=400, detail="Image must be an uploaded image or https URL")
+    mode = (p.waitlist_mode or "auto").strip().lower()
+    if mode not in WAITLIST_MODES:
+        raise HTTPException(status_code=400, detail="Waitlist mode must be auto or invite")
     return {
         "title": title[:200], "date": p.date.strip(), "time": (p.time or "").strip()[:50],
         "location": (p.location or "").strip()[:300], "description": (p.description or "").strip()[:4000],
         "category": (p.category or "").strip()[:50], "image_url": img, "capacity": int(p.capacity),
+        "waitlist_mode": mode,
     }
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 async def _rsvp_totals(event_ids: list) -> dict:
@@ -1802,15 +1828,112 @@ async def _rsvp_totals(event_ids: list) -> dict:
     return out
 
 
+async def _held_seats(event_ids: list) -> dict:
+    out = {}
+    async for row in db.event_waitlist.aggregate([
+        {"$match": {"event_id": {"$in": event_ids}, "status": "invited", "invite_expires": {"$gt": _now_iso()}}},
+        {"$group": {"_id": "$event_id", "seats": {"$sum": "$guests"}}},
+    ]):
+        out[row["_id"]] = row["seats"]
+    return out
+
+
+async def _waitlist_counts(event_ids: list) -> dict:
+    out = {}
+    async for row in db.event_waitlist.aggregate([
+        {"$match": {"event_id": {"$in": event_ids}, "status": {"$in": ["waiting", "invited"]}}},
+        {"$group": {"_id": "$event_id", "n": {"$sum": 1}}},
+    ]):
+        out[row["_id"]] = row["n"]
+    return out
+
+
+async def _spots_left(ev: dict) -> int:
+    taken = (await _rsvp_totals([ev["id"]])).get(ev["id"], {}).get("seats", 0)
+    held = (await _held_seats([ev["id"]])).get(ev["id"], 0)
+    return ev["capacity"] - taken - held
+
+
 async def _events_with_counts(query: dict, sort_dir: int) -> list:
     items = await db.events.find(query, {"_id": 0}).sort("date", sort_dir).to_list(500)
-    totals = await _rsvp_totals([e["id"] for e in items])
+    ids = [e["id"] for e in items]
+    totals, held, wl = await _rsvp_totals(ids), await _held_seats(ids), await _waitlist_counts(ids)
     for e in items:
         t = totals.get(e["id"], {})
+        e.setdefault("waitlist_mode", "auto")
         e["seats_taken"] = t.get("seats", 0)
+        e["seats_held"] = held.get(e["id"], 0)
         e["rsvp_count"] = t.get("rsvps", 0)
-        e["spots_left"] = max(0, e["capacity"] - e["seats_taken"])
+        e["waitlist_count"] = wl.get(e["id"], 0)
+        e["spots_left"] = max(0, e["capacity"] - e["seats_taken"] - e["seats_held"])
     return items
+
+
+# --- Calendar helpers (event times are Eastern Time) ---
+def _event_window(ev: dict):
+    """Returns (start_utc, end_utc) for timed events, or None for all-day."""
+    t = (ev.get("time") or "").strip()
+    m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m", t, re.I)
+    if m:
+        h, mi = int(m.group(1)) % 12, int(m.group(2) or 0)
+        if m.group(3).lower() == "p":
+            h += 12
+    else:
+        m = re.match(r"^\s*(\d{1,2}):(\d{2})\b", t)
+        if not m:
+            return None
+        h, mi = int(m.group(1)), int(m.group(2))
+    if h > 23 or mi > 59:
+        return None
+    day = datetime.strptime(ev["date"], "%Y-%m-%d")
+    start = day.replace(hour=h, minute=mi, tzinfo=EVENT_TZ).astimezone(timezone.utc)
+    return start, start + timedelta(hours=2)
+
+
+def _gcal_url(ev: dict) -> str:
+    win = _event_window(ev)
+    if win:
+        dates = f"{win[0].strftime('%Y%m%dT%H%M%SZ')}/{win[1].strftime('%Y%m%dT%H%M%SZ')}"
+    else:
+        d = datetime.strptime(ev["date"], "%Y-%m-%d")
+        dates = f"{d.strftime('%Y%m%d')}/{(d + timedelta(days=1)).strftime('%Y%m%d')}"
+    details = (ev.get("description") or "")[:800] + f"\n\nDetails: {PUBLIC_APP_URL}/events"
+    return ("https://calendar.google.com/calendar/render?action=TEMPLATE"
+            f"&text={_urlquote(ev['title'])}&dates={dates}"
+            f"&details={_urlquote(details)}&location={_urlquote(ev.get('location') or '')}")
+
+
+def _ics_escape(s: str) -> str:
+    return (s or "").replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+def _event_ics(ev: dict) -> str:
+    win = _event_window(ev)
+    if win:
+        when = [f"DTSTART:{win[0].strftime('%Y%m%dT%H%M%SZ')}", f"DTEND:{win[1].strftime('%Y%m%dT%H%M%SZ')}"]
+    else:
+        d = datetime.strptime(ev["date"], "%Y-%m-%d")
+        when = [f"DTSTART;VALUE=DATE:{d.strftime('%Y%m%d')}", f"DTEND;VALUE=DATE:{(d + timedelta(days=1)).strftime('%Y%m%d')}"]
+    lines = [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Caring Sisters Club//Events//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+        "BEGIN:VEVENT", f"UID:{ev['id']}@caringsistersclub", f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+        *when, f"SUMMARY:{_ics_escape(ev['title'])}",
+        f"DESCRIPTION:{_ics_escape((ev.get('description') or '')[:800])}",
+        f"LOCATION:{_ics_escape(ev.get('location') or '')}", f"URL:{PUBLIC_APP_URL}/events",
+        "BEGIN:VALARM", "TRIGGER:-PT2H", "ACTION:DISPLAY", f"DESCRIPTION:{_ics_escape(ev['title'])}", "END:VALARM",
+        "END:VEVENT", "END:VCALENDAR",
+    ]
+    return "\r\n".join(lines) + "\r\n"
+
+
+@api_router.get("/events/{eid}/calendar.ics")
+async def event_calendar_file(eid: str):
+    ev = await db.events.find_one({"id": eid}, {"_id": 0})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    fname = re.sub(r"[^A-Za-z0-9]+", "-", ev["title"]).strip("-")[:60] or "event"
+    return Response(content=_event_ics(ev), media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}.ics"', "X-Content-Type-Options": "nosniff"})
 
 
 @api_router.get("/events")
@@ -1818,8 +1941,9 @@ async def public_events():
     today = datetime.now(timezone.utc).date().isoformat()
     items = await _events_with_counts({"date": {"$gte": today}}, 1)
     for e in items:
-        e.pop("created_by", None)
-        e.pop("rsvp_count", None)
+        for k in ("created_by", "rsvp_count", "seats_held", "waitlist_count"):
+            e.pop(k, None)
+        e["gcal_url"] = _gcal_url(e)
     return {"items": items}
 
 
@@ -1830,18 +1954,17 @@ async def admin_list_events(user=Depends(require_admin)):
 
 @api_router.post("/admin/events")
 async def admin_create_event(payload: EventIn, user=Depends(require_admin)):
-    doc = {"id": str(uuid.uuid4()), **_clean_event(payload),
-           "created_at": datetime.now(timezone.utc).isoformat(), "created_by": user.get("email")}
+    doc = {"id": str(uuid.uuid4()), **_clean_event(payload), "created_at": _now_iso(), "created_by": user.get("email")}
     await db.events.insert_one(dict(doc))
-    doc.pop("_id", None)
     return doc
 
 
 @api_router.put("/admin/events/{eid}")
-async def admin_update_event(eid: str, payload: EventIn, user=Depends(require_admin)):
-    res = await db.events.update_one({"id": eid}, {"$set": {**_clean_event(payload), "updated_at": datetime.now(timezone.utc).isoformat()}})
+async def admin_update_event(eid: str, payload: EventIn, background: BackgroundTasks, user=Depends(require_admin)):
+    res = await db.events.update_one({"id": eid}, {"$set": {**_clean_event(payload), "updated_at": _now_iso()}})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Event not found")
+    background.add_task(_process_waitlist, eid)
     return await db.events.find_one({"id": eid}, {"_id": 0})
 
 
@@ -1851,13 +1974,30 @@ async def admin_delete_event(eid: str, user=Depends(require_admin)):
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Event not found")
     await db.event_rsvps.delete_many({"event_id": eid})
+    await db.event_waitlist.delete_many({"event_id": eid})
     return {"deleted": True}
 
 
 @api_router.get("/admin/events/{eid}/rsvps")
 async def admin_event_rsvps(eid: str, user=Depends(require_admin)):
-    items = await db.event_rsvps.find({"event_id": eid}, {"_id": 0}).sort("created_at", 1).to_list(5000)
+    items = await db.event_rsvps.find({"event_id": eid}, {"_id": 0, "cancel_token": 0}).sort("created_at", 1).to_list(5000)
     return {"items": items}
+
+
+@api_router.get("/admin/events/{eid}/waitlist")
+async def admin_event_waitlist(eid: str, user=Depends(require_admin)):
+    items = await db.event_waitlist.find({"event_id": eid}, {"_id": 0, "invite_token": 0}).sort("created_at", 1).to_list(5000)
+    return {"items": items}
+
+
+@api_router.delete("/admin/events/{eid}/waitlist/{wid}")
+async def admin_remove_waitlist(eid: str, wid: str, background: BackgroundTasks, user=Depends(require_admin)):
+    res = await db.event_waitlist.update_one({"id": wid, "event_id": eid, "status": {"$in": ["waiting", "invited"]}},
+                                             {"$set": {"status": "removed", "updated_at": _now_iso()}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Waitlist entry not found")
+    background.add_task(_process_waitlist, eid)
+    return {"removed": True}
 
 
 @api_router.get("/admin/events/{eid}/rsvps/export")
@@ -1868,19 +2008,21 @@ async def admin_export_rsvps(eid: str, user=Depends(require_admin)):
     items = await db.event_rsvps.find({"event_id": eid}, {"_id": 0}).sort("created_at", 1).to_list(5000)
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["Name", "Email", "Guests", "RSVP Date", "Reminder Sent"])
+    w.writerow(["Name", "Email", "Guests", "RSVP Date", "Source", "Reminder Sent"])
     for r in items:
-        w.writerow([_csv_safe(r.get("name")), _csv_safe(r.get("email")), r.get("guests", 1), r.get("created_at", "")[:10], "yes" if r.get("reminder_sent") else "no"])
+        w.writerow([_csv_safe(r.get("name")), _csv_safe(r.get("email")), r.get("guests", 1), r.get("created_at", "")[:10],
+                    r.get("source", "direct"), "yes" if r.get("reminder_sent") else "no"])
     fname = re.sub(r"[^A-Za-z0-9]+", "-", ev["title"]).strip("-")[:60] or "event"
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
                              headers={"Content-Disposition": f'attachment; filename="rsvps-{fname}.csv"'})
 
 
 @api_router.delete("/admin/events/{eid}/rsvps/{rid}")
-async def admin_delete_rsvp(eid: str, rid: str, user=Depends(require_admin)):
+async def admin_delete_rsvp(eid: str, rid: str, background: BackgroundTasks, user=Depends(require_admin)):
     res = await db.event_rsvps.delete_one({"id": rid, "event_id": eid})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="RSVP not found")
+    background.add_task(_process_waitlist, eid)
     return {"deleted": True}
 
 
@@ -1891,69 +2033,247 @@ def _fmt_event_date(d: str) -> str:
         return d
 
 
-def _event_email_html(name: str, ev: dict, guests: int, reminder: bool) -> str:
-    heading = "See you tomorrow!" if reminder else "You're registered!"
-    intro = (f'This is a friendly reminder that <strong>{_esc(ev["title"])}</strong> is tomorrow. We can\'t wait to see you.'
-             if reminder else f'Thank you for your RSVP to <strong>{_esc(ev["title"])}</strong>. Your spot is confirmed.')
-    rows = [("Date", _fmt_event_date(ev["date"])), ("Time", ev.get("time")), ("Location", ev.get("location")),
-            ("Party size", f'{guests} {"guest" if guests == 1 else "guests"}')]
+_EVENT_COPY = {
+    "confirm": ("RSVP Confirmed", "You're registered!", "Thank you for your RSVP to <strong>{t}</strong>. Your spot is confirmed."),
+    "reminder": ("Event Reminder", "See you tomorrow!", "This is a friendly reminder that <strong>{t}</strong> is tomorrow. We can't wait to see you."),
+    "promoted": ("Off the Waitlist", "Great news, you're in!", "A spot opened up at <strong>{t}</strong> and we've moved you off the waitlist. Your spot is now confirmed."),
+    "invite": ("A Spot Opened Up", "A spot is waiting for you!", "A spot opened up at <strong>{t}</strong>. Claim it within " + str(INVITE_HOURS) + " hours, after which it will be offered to the next person on the waitlist."),
+    "waitlist": ("You're on the Waitlist", "You're on the waitlist", "<strong>{t}</strong> is currently full, so we've added you to the waitlist. We'll email you the moment a spot opens."),
+}
+
+
+def _btn(href: str, label: str, primary: bool = False) -> str:
+    style = ("background:#B4247E;color:#fff;" if primary else "background:#fff;color:#3B0A2E;border:1px solid #e3d3dd;")
+    return (f'<a href="{href}" style="display:inline-block;{style}text-decoration:none;font-weight:bold;font-size:13px;'
+            f'padding:11px 20px;border-radius:999px;margin:0 8px 8px 0">{label}</a>')
+
+
+def _event_email_html(name: str, ev: dict, guests: int, kind: str = "confirm", action_url: str = None) -> str:
+    badge, heading, intro = _EVENT_COPY[kind]
+    intro = intro.format(t=_esc(ev["title"]))
+    rows = [("Date", _fmt_event_date(ev["date"])), ("Time", f'{ev["time"]} ET' if ev.get("time") else ""),
+            ("Location", ev.get("location")), ("Party size", f'{guests} {"guest" if guests == 1 else "guests"}')]
     details = "".join(
         f'<tr><td style="padding:8px 18px;font-size:13px;color:#6b5560">{k}</td><td style="padding:8px 18px;font-size:14px;color:#3B0A2E;font-weight:bold">{_esc(str(v))}</td></tr>'
         for k, v in rows if v
     )
+    attending = kind in ("confirm", "reminder", "promoted")
+    buttons = ""
+    if kind == "invite" and action_url:
+        buttons = _btn(action_url, "Claim My Spot", primary=True)
+    elif attending:
+        buttons = (_btn(_gcal_url(ev), "Add to Google Calendar", primary=True)
+                   + _btn(f"{PUBLIC_APP_URL}/api/events/{ev['id']}/calendar.ics", "Add to Apple / Outlook"))
+    else:
+        buttons = _btn(f"{PUBLIC_APP_URL}/events", "View Events", primary=True)
+    footer_note = ""
+    if attending and action_url:
+        footer_note = f'Can\'t make it after all? <a href="{action_url}" style="color:#B4247E">Cancel your RSVP</a> so a sister on the waitlist can take your spot.<br/><br/>'
+    elif attending:
+        footer_note = "If your plans change, simply reply to this email to let us know.<br/><br/>"
     return (
         '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
         '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
-        + _brand_header("Event Reminder" if reminder else "RSVP Confirmed") +
+        + _brand_header(badge) +
         '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
         f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 14px">{heading}</h1>'
         f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 6px">Dear {_esc(name)},</p>'
         f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">{intro}</p>'
         f'<table role="presentation" width="100%" style="background:#faf2f7;border-radius:12px;margin:0 0 20px">{details}</table>'
-        '<a href="' + PUBLIC_APP_URL + '/events" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">View Events</a>'
-        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:22px 0 0">If your plans change, simply reply to this email to let us know.<br/><br/>With warmth,<br/>The Caring Sisters Club</p>'
+        f'<div>{buttons}</div>'
+        f'<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">{footer_note}With warmth,<br/>The Caring Sisters Club</p>'
         '</td></tr>'
         '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you RSVP\'d on our website. We never ask for your password or card details by email.</p></td></tr>'
         '</table></td></tr></table>'
     )
 
 
-async def _send_rsvp_confirmation(rsvp: dict, ev: dict):
+_EVENT_SUBJECTS = {
+    "confirm": "You're registered: {t}", "reminder": "Reminder: {t} is tomorrow", "promoted": "You're in! {t}",
+    "invite": "A spot opened up: {t}", "waitlist": "You're on the waitlist: {t}",
+}
+
+
+async def _send_event_email(person: dict, ev: dict, kind: str, action_url: str = None):
     try:
-        await send_email(to=rsvp["email"], subject=f"You're registered: {ev['title']}"[:150],
-                         html=_event_email_html(rsvp["name"], ev, rsvp["guests"], reminder=False))
+        return await send_email(to=person["email"], subject=_EVENT_SUBJECTS[kind].format(t=ev["title"])[:150],
+                                html=_event_email_html(person["name"], ev, person.get("guests", 1), kind, action_url))
     except Exception as e:
-        logging.error(f"RSVP confirmation failed: {e}")
+        logging.error(f"Event email ({kind}) failed: {e}")
+        return None
+
+
+def _token_url(token: str) -> str:
+    return f"{PUBLIC_APP_URL}/rsvp?token={token}"
+
+
+async def _insert_rsvp(ev: dict, name: str, email: str, guests: int, source: str) -> dict:
+    rsvp = {"id": str(uuid.uuid4()), "event_id": ev["id"], "name": name[:200], "email": email, "guests": guests,
+            "created_at": _now_iso(), "reminder_sent": False, "source": source, "cancel_token": secrets.token_urlsafe(24)}
+    await db.event_rsvps.insert_one(dict(rsvp))
+    return rsvp
+
+
+def _validate_rsvp_input(payload: RsvpIn):
+    name, email = _validate_person({"name": payload.name, "email": payload.email})
+    guests = int(payload.guests or 1)
+    if guests < 1 or guests > 10:
+        raise HTTPException(status_code=400, detail="Party size must be between 1 and 10.")
+    return name.strip(), email.lower(), guests
+
+
+async def _open_event(eid: str) -> dict:
+    ev = await db.events.find_one({"id": eid}, {"_id": 0})
+    if not ev or ev["date"] < datetime.now(timezone.utc).date().isoformat():
+        raise HTTPException(status_code=404, detail="This event is no longer open for RSVPs.")
+    return ev
 
 
 @api_router.post("/events/{eid}/rsvp")
 async def create_rsvp(eid: str, payload: RsvpIn, request: Request, background: BackgroundTasks):
     _rate_limit(request, "rsvp", max_hits=5, window_s=60)
-    name, email = _validate_person({"name": payload.name, "email": payload.email})
-    guests = int(payload.guests or 1)
-    if guests < 1 or guests > 10:
-        raise HTTPException(status_code=400, detail="Party size must be between 1 and 10.")
-    ev = await db.events.find_one({"id": eid}, {"_id": 0})
-    if not ev or ev["date"] < datetime.now(timezone.utc).date().isoformat():
-        raise HTTPException(status_code=404, detail="This event is no longer open for RSVPs.")
-    email_l = email.lower()
-    if await db.event_rsvps.find_one({"event_id": eid, "email": email_l}):
+    name, email, guests = _validate_rsvp_input(payload)
+    ev = await _open_event(eid)
+    if await db.event_rsvps.find_one({"event_id": eid, "email": email}):
         raise HTTPException(status_code=409, detail="You're already registered for this event with that email.")
-    taken = (await _rsvp_totals([eid])).get(eid, {}).get("seats", 0)
-    left = ev["capacity"] - taken
+    left = await _spots_left(ev)
     if left <= 0:
-        raise HTTPException(status_code=409, detail="Sorry, this event is full.")
+        raise HTTPException(status_code=409, detail="Sorry, this event is full. You can join the waitlist instead.")
     if guests > left:
-        raise HTTPException(status_code=409, detail=f"Only {left} spot{'s' if left != 1 else ''} left. Please reduce your party size.")
-    rsvp = {"id": str(uuid.uuid4()), "event_id": eid, "name": name[:200], "email": email_l, "guests": guests,
-            "created_at": datetime.now(timezone.utc).isoformat(), "reminder_sent": False}
-    await db.event_rsvps.insert_one(dict(rsvp))
-    sub_data = {"event": ev["title"], "event_date": ev["date"], "name": rsvp["name"], "email": email_l, "guests": guests}
-    await db.submissions.insert_one({"id": str(uuid.uuid4()), "type": "rsvp", "data": sub_data, "read": False,
-                                     "created_at": rsvp["created_at"]})
-    background.add_task(_send_rsvp_confirmation, rsvp, ev)
+        raise HTTPException(status_code=409, detail=f"Only {left} spot{'s' if left != 1 else ''} left. Reduce your party size or join the waitlist.")
+    rsvp = await _insert_rsvp(ev, name, email, guests, "direct")
+    sub_data = {"event": ev["title"], "event_date": ev["date"], "name": rsvp["name"], "email": email, "guests": guests}
+    await db.submissions.insert_one({"id": str(uuid.uuid4()), "type": "rsvp", "data": sub_data, "read": False, "created_at": rsvp["created_at"]})
+    background.add_task(_send_event_email, rsvp, ev, "confirm", _token_url(rsvp["cancel_token"]))
     background.add_task(_notify_staff, "rsvp", sub_data)
-    return {"id": rsvp["id"], "event": ev["title"], "spots_left": left - guests}
+    return {"id": rsvp["id"], "event": ev["title"], "spots_left": left - guests,
+            "gcal_url": _gcal_url(ev), "ics_url": f"/api/events/{eid}/calendar.ics"}
+
+
+@api_router.post("/events/{eid}/waitlist")
+async def join_waitlist(eid: str, payload: RsvpIn, request: Request, background: BackgroundTasks):
+    _rate_limit(request, "rsvp", max_hits=5, window_s=60)
+    name, email, guests = _validate_rsvp_input(payload)
+    ev = await _open_event(eid)
+    if await db.event_rsvps.find_one({"event_id": eid, "email": email}):
+        raise HTTPException(status_code=409, detail="You're already registered for this event with that email.")
+    if await db.event_waitlist.find_one({"event_id": eid, "email": email, "status": {"$in": ["waiting", "invited"]}}):
+        raise HTTPException(status_code=409, detail="You're already on the waitlist for this event.")
+    entry = {"id": str(uuid.uuid4()), "event_id": eid, "name": name[:200], "email": email, "guests": guests,
+             "status": "waiting", "created_at": _now_iso()}
+    await db.event_waitlist.insert_one(dict(entry))
+    position = await db.event_waitlist.count_documents({"event_id": eid, "status": {"$in": ["waiting", "invited"]}, "created_at": {"$lte": entry["created_at"]}})
+    sub_data = {"event": ev["title"], "event_date": ev["date"], "name": entry["name"], "email": email, "guests": guests, "list": "waitlist"}
+    await db.submissions.insert_one({"id": str(uuid.uuid4()), "type": "rsvp", "data": sub_data, "read": False, "created_at": entry["created_at"]})
+    background.add_task(_send_event_email, entry, ev, "waitlist")
+    background.add_task(_notify_staff, "rsvp", sub_data)
+    background.add_task(_process_waitlist, eid)
+    return {"id": entry["id"], "position": position}
+
+
+async def _process_waitlist(eid: str) -> dict:
+    """Expire stale invites, then fill open seats from the waitlist in sign-up order."""
+    result = {"promoted": 0, "invited": 0, "expired": 0}
+    try:
+        ev = await db.events.find_one({"id": eid}, {"_id": 0})
+        if not ev:
+            return result
+        now = datetime.now(timezone.utc)
+        exp = await db.event_waitlist.update_many(
+            {"event_id": eid, "status": "invited", "invite_expires": {"$lte": now.isoformat()}},
+            {"$set": {"status": "expired", "updated_at": now.isoformat()}})
+        result["expired"] = exp.modified_count
+        if ev["date"] < now.date().isoformat():
+            return result
+        left = await _spots_left(ev)
+        if left <= 0:
+            return result
+        waiting = await db.event_waitlist.find({"event_id": eid, "status": "waiting"}, {"_id": 0}).sort("created_at", 1).to_list(1000)
+        for w in waiting:
+            if left <= 0:
+                break
+            if w["guests"] > left:
+                continue
+            if ev.get("waitlist_mode") == "invite":
+                token = secrets.token_urlsafe(24)
+                res = await db.event_waitlist.update_one({"id": w["id"], "status": "waiting"}, {"$set": {
+                    "status": "invited", "invite_token": token, "invited_at": now.isoformat(),
+                    "invite_expires": (now + timedelta(hours=INVITE_HOURS)).isoformat()}})
+                if res.modified_count:
+                    await _send_event_email(w, ev, "invite", _token_url(token))
+                    result["invited"] += 1
+            else:
+                res = await db.event_waitlist.update_one({"id": w["id"], "status": "waiting"},
+                                                         {"$set": {"status": "promoted", "promoted_at": now.isoformat()}})
+                if res.modified_count:
+                    rsvp = await _insert_rsvp(ev, w["name"], w["email"], w["guests"], "waitlist")
+                    await _send_event_email(rsvp, ev, "promoted", _token_url(rsvp["cancel_token"]))
+                    result["promoted"] += 1
+            left -= w["guests"]
+    except Exception as e:
+        logging.error(f"Waitlist processing failed for {eid}: {e}")
+    return result
+
+
+async def _process_all_waitlists():
+    for eid in await db.event_waitlist.distinct("event_id", {"status": {"$in": ["waiting", "invited"]}}):
+        await _process_waitlist(eid)
+
+
+async def _resolve_token(token: str):
+    if not token or len(token) > 100:
+        return None, None, None
+    r = await db.event_rsvps.find_one({"cancel_token": token}, {"_id": 0})
+    if r:
+        return "cancel", r, await db.events.find_one({"id": r["event_id"]}, {"_id": 0})
+    w = await db.event_waitlist.find_one({"invite_token": token}, {"_id": 0})
+    if w:
+        return "claim", w, await db.events.find_one({"id": w["event_id"]}, {"_id": 0})
+    return None, None, None
+
+
+def _claim_state(w: dict) -> str:
+    if w["status"] == "invited":
+        return "open" if w.get("invite_expires", "") > _now_iso() else "expired"
+    return {"promoted": "claimed"}.get(w["status"], "expired")
+
+
+@api_router.get("/events/token/{token}")
+async def event_token_info(token: str, request: Request):
+    _rate_limit(request, "rsvp-token", max_hits=20, window_s=60)
+    kind, person, ev = await _resolve_token(token)
+    if not kind or not ev:
+        raise HTTPException(status_code=404, detail="This link is invalid or has already been used.")
+    info = {"kind": kind, "name": person["name"], "guests": person["guests"],
+            "event": {k: ev.get(k) for k in ("id", "title", "date", "time", "location")}}
+    if kind == "claim":
+        info["state"] = _claim_state(person)
+        info["expires_at"] = person.get("invite_expires")
+    return info
+
+
+@api_router.post("/events/token/{token}")
+async def event_token_action(token: str, request: Request, background: BackgroundTasks):
+    _rate_limit(request, "rsvp-token", max_hits=20, window_s=60)
+    kind, person, ev = await _resolve_token(token)
+    if not kind or not ev:
+        raise HTTPException(status_code=404, detail="This link is invalid or has already been used.")
+    if kind == "cancel":
+        await db.event_rsvps.delete_one({"id": person["id"]})
+        background.add_task(_process_waitlist, ev["id"])
+        return {"done": "cancelled"}
+    state = _claim_state(person)
+    if state != "open":
+        raise HTTPException(status_code=410, detail="Sorry, this invitation has expired." if state == "expired" else "You've already claimed this spot.")
+    if ev["date"] < datetime.now(timezone.utc).date().isoformat():
+        raise HTTPException(status_code=410, detail="This event has already taken place.")
+    res = await db.event_waitlist.update_one({"id": person["id"], "status": "invited"},
+                                             {"$set": {"status": "promoted", "promoted_at": _now_iso()}})
+    if not res.modified_count:
+        raise HTTPException(status_code=409, detail="You've already claimed this spot.")
+    rsvp = await _insert_rsvp(ev, person["name"], person["email"], person["guests"], "waitlist")
+    background.add_task(_send_event_email, rsvp, ev, "confirm", _token_url(rsvp["cancel_token"]))
+    return {"done": "claimed", "gcal_url": _gcal_url(ev), "ics_url": f"/api/events/{ev['id']}/calendar.ics"}
 
 
 async def _send_event_reminders() -> dict:
@@ -1962,16 +2282,239 @@ async def _send_event_reminders() -> dict:
     sent = 0
     async for ev in db.events.find({"date": tomorrow}, {"_id": 0}):
         async for r in db.event_rsvps.find({"event_id": ev["id"], "reminder_sent": {"$ne": True}}, {"_id": 0}):
-            try:
-                res = await send_email(to=r["email"], subject=f"Reminder: {ev['title']} is tomorrow"[:150],
-                                       html=_event_email_html(r["name"], ev, r.get("guests", 1), reminder=True))
-            except Exception as e:
-                logging.error(f"Event reminder failed: {e}")
-                res = None
-            await db.event_rsvps.update_one({"id": r["id"]}, {"$set": {"reminder_sent": True, "reminder_ok": res is not None,
-                                                                        "reminder_at": datetime.now(timezone.utc).isoformat()}})
+            res = await _send_event_email(r, ev, "reminder", _token_url(r["cancel_token"]) if r.get("cancel_token") else None)
+            await db.event_rsvps.update_one({"id": r["id"]}, {"$set": {"reminder_sent": True, "reminder_ok": res is not None, "reminder_at": _now_iso()}})
             sent += 1 if res is not None else 0
     return {"sent": sent}
+
+
+# ---------- Donor Self-Service (Stripe Customer Portal) ----------
+class ManageLinkIn(BaseModel):
+    email: str
+
+
+class PortalIn(BaseModel):
+    token: str
+
+
+async def _monthly_sub_for(email: str):
+    txn = await db.payment_transactions.find_one(
+        {"donor_email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}, "frequency": "monthly",
+         "payment_status": "paid", "stripe_subscription_id": {"$nin": [None, ""]}},
+        {"_id": 0, "stripe_subscription_id": 1}, sort=[("created_at", -1)])
+    return txn["stripe_subscription_id"] if txn else None
+
+
+async def _create_manage_token(email: str, kind: str) -> str:
+    """kind 'request' = one-time, 1 hour; 'receipt' = reusable, 60 days."""
+    token = secrets.token_urlsafe(32)
+    ttl = timedelta(hours=1) if kind == "request" else timedelta(days=60)
+    await db.donor_manage_tokens.insert_one({
+        "token": token, "email": email.lower(), "kind": kind, "used": False,
+        "created_at": _now_iso(), "expires_at": (datetime.now(timezone.utc) + ttl).isoformat()})
+    return token
+
+
+async def _manage_url(email: str, kind: str = "receipt") -> str:
+    return f"{PUBLIC_APP_URL}/manage-gift?token={await _create_manage_token(email, kind)}"
+
+
+def _manage_link_email_html(name: str, url: str) -> str:
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Manage Your Monthly Gift") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 14px">Hi {_esc(name)},</h1>'
+        '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">You asked to manage your monthly gift to The Caring Sisters Club. '
+        'Use the secure button below to update your payment method, view past invoices, or cancel. The link works once and expires in 1 hour.</p>'
+        + _btn(url, "Manage My Monthly Gift", primary=True) +
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">Payments are handled securely by Stripe. If you didn\'t request this, you can safely ignore this email.<br/><br/>With gratitude,<br/>The Caring Sisters Club</p>'
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+@api_router.post("/donor/manage-link")
+async def donor_manage_link(payload: ManageLinkIn, request: Request, background: BackgroundTasks):
+    _rate_limit(request, "manage-link", max_hits=3, window_s=300)
+    email = (payload.email or "").strip().lower()
+    if not _EMAIL_RE.match(email) or len(email) > 254:
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+    if await _monthly_sub_for(email):
+        async def _send():
+            try:
+                txn = await db.payment_transactions.find_one({"donor_email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
+                                                             {"_id": 0, "donor_name": 1})
+                name = ((txn or {}).get("donor_name") or "").strip() or "Friend"
+                url = await _manage_url(email, "request")
+                await send_email(to=email, subject="Your secure link to manage your monthly gift", html=_manage_link_email_html(name, url))
+            except Exception as e:
+                logging.error(f"Manage-link email failed: {e}")
+        background.add_task(_send)
+    return {"message": "If a monthly gift is linked to that email, we've sent a secure link. Please check your inbox."}
+
+
+async def _portal_configuration() -> str:
+    mode = "live" if (stripe.api_key or "").startswith("sk_live") else "test"
+    key = f"stripe_portal_config_{mode}"
+    doc = await db.settings.find_one({"key": "site"}, {"_id": 0, key: 1}) or {}
+    if doc.get(key):
+        return doc[key]
+    cfg = stripe.billing_portal.Configuration.create(
+        business_profile={"headline": "The Caring Sisters Club: manage your monthly gift"},
+        features={
+            "payment_method_update": {"enabled": True},
+            "invoice_history": {"enabled": True},
+            "subscription_cancel": {"enabled": True, "mode": "at_period_end",
+                                    "cancellation_reason": {"enabled": True, "options": ["too_expensive", "unused", "other"]}},
+            "customer_update": {"enabled": False},
+        },
+        default_return_url=f"{PUBLIC_APP_URL}/manage-gift?done=1",
+    )
+    await db.settings.update_one({"key": "site"}, {"$set": {key: cfg.id}}, upsert=True)
+    return cfg.id
+
+
+@api_router.get("/donor/manage-token/{token}")
+async def donor_manage_token_info(token: str, request: Request):
+    _rate_limit(request, "manage-portal", max_hits=20, window_s=60)
+    t = await db.donor_manage_tokens.find_one({"token": token}, {"_id": 0})
+    valid = bool(t and not (t["kind"] == "request" and t["used"]) and t["expires_at"] > _now_iso())
+    return {"valid": valid}
+
+
+@api_router.post("/donor/portal")
+async def donor_portal(payload: PortalIn, request: Request):
+    _rate_limit(request, "manage-portal", max_hits=10, window_s=60)
+    t = await db.donor_manage_tokens.find_one({"token": (payload.token or "")[:100]}, {"_id": 0})
+    if not t or t["expires_at"] <= _now_iso() or (t["kind"] == "request" and t["used"]):
+        raise HTTPException(status_code=410, detail="This link has expired or was already used. Please request a new one.")
+    sub_id = await _monthly_sub_for(t["email"])
+    if not sub_id:
+        raise HTTPException(status_code=404, detail="We couldn't find a monthly gift for this email.")
+    try:
+        customer = stripe.Subscription.retrieve(sub_id).get("customer")
+        cfg = await _portal_configuration()
+        try:
+            session = stripe.billing_portal.Session.create(customer=customer, configuration=cfg,
+                                                           return_url=f"{PUBLIC_APP_URL}/manage-gift?done=1")
+        except stripe.error.InvalidRequestError:
+            await db.settings.update_one({"key": "site"}, {"$unset": {f"stripe_portal_config_{'live' if (stripe.api_key or '').startswith('sk_live') else 'test'}": ""}})
+            session = stripe.billing_portal.Session.create(customer=customer, configuration=await _portal_configuration(),
+                                                           return_url=f"{PUBLIC_APP_URL}/manage-gift?done=1")
+    except Exception as e:
+        logging.error(f"Stripe portal session failed: {e}")
+        raise HTTPException(status_code=502, detail="We couldn't open the secure billing page right now. Please try again shortly.")
+    await db.donor_manage_tokens.update_one({"token": t["token"]}, {"$set": {"used": True, "used_at": _now_iso()}})
+    return {"url": session.url}
+
+
+# ---------- Transparency (editable) ----------
+SPEND_COLORS = ("var(--csc-magenta)", "var(--csc-plum-soft)", "var(--csc-gold)", "#3B0A2E", "#D14FA0", "#8a6a2c")
+REPORT_TYPES = ("990", "annual", "audit", "other")
+DEFAULT_TRANSPARENCY = {
+    "headline_text": "of every dollar goes directly to programs and services for our sisters.",
+    "breakdown": [
+        {"label": "Programs & Services", "pct": 82, "color": "var(--csc-magenta)"},
+        {"label": "Administration", "pct": 11, "color": "var(--csc-plum-soft)"},
+        {"label": "Fundraising", "pct": 7, "color": "var(--csc-gold)"},
+    ],
+    "stats": [
+        {"value": "2,400+", "label": "Sisters in our network"},
+        {"value": "38", "label": "Community programs delivered"},
+        {"value": "$610K", "label": "Granted to member initiatives"},
+        {"value": "14", "label": "Cities across the Diaspora"},
+    ],
+    "financials": [],
+    "reports": [],
+    "updated_at": None,
+}
+
+
+class SpendItem(BaseModel):
+    label: str
+    pct: float
+    color: str = "var(--csc-magenta)"
+
+
+class StatItem(BaseModel):
+    value: str
+    label: str
+
+
+class FinancialYear(BaseModel):
+    year: str
+    revenue: float = 0
+    expenses: float = 0
+    program_expenses: float = 0
+
+
+class ReportItem(BaseModel):
+    id: Optional[str] = None
+    year: str
+    type: str = "annual"
+    title: str = ""
+    url: str
+    size: str = ""
+
+
+class TransparencyIn(BaseModel):
+    headline_text: str = ""
+    breakdown: List[SpendItem] = []
+    stats: List[StatItem] = []
+    financials: List[FinancialYear] = []
+    reports: List[ReportItem] = []
+
+
+async def _get_transparency() -> dict:
+    doc = await db.settings.find_one({"key": "transparency"}, {"_id": 0, "key": 0}) or {}
+    return {k: doc.get(k, v) for k, v in DEFAULT_TRANSPARENCY.items()}
+
+
+@api_router.get("/transparency")
+async def public_transparency():
+    return await _get_transparency()
+
+
+@api_router.put("/admin/transparency")
+async def admin_update_transparency(payload: TransparencyIn, user=Depends(require_admin)):
+    bad = lambda msg: HTTPException(status_code=400, detail=msg)  # noqa: E731
+    if not payload.breakdown or len(payload.breakdown) > 8:
+        raise bad("Add between 1 and 8 spending categories.")
+    for b in payload.breakdown:
+        if not b.label.strip() or not (0 <= b.pct <= 100):
+            raise bad("Each spending category needs a name and a percentage between 0 and 100.")
+        if b.color not in SPEND_COLORS:
+            raise bad("Invalid category color.")
+    if abs(sum(b.pct for b in payload.breakdown) - 100) > 0.5:
+        raise bad(f"Spending percentages must add up to 100% (currently {sum(b.pct for b in payload.breakdown):g}%).")
+    if len(payload.stats) > 8 or any(not s.value.strip() or not s.label.strip() for s in payload.stats):
+        raise bad("Each impact stat needs a value and a label (max 8).")
+    for f in payload.financials:
+        if not re.match(r"^\d{4}$", f.year.strip()) or min(f.revenue, f.expenses, f.program_expenses) < 0:
+            raise bad("Financial years must be 4 digits with non-negative amounts.")
+    reports = []
+    for r in payload.reports:
+        if not re.match(r"^\d{4}$", r.year.strip()) or r.type not in REPORT_TYPES:
+            raise bad("Each report needs a 4-digit year and a valid type.")
+        if not (r.url.startswith("/api/media/file/") or r.url.startswith("https://")):
+            raise bad("Report file must be an uploaded document or https link.")
+        reports.append({"id": r.id or str(uuid.uuid4()), "year": r.year.strip(), "type": r.type,
+                        "title": r.title.strip()[:200], "url": r.url.strip(), "size": r.size.strip()[:20]})
+    doc = {
+        "headline_text": payload.headline_text.strip()[:200] or DEFAULT_TRANSPARENCY["headline_text"],
+        "breakdown": [{"label": b.label.strip()[:60], "pct": round(b.pct, 1), "color": b.color} for b in payload.breakdown],
+        "stats": [{"value": s.value.strip()[:20], "label": s.label.strip()[:60]} for s in payload.stats],
+        "financials": sorted([{"year": f.year.strip(), "revenue": round(f.revenue, 2), "expenses": round(f.expenses, 2),
+                               "program_expenses": round(f.program_expenses, 2)} for f in payload.financials],
+                             key=lambda f: f["year"], reverse=True),
+        "reports": sorted(reports, key=lambda r: r["year"], reverse=True),
+        "updated_at": _now_iso(), "updated_by": user.get("email"),
+    }
+    await db.settings.update_one({"key": "transparency"}, {"$set": doc}, upsert=True)
+    return await _get_transparency()
 
 
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------
@@ -2113,15 +2656,26 @@ async def _daily_scheduler():
             await _run_scheduled_appeals()
             # Daily: day-before reminders for event RSVPs
             await _send_event_reminders()
+            await _process_all_waitlists()
         except Exception as e:
             logging.error(f"Daily scheduler error: {e}")
         await asyncio.sleep(24 * 60 * 60)  # once per day
+
+
+async def _hourly_scheduler():
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            await _process_all_waitlists()
+        except Exception as e:
+            logging.error(f"Hourly waitlist job failed: {e}")
 
 
 @app.on_event("startup")
 async def _start_scheduler():
     await _refresh_site_url()
     asyncio.create_task(_daily_scheduler())
+    asyncio.create_task(_hourly_scheduler())
 
 
 

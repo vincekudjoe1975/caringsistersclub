@@ -42,6 +42,7 @@ export default function Footer() {
               <li><Link to="/volunteer" className="text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Volunteer & Join</Link></li>
               <li><Link to="/events" className="text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Upcoming Events</Link></li>
               <li><Link to="/transparency" className="text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Financial Transparency</Link></li>
+              <li><Link to="/manage-gift" data-testid="footer-manage-gift-link" className="text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Manage My Monthly Gift</Link></li>
             </ul>
           </div>
 
