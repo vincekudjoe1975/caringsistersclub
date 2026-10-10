@@ -269,3 +269,12 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - CORS: removed '*' fallback; CORS_ORIGINS required, '*' filtered out.
 - Feature-consent photo must be an existing public story upload not already used by another story.
 - Not changed: integration keys in backend/.env (platform-injected at deploy).
+
+## 2026-06 Member Portal (iteration 22 — 24/24 backend, all frontend flows pass)
+- Public /membership summary (values, eligibility, dues, how to join). Header "Member Login" + footer link -> /members.
+- /members portal (Emergent Google sign-in, redirect back to /members): apply (18+, Delaware, referral, bylaws agreement) -> admin approval; admin email invites auto-activate on sign-in.
+- Tabs: Announcements (admin posts, pin, optional email to members), Discussion (threads + replies, author/admin delete), Directory (opt-in contact), Bylaws (parsed from .docx into 13 articles + private download), My Profile.
+- Admin -> Members tab: applications, invites, announcements, roster pause/activate, bylaws .docx re-upload (auto-parsed by "ARTICLE" headings). Bylaws stored in object storage under member_doc, served only to members.
+- Data: users.member_status/member_profile/member_application; collections member_invites, member_announcements, member_threads, member_docs.
+- Backlog (planned, not built): dues tracking ($10 reg + $10/mo, Jan 31 deadline), meeting attendance + warning/fine rules, voting/elections (2/3 for amendments, terms), bereavement/birthday contributions.
+- Note: old "Become a Member" tab on /volunteer still posts a plain submission; consider pointing it to /membership.

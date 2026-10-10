@@ -1,0 +1,23 @@
+{
+  "summary": "Full backend + frontend testing of the new Member Portal (Caring Sisters Club). Wrote 24 pytest cases in /app/backend/tests/test_members_portal.py — all 24 pass. Frontend Playwright coverage: public /membership page, logged-out /members login card, non-member apply flow (error + success -> pending), approved-member portal (News/Discussion/Directory/Bylaws/My Profile tabs, thread + reply flow with correct counts, 13-article bylaws view with download), admin /admin members tab (applications, invite form + list, announcement form + delete, members roster with suspend buttons, bylaws current filename). Auto-activation of invited member mem_b via /api/members/me verified. Security gating verified: 401 anon on /api/members/*, 403 for non-members, 403 cross-user thread/reply delete, admin-only /api/admin/members*, bylaws .docx NOT exposed via public /api/media. Regression: /api/admin/team excludes users with member_status. All member-portal functionality works as specified.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_members_portal.py",
+    "/app/test_reports/pytest/iter22.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "backend/server.py is now 6598 lines — well over the 700-line guideline. Consider splitting (members/, admin/, donations/, etc.) in a future refactor; it is becoming hard to review safely.",
+    "The admin team-access query uses {'$or':[{role:'admin'},{member_status:{'$exists':false}}]} which exposes any new (never-applied) Google user by default. Intentional per spec but worth flagging — a brand-new sign-in with no member_status still appears in the Team Access roster until she applies.",
+    "/api/admin/members/{uid}/status accepts action in body (approve/decline/suspend/reinstate). Field name differs from the request's 'status' naming convention mentioned elsewhere; small inconsistency only."
+  ],
+  "updated_files": ["/app/backend/tests/test_members_portal.py"],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "100% of listed data-testids present and functional"},
+  "test_credentials": "Admin: session_token=qa_tok_123 (qa_session.py). Members: mem_tok_a, mem_tok_b (qa_members.py). Both qa_session.py down and qa_members.py down were executed at end of testing per spec.",
+  "seed_data_creation": "Via qa_session.py up and qa_members.py up (torn down post-test). Created & cleaned 1 announcement (TEST Pinned Announce), 3 threads (TEST UI Thread + 2 TEST Thread B copies), 1 invite (qa.sister.b@example.com -> accepted via /members/me auto-activate).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Member portal is fully functional. Backend regression test file is /app/backend/tests/test_members_portal.py — must be run with pytest -p xdist -n 0 (sequential) and REACT_APP_BACKEND_URL loaded from /app/frontend/.env (the test does this automatically). Before running, bring up fresh fixtures: python3 /app/backend/tests/qa_session.py up && python3 /app/backend/tests/qa_members.py down && python3 /app/backend/tests/qa_members.py up (members must be pending at start). After run, tear down.",
+  "rca of the issue": "N/A — no issues found."
+}
