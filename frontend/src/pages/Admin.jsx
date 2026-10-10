@@ -10,8 +10,10 @@ import AdminCampaign from './AdminCampaign';
 import AdminDonors from './AdminDonors';
 import AdminEvents from './AdminEvents';
 import AdminTransparency from './AdminTransparency';
+import AdminPrograms from './AdminPrograms';
+import { SiteUrlBanner } from '../components/SiteUrlBanner';
 import { useToast } from '../hooks/use-toast';
-import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart } from 'lucide-react';
+import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart, Layers } from 'lucide-react';
 
 const TABS = [
   { key: 'gallery', label: 'Gallery Photos', icon: ImageIcon, accept: 'image/*', titleLabel: 'Caption', subLabel: '' },
@@ -132,11 +134,14 @@ export default function Admin() {
           <p className="text-[#241019]/65 text-[14.5px] mt-1">Welcome{user?.name ? `, ${user.name}` : ''}. Manage media and review form submissions.</p>
         </div>
 
+        <SiteUrlBanner />
+
         {/* View switch */}
         <div className="inline-flex flex-wrap gap-1 p-1.5 rounded-full mb-8 bg-white border border-[#3B0A2E]/8">
           {[
             { k: 'media', l: 'Media Library', icon: Images },
             { k: 'inbox', l: 'Form Submissions', icon: Inbox },
+            { k: 'programs', l: 'Programs', icon: Layers },
             { k: 'events', l: 'Events', icon: CalendarHeart },
             { k: 'transparency', l: 'Transparency', icon: PieChart },
             { k: 'donations', l: 'Donations', icon: DollarSign },
@@ -157,6 +162,8 @@ export default function Admin() {
 
         {view === 'inbox' ? (
           <AdminSubmissions />
+        ) : view === 'programs' ? (
+          <AdminPrograms />
         ) : view === 'transparency' ? (
           <AdminTransparency />
         ) : view === 'events' ? (

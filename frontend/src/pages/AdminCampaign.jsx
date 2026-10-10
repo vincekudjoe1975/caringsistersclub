@@ -203,15 +203,15 @@ export default function AdminCampaign() {
           <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold mb-1 flex items-center gap-2">
             <Globe size={18} className="text-[#B4247E]" /> Website & Notifications
           </h3>
-          <p className="text-[#241019]/60 text-[13px] mb-5">Buttons and logos in donor emails link to your website address. It's detected automatically when an admin signs in; set it here to override.</p>
+          <p className="text-[#241019]/60 text-[13px] mb-5">Buttons and logos in donor emails link to your website address. Email links use only the address saved here. If blank, they fall back to the preview site.</p>
           <div className="grid sm:grid-cols-2 gap-5">
             <div>
-              <label className="text-[13px] font-semibold text-[#3B0A2E]">Website address (optional override)</label>
+              <label className="text-[13px] font-semibold text-[#3B0A2E]">Website address (required for email links)</label>
               <input value={form.site_url} data-testid="site-url-input"
                 onChange={(e) => setForm({ ...form, site_url: e.target.value })}
                 placeholder={detectedUrl || 'https://yourdomain.org'}
                 className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
-              <p className="text-[12px] text-[#241019]/50 mt-1.5" data-testid="site-url-active">Email links currently use: <strong>{form.site_url || detectedUrl || 'not yet detected'}</strong></p>
+              <p className="text-[12px] text-[#241019]/50 mt-1.5" data-testid="site-url-active">{form.site_url ? <>Email links use: <strong>{form.site_url}</strong></> : <span className="text-[#B4247E] font-semibold">Not set. Email links currently fall back to the preview site{detectedUrl ? ` (this site: ${detectedUrl})` : ''}.</span>}</p>
             </div>
             <div>
               <label className="text-[13px] font-semibold text-[#3B0A2E]">Staff notification email</label>

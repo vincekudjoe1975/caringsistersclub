@@ -200,7 +200,11 @@ export default function AdminDonors() {
 
   const exportCsv = () => {
     const header = ['Name', 'Email', 'Gifts', 'Lifetime', 'Last Gift', 'Monthly', 'Lapsed', 'Tags'];
-    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const esc = (v) => {
+      let t = String(v ?? '');
+      if (typeof v === 'string' && /^[=+\-@\t\r]/.test(t)) t = `'${t}`;
+      return `"${t.replace(/"/g, '""')}"`;
+    };
     const rows = filtered.map((d) => [
       d.name, d.email, d.gifts, d.lifetime, d.last_gift ? new Date(d.last_gift).toISOString().slice(0, 10) : '',
       d.has_monthly ? 'Yes' : 'No', d.lapsed ? 'Yes' : 'No', (d.tags || []).join('; '),

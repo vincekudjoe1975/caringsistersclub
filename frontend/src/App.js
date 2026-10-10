@@ -22,6 +22,8 @@ import AuthCallback from './pages/AuthCallback';
 import PaymentSuccess from './pages/PaymentSuccess';
 import ManageGift from './pages/ManageGift';
 import RsvpAction from './pages/RsvpAction';
+import CancelThanks from './pages/CancelThanks';
+import ProgramDetail from './pages/ProgramDetail';
 import { Loader2 } from 'lucide-react';
 
 function ScrollToTop() {
@@ -65,6 +67,8 @@ function Shell() {
           <Route path="/about" element={<About />} />
           <Route path="/leadership" element={<Leadership />} />
           <Route path="/initiatives" element={<Initiatives />} />
+          <Route path="/initiatives/:slug" element={<ProgramDetail />} />
+          <Route path="/cancel-thanks" element={<CancelThanks />} />
           <Route path="/events" element={<Events />} />
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/transparency" element={<Transparency />} />

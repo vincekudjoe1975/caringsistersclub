@@ -120,7 +120,8 @@ def get_object(path: str):
 
 
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
-ALLOWED_CATEGORIES = {"gallery", "board", "document", "event", "report"}
+ADMIN_OWNER_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_OWNER_EMAILS", "").split(",") if e.strip()}
+ALLOWED_CATEGORIES = {"gallery", "board", "document", "event", "report", "program"}
 
 
 class SessionRequest(BaseModel):
@@ -179,18 +180,14 @@ async def auth_session(payload: SessionRequest, response: Response):
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         user_id = existing["user_id"]
-        await db.users.update_one(
-            {"user_id": user_id},
-            {"$set": {"name": data.get("name"), "picture": data.get("picture")}},
-        )
+        update = {"name": data.get("name"), "picture": data.get("picture")}
+        if email.lower() in ADMIN_OWNER_EMAILS and existing.get("role") != "admin":
+            update["role"] = "admin"
+        await db.users.update_one({"user_id": user_id}, {"$set": update})
     else:
-        # Self-bootstrapping allowlist:
-        # - First ever user becomes the owner/admin.
-        # - A pre-approved email (allowed_emails) becomes admin.
-        # - Everyone else is 'pending' until an admin approves them.
-        admin_count = await db.users.count_documents({"role": "admin"})
-        preapproved = await db.allowed_emails.find_one({"email": email.lower()})
-        role = "admin" if (admin_count == 0 or preapproved) else "pending"
+        # Owner emails (ADMIN_OWNER_EMAILS) or admin-approved emails become admin; everyone else is pending.
+        preapproved = email.lower() in ADMIN_OWNER_EMAILS or await db.allowed_emails.find_one({"email": email.lower()})
+        role = "admin" if preapproved else "pending"
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         await db.users.insert_one({
             "user_id": user_id,
@@ -413,7 +410,7 @@ def _create_stripe_donation_session(req: "DonationCheckout", amount: float, mont
         )
     except Exception as e:
         logging.error(f"Stripe checkout error: {e}")
-        raise HTTPException(status_code=502, detail="Could not create checkout session")
+        raise HTTPException(status_code=424, detail="Could not create checkout session")
 
 
 import time as _time
@@ -573,6 +570,9 @@ async def stripe_webhook(request: Request):
         # Recurring monthly donation renewal (skip the first invoice of a new subscription)
         if obj.get("billing_reason") == "subscription_cycle":
             await _handle_recurring_renewal(obj)
+    elif t in ("customer.subscription.updated", "customer.subscription.deleted"):
+        if t.endswith("deleted") or obj.get("cancel_at_period_end") or obj.get("cancel_at"):
+            await _handle_cancellation(obj)
     return {"status": "ok"}
 
 
@@ -849,10 +849,10 @@ def _clean_site_url(url: str) -> str:
 
 
 async def _refresh_site_url():
-    """Email links use: admin-set site_url > auto-detected live host > env fallback."""
+    """Email links use the admin-set site_url only (detected host is just a suggestion in Admin)."""
     global PUBLIC_APP_URL
     doc = await db.settings.find_one({"key": "site"}, {"_id": 0}) or {}
-    PUBLIC_APP_URL = (doc.get("site_url") or doc.get("detected_site_url") or _SITE_URL_FALLBACK).rstrip("/")
+    PUBLIC_APP_URL = (doc.get("site_url") or _SITE_URL_FALLBACK).rstrip("/")
 
 
 async def _detect_site_url(request: Request):
@@ -863,7 +863,6 @@ async def _detect_site_url(request: Request):
     doc = await db.settings.find_one({"key": "site"}, {"_id": 0, "detected_site_url": 1}) or {}
     if doc.get("detected_site_url") != url:
         await db.settings.update_one({"key": "site"}, {"$set": {"detected_site_url": url}}, upsert=True)
-        await _refresh_site_url()
 
 
 def _brand_header(eyebrow: str) -> str:
@@ -880,7 +879,8 @@ def _brand_header(eyebrow: str) -> str:
 def _receipt_html(name: str, amount, frequency: str, ein: str = "", manage_url: str = None) -> str:
     manage_html = (
         '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:0 0 8px">Need to update your card or change your plans? '
-        f'<a href="{manage_url}" style="color:#B4247E;font-weight:bold">Manage your gift</a> securely anytime.</p>'
+        f'<a href="{manage_url}" style="color:#B4247E;font-weight:bold">Manage your gift</a> securely. For your protection this link works once; '
+        f'you can request a new one anytime at <a href="{PUBLIC_APP_URL}/manage-gift" style="color:#B4247E">our Manage My Gift page</a>.</p>'
         if manage_url else ""
     )
     freq_txt = "monthly" if frequency == "monthly" else "one-time"
@@ -1197,8 +1197,8 @@ async def export_donations_csv(year: Optional[int] = None, user=Depends(require_
         date = (r.get("updated_at") or "")[:10]
         writer.writerow([
             date,
-            _txn_display_name(r),
-            r.get("donor_email") or "",
+            _csv_safe(_txn_display_name(r)),
+            _csv_safe(r.get("donor_email") or ""),
             f"{float(r.get('amount', 0)):.2f}",
             "Monthly" if r.get("frequency") == "monthly" else "One-Time",
             "Yes" if r.get("is_renewal") else "No",
@@ -2306,9 +2306,9 @@ async def _monthly_sub_for(email: str):
 
 
 async def _create_manage_token(email: str, kind: str) -> str:
-    """kind 'request' = one-time, 1 hour; 'receipt' = reusable, 60 days."""
+    """All tokens are single-use. 'request' expires in 1 hour; 'receipt' in 30 days."""
     token = secrets.token_urlsafe(32)
-    ttl = timedelta(hours=1) if kind == "request" else timedelta(days=60)
+    ttl = timedelta(hours=1) if kind == "request" else timedelta(days=30)
     await db.donor_manage_tokens.insert_one({
         "token": token, "email": email.lower(), "kind": kind, "used": False,
         "created_at": _now_iso(), "expires_at": (datetime.now(timezone.utc) + ttl).isoformat()})
@@ -2381,7 +2381,7 @@ async def _portal_configuration() -> str:
 async def donor_manage_token_info(token: str, request: Request):
     _rate_limit(request, "manage-portal", max_hits=20, window_s=60)
     t = await db.donor_manage_tokens.find_one({"token": token}, {"_id": 0})
-    valid = bool(t and not (t["kind"] == "request" and t["used"]) and t["expires_at"] > _now_iso())
+    valid = bool(t and not t["used"] and t["expires_at"] > _now_iso())
     return {"valid": valid}
 
 
@@ -2389,7 +2389,10 @@ async def donor_manage_token_info(token: str, request: Request):
 async def donor_portal(payload: PortalIn, request: Request):
     _rate_limit(request, "manage-portal", max_hits=10, window_s=60)
     t = await db.donor_manage_tokens.find_one({"token": (payload.token or "")[:100]}, {"_id": 0})
-    if not t or t["expires_at"] <= _now_iso() or (t["kind"] == "request" and t["used"]):
+    if not t or t["expires_at"] <= _now_iso() or t["used"]:
+        raise HTTPException(status_code=410, detail="This link has expired or was already used. Please request a new one.")
+    claimed = await db.donor_manage_tokens.update_one({"token": t["token"], "used": False}, {"$set": {"used": True, "used_at": _now_iso()}})
+    if not claimed.modified_count:
         raise HTTPException(status_code=410, detail="This link has expired or was already used. Please request a new one.")
     sub_id = await _monthly_sub_for(t["email"])
     if not sub_id:
@@ -2406,8 +2409,7 @@ async def donor_portal(payload: PortalIn, request: Request):
                                                            return_url=f"{PUBLIC_APP_URL}/manage-gift?done=1")
     except Exception as e:
         logging.error(f"Stripe portal session failed: {e}")
-        raise HTTPException(status_code=502, detail="We couldn't open the secure billing page right now. Please try again shortly.")
-    await db.donor_manage_tokens.update_one({"token": t["token"]}, {"$set": {"used": True, "used_at": _now_iso()}})
+        raise HTTPException(status_code=424, detail="We couldn't open the secure billing page right now. Please try again shortly.")
     return {"url": session.url}
 
 
@@ -2515,6 +2517,302 @@ async def admin_update_transparency(payload: TransparencyIn, user=Depends(requir
     }
     await db.settings.update_one({"key": "transparency"}, {"$set": doc}, upsert=True)
     return await _get_transparency()
+
+
+# ---------- Monthly cancellation alerts ----------
+class ThankNoteIn(BaseModel):
+    subject: str
+    message: str
+
+
+def _default_thank_note(name: str) -> dict:
+    return {
+        "subject": "Thank you for being part of our sisterhood",
+        "message": (f"Dear {name},\n\nWe noticed your monthly gift has ended, and we simply wanted to say thank you. "
+                    "Every month you gave helped women across the Diaspora find mentorship, stable housing and community care.\n\n"
+                    "You'll always be part of the Caring Sisters family, and our door is open whenever you'd like to reconnect, "
+                    "volunteer or join us at an event.\n\nWith heartfelt gratitude,\nThe Caring Sisters Club"),
+    }
+
+
+def _note_email_html(message: str) -> str:
+    body = _esc(message).replace("\n", "<br/>")
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("With Gratitude") +
+        f'<tr><td style="padding:32px;font-family:Arial,sans-serif;font-size:15px;line-height:1.75;color:#4a3340">{body}</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">Sent by The Caring Sisters Club. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+def _cancel_alert_html(c: dict, url: str) -> str:
+    ends = c.get("ends_on") or "now"
+    rows = "".join(
+        f'<tr><td style="padding:7px 16px;font-size:13px;color:#6b5560">{k}</td><td style="padding:7px 16px;font-size:14px;color:#3B0A2E;font-weight:bold">{_esc(str(v))}</td></tr>'
+        for k, v in [("Donor", c["name"]), ("Email", c["email"]), ("Monthly gift", f"${c['amount']:,.2f}"), ("Gift ends", ends),
+                     ("Reason", c.get("reason") or "Not given")]
+    )
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:24px 12px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Donor Alert") +
+        '<tr><td style="padding:28px;font-family:Arial,sans-serif;color:#241019">'
+        '<h2 style="font-family:Georgia,serif;color:#3B0A2E;font-size:21px;margin:0 0 12px">A monthly donor cancelled</h2>'
+        f'<table role="presentation" width="100%" style="background:#faf2f7;border-radius:10px;margin:0 0 18px">{rows}</table>'
+        '<p style="font-size:13.5px;line-height:1.6;color:#4a3340;margin:0 0 16px">A warm thank-you goes a long way. Review a ready-made note, personalise it, and send it in one click.</p>'
+        + _btn(url, "Send Thank-You Note", primary=True) +
+        '</td></tr></table></td></tr></table>'
+    )
+
+
+async def _handle_cancellation(sub: dict):
+    """Idempotent: record a monthly cancellation once and alert staff."""
+    sub_id = sub.get("id")
+    if not sub_id or await db.cancellations.find_one({"sub_id": sub_id}):
+        return False
+    orig = await db.payment_transactions.find_one({"stripe_subscription_id": sub_id}, {"_id": 0}, sort=[("created_at", 1)])
+    if not orig or not orig.get("donor_email"):
+        return False
+    end_ts = sub.get("cancel_at") or sub.get("ended_at") or sub.get("canceled_at")
+    c = {
+        "id": str(uuid.uuid4()), "sub_id": sub_id, "email": orig["donor_email"].lower(),
+        "name": (orig.get("donor_name") or "").strip() or "Friend", "amount": float(orig.get("amount") or 0),
+        "ends_on": datetime.fromtimestamp(end_ts, tz=timezone.utc).strftime("%B %-d, %Y") if end_ts else "",
+        "reason": ((sub.get("cancellation_details") or {}).get("feedback") or "").replace("_", " "),
+        "token": secrets.token_urlsafe(24), "thanked": False, "created_at": _now_iso(),
+    }
+    try:
+        await db.cancellations.insert_one(dict(c))
+    except Exception:
+        return False
+    to = (await _get_settings()).get("staff_notify_email")
+    if to:
+        try:
+            await send_email(to=to, subject=f"Monthly donor cancelled: {c['name']} (${c['amount']:,.0f}/mo)"[:150],
+                             html=_cancel_alert_html(c, f"{PUBLIC_APP_URL}/cancel-thanks?token={c['token']}"))
+        except Exception as e:
+            logging.error(f"Cancellation alert failed: {e}")
+    return True
+
+
+async def _check_cancellations() -> int:
+    """Daily safety net in case a webhook was missed."""
+    found = 0
+    sub_ids = await db.payment_transactions.distinct("stripe_subscription_id", {"frequency": "monthly", "payment_status": "paid"})
+    done = set(await db.cancellations.distinct("sub_id"))
+    for sub_id in sub_ids:
+        if not sub_id or sub_id in done:
+            continue
+        try:
+            sub = stripe.Subscription.retrieve(sub_id)
+            if sub.get("status") == "canceled" or sub.get("cancel_at_period_end") or sub.get("cancel_at"):
+                found += 1 if await _handle_cancellation(sub) else 0
+        except Exception as e:
+            logging.warning(f"Cancellation check failed for {sub_id}: {e}")
+    return found
+
+
+async def _find_cancellation(token: str):
+    c = await db.cancellations.find_one({"token": (token or "")[:100]}, {"_id": 0}) if token else None
+    if not c:
+        raise HTTPException(status_code=404, detail="This link is invalid.")
+    return c
+
+
+@api_router.get("/cancellations/token/{token}")
+async def cancellation_token_info(token: str, request: Request):
+    _rate_limit(request, "cancel-thanks", max_hits=20, window_s=60)
+    c = await _find_cancellation(token)
+    return {"name": c["name"], "email": c["email"], "amount": c["amount"], "ends_on": c["ends_on"], "reason": c.get("reason"),
+            "thanked": c["thanked"], "thanked_at": c.get("thanked_at"), **_default_thank_note(c["name"])}
+
+
+@api_router.post("/cancellations/token/{token}")
+async def cancellation_send_thanks(token: str, payload: ThankNoteIn, request: Request):
+    _rate_limit(request, "cancel-thanks", max_hits=20, window_s=60)
+    c = await _find_cancellation(token)
+    subject, message = payload.subject.strip()[:150], payload.message.strip()[:5000]
+    if not subject or not message:
+        raise HTTPException(status_code=400, detail="Subject and message are required.")
+    res = await db.cancellations.update_one({"id": c["id"], "thanked": False}, {"$set": {"thanked": True, "thanked_at": _now_iso()}})
+    if not res.modified_count:
+        raise HTTPException(status_code=409, detail="A thank-you note was already sent to this donor.")
+    try:
+        sent = await send_email(to=c["email"], subject=subject, html=_note_email_html(message))
+    except ValueError as e:
+        sent, err = None, str(e)
+    else:
+        err = "Email provider rejected the message."
+    if sent is None:
+        await db.cancellations.update_one({"id": c["id"]}, {"$set": {"thanked": False}, "$unset": {"thanked_at": ""}})
+        raise HTTPException(status_code=424, detail=f"Note not sent: {err}")
+    return {"sent": True}
+
+
+# ---------- Programs & Initiatives (editable) ----------
+DEFAULT_PROGRAM_CATEGORIES = ["Professional", "Philanthropy", "Housing", "Community"]
+
+
+class ImpactItem(BaseModel):
+    value: str
+    label: str
+
+
+class ProgramIn(BaseModel):
+    title: str
+    category: str = ""
+    image_url: str = ""
+    summary: str = ""
+    body: str = ""
+    goals: List[str] = []
+    impact: List[ImpactItem] = []
+    cta_text: str = "Get Involved"
+    cta_link: str = "/volunteer"
+    published: bool = True
+
+
+class CategoriesIn(BaseModel):
+    categories: List[str]
+
+
+class ReorderIn(BaseModel):
+    ids: List[str]
+
+
+def _slugify(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:80] or "program"
+
+
+async def _unique_slug(title: str, exclude_id: str = None) -> str:
+    base, n = _slugify(title), 1
+    slug = base
+    while await db.programs.find_one({"slug": slug, "id": {"$ne": exclude_id}}):
+        n += 1
+        slug = f"{base}-{n}"
+    return slug
+
+
+def _clean_program(p: ProgramIn) -> dict:
+    title = p.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Program title is required")
+    img = p.image_url.strip()
+    if img and not (img.startswith("/api/media/file/") or img.startswith("https://")):
+        raise HTTPException(status_code=400, detail="Image must be an uploaded image or https URL")
+    link = p.cta_link.strip() or "/volunteer"
+    if not (re.match(r"^/[A-Za-z0-9/_\-?=&#.]*$", link) or link.startswith("https://")) or link.startswith("//"):
+        raise HTTPException(status_code=400, detail="Button link must be a site path like /donate or an https:// URL")
+    return {
+        "title": title[:150], "category": p.category.strip()[:50], "image_url": img, "summary": p.summary.strip()[:600],
+        "body": p.body.strip()[:10000], "goals": [g.strip()[:200] for g in p.goals if g.strip()][:12],
+        "impact": [{"value": i.value.strip()[:20], "label": i.label.strip()[:60]} for i in p.impact if i.value.strip() and i.label.strip()][:6],
+        "cta_text": p.cta_text.strip()[:40] or "Get Involved", "cta_link": link, "published": bool(p.published),
+    }
+
+
+async def _seed_programs():
+    doc = await db.settings.find_one({"key": "site"}, {"_id": 0, "programs_seeded": 1}) or {}
+    if doc.get("programs_seeded"):
+        return
+    await db.settings.update_one({"key": "site"}, {"$set": {"programs_seeded": True}}, upsert=True)
+    if await db.programs.count_documents({}):
+        return
+    seed = [
+        ("Business Elevation Lab", "Professional", "https://images.pexels.com/photos/8555600/pexels-photo-8555600.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+         "A 12-week accelerator pairing members with mentors, capital readiness coaching, and peer accountability circles."),
+        ("Sisterhood Housing Support", "Housing", "https://images.unsplash.com/photo-1628717341663-0007b0ee2597?crop=entropy&cs=srgb&fm=jpg&q=85&w=940",
+         "Emergency housing navigation, rental assistance, and relocation resources for sisters in transition."),
+        ("Community Care Drives", "Philanthropy", "https://images.unsplash.com/photo-1593113616828-6f22bca04804?crop=entropy&cs=srgb&fm=jpg&q=85&w=940",
+         "Quarterly food, wellness, and back-to-school drives serving families across our chapters."),
+        ("Leadership & Mentorship", "Professional", "https://images.unsplash.com/photo-1590650046871-92c887180603?crop=entropy&cs=srgb&fm=jpg&q=85&w=940",
+         "Structured mentorship circles connecting emerging leaders with seasoned executives and entrepreneurs."),
+        ("Wellness Workshops", "Community", "https://images.unsplash.com/photo-1652148439208-3e73641d0725?crop=entropy&cs=srgb&fm=jpg&q=85&w=940",
+         "Mental health, financial literacy, and self-care workshops led by member experts."),
+        ("The Sisterhood Fund", "Philanthropy", "https://images.pexels.com/photos/6647027/pexels-photo-6647027.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+         "Micro-grants distributed to member-led businesses and community relief projects."),
+    ]
+    docs = [{"id": str(uuid.uuid4()), "slug": _slugify(t), "title": t, "category": c, "image_url": img, "summary": s, "body": "",
+             "goals": [], "impact": [], "cta_text": "Get Involved", "cta_link": "/volunteer", "published": True,
+             "order": i, "created_at": _now_iso()} for i, (t, c, img, s) in enumerate(seed)]
+    await db.programs.insert_many(docs)
+
+
+async def _program_categories() -> list:
+    doc = await db.settings.find_one({"key": "site"}, {"_id": 0, "program_categories": 1}) or {}
+    return doc.get("program_categories") or DEFAULT_PROGRAM_CATEGORIES
+
+
+@api_router.get("/programs")
+async def public_programs():
+    await _seed_programs()
+    items = await db.programs.find({"published": True}, {"_id": 0, "body": 0}).sort("order", 1).to_list(200)
+    return {"items": items, "categories": await _program_categories()}
+
+
+@api_router.get("/programs/{slug}")
+async def public_program(slug: str):
+    p = await db.programs.find_one({"slug": slug[:100], "published": True}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return p
+
+
+@api_router.get("/admin/programs")
+async def admin_programs(user=Depends(require_admin)):
+    await _seed_programs()
+    items = await db.programs.find({}, {"_id": 0}).sort("order", 1).to_list(200)
+    return {"items": items, "categories": await _program_categories()}
+
+
+@api_router.post("/admin/programs")
+async def admin_create_program(payload: ProgramIn, user=Depends(require_admin)):
+    data = _clean_program(payload)
+    last = await db.programs.find_one({}, {"_id": 0, "order": 1}, sort=[("order", -1)])
+    doc = {"id": str(uuid.uuid4()), "slug": await _unique_slug(data["title"]), **data,
+           "order": (last or {}).get("order", -1) + 1, "created_at": _now_iso()}
+    await db.programs.insert_one(dict(doc))
+    return doc
+
+
+@api_router.put("/admin/programs/{pid}")
+async def admin_update_program(pid: str, payload: ProgramIn, user=Depends(require_admin)):
+    cur = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not cur:
+        raise HTTPException(status_code=404, detail="Program not found")
+    data = _clean_program(payload)
+    if data["title"] != cur["title"]:
+        data["slug"] = await _unique_slug(data["title"], exclude_id=pid)
+    await db.programs.update_one({"id": pid}, {"$set": {**data, "updated_at": _now_iso()}})
+    return await db.programs.find_one({"id": pid}, {"_id": 0})
+
+
+@api_router.delete("/admin/programs/{pid}")
+async def admin_delete_program(pid: str, user=Depends(require_admin)):
+    if not (await db.programs.delete_one({"id": pid})).deleted_count:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return {"deleted": True}
+
+
+@api_router.post("/admin/programs/reorder")
+async def admin_reorder_programs(payload: ReorderIn, user=Depends(require_admin)):
+    for i, pid in enumerate(payload.ids[:200]):
+        await db.programs.update_one({"id": pid}, {"$set": {"order": i}})
+    return {"ok": True}
+
+
+@api_router.put("/admin/program-categories")
+async def admin_program_categories(payload: CategoriesIn, user=Depends(require_admin)):
+    cats = []
+    for c in payload.categories:
+        c = c.strip()[:40]
+        if c and c.lower() != "all" and c.lower() not in [x.lower() for x in cats]:
+            cats.append(c)
+    if not cats or len(cats) > 12:
+        raise HTTPException(status_code=400, detail="Add between 1 and 12 categories.")
+    await db.settings.update_one({"key": "site"}, {"$set": {"program_categories": cats}}, upsert=True)
+    return {"categories": cats}
 
 
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------
@@ -2657,6 +2955,7 @@ async def _daily_scheduler():
             # Daily: day-before reminders for event RSVPs
             await _send_event_reminders()
             await _process_all_waitlists()
+            await _check_cancellations()
             await db.donor_manage_tokens.delete_many({"expires_at": {"$lt": datetime.now(timezone.utc).isoformat()}})
         except Exception as e:
             logging.error(f"Daily scheduler error: {e}")
@@ -2803,6 +3102,7 @@ async def startup_storage():
 async def startup_indexes():
     try:
         await db.users.create_index("email", unique=True)
+        await db.cancellations.create_index("sub_id", unique=True)
         await db.users.create_index("user_id", unique=True)
         await db.user_sessions.create_index("session_token")
         await db.media.create_index("category")
