@@ -1374,6 +1374,90 @@ async def send_test_receipt(user=Depends(require_admin)):
     return {"sent": True, "to": to}
 
 
+MAJOR_DONOR_MIN = 500.0
+
+
+def _appeal_email_html(name: str, subject: str, message_html: str) -> str:
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9;padding:0;margin:0"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("A Note For You") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:22px;margin:0 0 14px">{_esc(subject)}</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 18px">Dear {_esc(name)},</p>'
+        f'<div style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 22px">{message_html}</div>'
+        '<a href="' + PUBLIC_APP_URL + '/donate" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">Make a Gift</a>'
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:22px 0 0">With gratitude,<br/>The Caring Sisters Club</p>'
+        '</td></tr>'
+        '<tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif"><p style="font-size:11px;color:#b79aae;margin:0">You are receiving this because you supported The Caring Sisters Club. We never ask for your password or card details by email.</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+class SegmentEmail(BaseModel):
+    segment: str  # all | monthly | lapsed | major
+    subject: str
+    message: str
+
+
+async def _donor_segment_recipients(seg: str) -> list:
+    paid = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(5000)
+    profiles = {}
+    for t in paid:
+        email = (t.get("donor_email") or "").strip().lower()
+        if not email:
+            continue
+        p = profiles.setdefault(email, {"email": email, "name": "", "lifetime": 0.0, "has_monthly": False, "last_monthly": ""})
+        p["lifetime"] += float(t.get("amount", 0))
+        if t.get("frequency") == "monthly":
+            p["has_monthly"] = True
+            upd = t.get("updated_at") or ""
+            if upd > p["last_monthly"]:
+                p["last_monthly"] = upd
+        if not t.get("anonymous") and (t.get("donor_name") or "").strip():
+            p["name"] = t["donor_name"].strip()
+
+    def in_segment(p):
+        if seg == "monthly":
+            return p["has_monthly"]
+        if seg == "lapsed":
+            return p["has_monthly"] and _is_lapsed(p["last_monthly"])
+        if seg == "major":
+            return p["lifetime"] >= MAJOR_DONOR_MIN
+        return True
+
+    return [p for p in profiles.values() if in_segment(p)]
+
+
+@api_router.get("/admin/donors/segment-count/{segment}")
+async def donor_segment_count(segment: str, user=Depends(require_admin)):
+    recipients = await _donor_segment_recipients(segment.strip().lower())
+    return {"segment": segment, "count": len(recipients)}
+
+
+@api_router.post("/admin/donors/segment-email")
+async def send_segment_email(payload: SegmentEmail, user=Depends(require_admin)):
+    seg = (payload.segment or "all").strip().lower()
+    subject = (payload.subject or "").strip()
+    message = (payload.message or "").strip()
+    if not subject or not message:
+        raise HTTPException(status_code=400, detail="Subject and message are required")
+    recipients = await _donor_segment_recipients(seg)
+    if not recipients:
+        raise HTTPException(status_code=400, detail="No donors match this segment")
+    message_html = _esc(message).replace("\n", "<br/>")
+    sent = 0
+    for p in recipients:
+        result = await send_email(to=p["email"], subject=subject, html=_appeal_email_html(p["name"] or "Friend", subject, message_html))
+        if result is not None:
+            sent += 1
+    await db.segment_emails.insert_one({
+        "segment": seg, "subject": subject, "recipients": len(recipients),
+        "sent": sent, "sent_by": user.get("user_id"), "sent_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"segment": seg, "recipients": len(recipients), "sent": sent}
+
+
 # ---------- Recurring Reminders (pre-renewal heads-up) ----------
 def _reminder_email_html(name: str, amount, next_date: str) -> str:
     when = f" around <strong>{_esc(next_date)}</strong>" if next_date else " soon"

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, Search, X, Repeat, Calendar, AlertTriangle, Tag, Save, HeartHandshake, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
+import { Loader2, Search, X, Repeat, Calendar, AlertTriangle, Tag, Save, HeartHandshake, ChevronUp, ChevronDown, ChevronsUpDown, Download, Mail, Send } from 'lucide-react';
 
 const SortTh = ({ label, k, sort, onSort, align }) => {
   const active = sort.key === k;
@@ -39,6 +39,10 @@ export default function AdminDonors() {
   const [tagInput, setTagInput] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
   const [sendingReactivation, setSendingReactivation] = useState(false);
+  const [segModal, setSegModal] = useState(false);
+  const [segSubject, setSegSubject] = useState('');
+  const [segMessage, setSegMessage] = useState('');
+  const [segSending, setSegSending] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -159,6 +163,43 @@ export default function AdminDonors() {
     { key: 'major', label: `Major ($${MAJOR_DONOR_MIN}+)`, count: donors.filter((d) => (d.lifetime || 0) >= MAJOR_DONOR_MIN).length },
   ];
 
+  const currentFilterLabel = quickFilters.find((f) => f.key === quickFilter)?.label || 'All';
+  const segmentCount = quickFilters.find((f) => f.key === quickFilter)?.count || 0;
+
+  const exportCsv = () => {
+    const header = ['Name', 'Email', 'Gifts', 'Lifetime', 'Last Gift', 'Monthly', 'Lapsed', 'Tags'];
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const rows = filtered.map((d) => [
+      d.name, d.email, d.gifts, d.lifetime, d.last_gift ? new Date(d.last_gift).toISOString().slice(0, 10) : '',
+      d.has_monthly ? 'Yes' : 'No', d.lapsed ? 'Yes' : 'No', (d.tags || []).join('; '),
+    ].map(esc).join(','));
+    const csv = [header.map(esc).join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `donors-${quickFilter}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const sendSegmentEmail = async () => {
+    if (!segSubject.trim() || !segMessage.trim()) {
+      toast({ title: 'Missing fields', description: 'Please add a subject and a message.', variant: 'destructive' });
+      return;
+    }
+    setSegSending(true);
+    try {
+      const { data } = await api.post('/admin/donors/segment-email', { segment: quickFilter, subject: segSubject, message: segMessage });
+      toast({ title: 'Appeal sent', description: `Delivered to ${data.sent} of ${data.recipients} ${currentFilterLabel} donor${data.recipients === 1 ? '' : 's'}.` });
+      setSegModal(false); setSegSubject(''); setSegMessage('');
+    } catch (e) {
+      toast({ title: 'Send failed', description: e?.response?.data?.detail || 'Please try again.', variant: 'destructive' });
+    } finally {
+      setSegSending(false);
+    }
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin text-[#B4247E]" size={32} /></div>;
   }
@@ -182,14 +223,24 @@ export default function AdminDonors() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="donor-quick-filters">
-        {quickFilters.map((f) => (
-          <button key={f.key} onClick={() => setQuickFilter(f.key)} data-testid={`donor-filter-${f.key}`}
-            className={`px-3.5 py-1.5 rounded-full text-[12.5px] font-semibold transition-colors ${quickFilter === f.key ? 'bg-[#3B0A2E] text-white' : 'bg-white text-[#3B0A2E]'}`}
-            style={quickFilter === f.key ? {} : { border: '1px solid rgba(59,10,46,0.15)' }}>
-            {f.label} <span className="opacity-60">({f.count})</span>
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <div className="flex flex-wrap items-center gap-2 flex-1" data-testid="donor-quick-filters">
+          {quickFilters.map((f) => (
+            <button key={f.key} onClick={() => setQuickFilter(f.key)} data-testid={`donor-filter-${f.key}`}
+              className={`px-3.5 py-1.5 rounded-full text-[12.5px] font-semibold transition-colors ${quickFilter === f.key ? 'bg-[#3B0A2E] text-white' : 'bg-white text-[#3B0A2E]'}`}
+              style={quickFilter === f.key ? {} : { border: '1px solid rgba(59,10,46,0.15)' }}>
+              {f.label} <span className="opacity-60">({f.count})</span>
+            </button>
+          ))}
+        </div>
+        <button onClick={exportCsv} disabled={filtered.length === 0} data-testid="donors-export-csv-btn"
+          className="px-4 py-1.5 rounded-full text-[12.5px] font-semibold flex items-center gap-1.5 bg-white text-[#3B0A2E] disabled:opacity-50" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>
+          <Download size={14} /> Export CSV
+        </button>
+        <button onClick={() => setSegModal(true)} disabled={segmentCount === 0} data-testid="donors-email-segment-btn"
+          className="btn-magenta px-4 py-1.5 rounded-full text-[12.5px] font-semibold flex items-center gap-1.5 disabled:opacity-50">
+          <Mail size={14} /> Email {currentFilterLabel} ({segmentCount})
+        </button>
       </div>
 
       <div className="relative max-w-sm mb-6">
@@ -334,6 +385,35 @@ export default function AdminDonors() {
               ) : (
                 <p className="text-[#241019]/50 text-center py-6">Could not load details.</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {segModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(36,16,25,0.55)' }} onClick={() => !segSending && setSegModal(false)} data-testid="segment-email-modal">
+          <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }}>
+              <h3 className="font-serif text-white text-[18px] font-semibold">Email {currentFilterLabel} Donors</h3>
+              <button onClick={() => !segSending && setSegModal(false)} className="text-white/80 hover:text-white" data-testid="segment-modal-close"><X size={18} /></button>
+            </div>
+            <div className="p-6">
+              <p className="text-[13px] text-[#241019]/60 mb-4">This appeal will be sent to <strong className="text-[#B4247E]">{segmentCount}</strong> {currentFilterLabel.toLowerCase()} donor{segmentCount === 1 ? '' : 's'} with an email on file, wrapped in your branded template with a "Make a Gift" button.</p>
+              <label className="text-[13px] font-semibold text-[#3B0A2E]">Subject</label>
+              <input value={segSubject} onChange={(e) => setSegSubject(e.target.value)} data-testid="segment-subject-input"
+                placeholder="A heartfelt update from The Caring Sisters Club"
+                className="w-full mt-1.5 mb-4 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
+              <label className="text-[13px] font-semibold text-[#3B0A2E]">Message</label>
+              <textarea value={segMessage} onChange={(e) => setSegMessage(e.target.value)} rows={6} data-testid="segment-message-input"
+                placeholder="Write a warm, personal appeal to this group of supporters…"
+                className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-3 text-[14px] focus:outline-none focus:border-[#B4247E] resize-none" />
+              <div className="flex justify-end gap-2 mt-5">
+                <button onClick={() => setSegModal(false)} disabled={segSending} className="px-5 py-2.5 rounded-full text-[13.5px] font-semibold bg-white text-[#3B0A2E]" style={{ border: '1px solid rgba(59,10,46,0.15)' }}>Cancel</button>
+                <button onClick={sendSegmentEmail} disabled={segSending} data-testid="segment-send-btn"
+                  className="btn-magenta px-6 py-2.5 rounded-full text-[13.5px] font-semibold flex items-center gap-2 disabled:opacity-60">
+                  {segSending ? <><Loader2 size={15} className="animate-spin" /> Sending…</> : <><Send size={15} /> Send to {segmentCount}</>}
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -96,6 +96,13 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
   counts — All / Monthly / Lapsed / Major ($500+) — plus clickable, sortable column headers
   (Donor, Gifts, Last Gift, Lifetime) via a `SortTh` component. Verified visually (Major filter
   shows only the $600 lapsed donor; name sort orders A→Z).
+- **CSV by filter**: "Export CSV" button on the Donors tab downloads the currently-filtered +
+  sorted donor list client-side (name, email, gifts, lifetime, last gift, monthly, lapsed, tags).
+- **Donor segment email**: `POST /api/admin/donors/segment-email` + `GET
+  /admin/donors/segment-count/{segment}` (admin-only, CSRF-protected). Sends a branded appeal
+  (admin subject+message, escaped) to a server-computed segment (all/monthly/lapsed/major);
+  compose modal in AdminDonors with live recipient count. Verified (count, send+deliver,
+  400 on empty subject, 403 without CSRF header).
 
 ## Known issues / notes
 - **Email delivery works** via the Emergent platform-verified domain (202 + id for real
