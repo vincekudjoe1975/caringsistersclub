@@ -2,7 +2,8 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { org, nav } from '../mock/mock';
 import Logo from './Logo';
-import { Instagram, Facebook, Linkedin, Youtube, MapPin, Phone, Mail } from 'lucide-react';
+import { MapPin, Phone, Mail, Clock } from 'lucide-react';
+import { SocialLinks } from './SocialLinks';
 
 export default function Footer() {
   const legal = [
@@ -20,14 +21,7 @@ export default function Footer() {
             <p className="text-[13.5px] text-[#F7EFE9]/70 mt-5 leading-relaxed">
               A sisterhood empowering women of the Diaspora through friendship, professional growth, and philanthropy.
             </p>
-            <div className="flex items-center gap-3 mt-5">
-              {[{ Icon: Instagram, label: 'Instagram' }, { Icon: Facebook, label: 'Facebook' }, { Icon: Linkedin, label: 'LinkedIn' }, { Icon: Youtube, label: 'YouTube' }].map(({ Icon, label }) => (
-                <a key={label} href="#" aria-label={label}
-                  className="w-9 h-9 rounded-full flex items-center justify-center border border-white/15 hover:border-[#CBA24B] hover:text-[#CBA24B] transition-colors">
-                  <Icon size={16} />
-                </a>
-              ))}
-            </div>
+            <SocialLinks className="mt-5" itemClassName="border border-white/15 hover:border-[#CBA24B] hover:text-[#CBA24B]" />
           </div>
 
           <div>
@@ -55,8 +49,9 @@ export default function Footer() {
             <h4 className="eyebrow text-[#CBA24B] mb-4">Contact</h4>
             <ul className="space-y-3 text-[13.5px] text-[#F7EFE9]/75">
               <li className="flex gap-2.5"><MapPin size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> {org.address}</li>
-              <li className="flex gap-2.5"><Phone size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> {org.phone}</li>
-              <li className="flex gap-2.5"><Mail size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> {org.email}</li>
+              <li className="flex gap-2.5"><Phone size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> <a href={org.phoneHref} className="hover:text-[#CBA24B]" data-testid="footer-phone">{org.phone}</a></li>
+              <li className="flex gap-2.5"><Mail size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> <a href={`mailto:${org.email}`} className="hover:text-[#CBA24B]" data-testid="footer-email">{org.email}</a></li>
+              <li className="flex gap-2.5"><Clock size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> {org.hours}</li>
             </ul>
           </div>
         </div>
@@ -66,11 +61,11 @@ export default function Footer() {
           <div className="rounded-xl px-5 py-4 text-[12.5px] text-[#F7EFE9]/70 leading-relaxed" style={{ background: 'rgba(255,255,255,0.04)' }}>
             <strong className="text-[#F7EFE9]/90">{org.name}</strong> is a registered {org.status}.
             Mailing address: {org.address}.
-            Contributions are tax-deductible to the extent permitted by law. <span className="italic">(Sample compliance details for demonstration.)</span>
+            Contributions are tax-deductible to the extent permitted by law.
           </div>
           <div className="flex flex-col md:flex-row items-center justify-between gap-4 mt-6">
             <p className="text-[12.5px] text-[#F7EFE9]/55">
-              &copy; {new Date().getFullYear()} {org.name}. All rights reserved.
+              &copy; {new Date().getFullYear()} {org.name} All rights reserved.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
               {legal.map((l) => (

@@ -15,11 +15,17 @@ export const org = {
   tagline: 'Where care, community, and compassion meet.',
   status: '501(c)(3) Tax-Exempt Nonprofit Organization',
   founded: 2019,
-  address: '1450 Community Way, Suite 210, Atlanta, GA 30303', // DEMO
-  phone: '(404) 555-0182', // DEMO
-  email: 'hello@caringsistersclub.org',
-  hours: 'Mon–Fri, 9:00 AM – 5:00 PM ET',
-  social: { instagram: '#', facebook: '#', linkedin: '#', youtube: '#' },
+  address: '600 Greenspring Terrace, Bear, Delaware 19701',
+  phone: '(302) 414-5788',
+  phoneHref: 'tel:+13024145788',
+  email: 'info@caringsistersclub.org',
+  hours: 'Monday – Friday, 8:00 AM – 5:00 PM ET',
+  social: {
+    youtube: 'https://www.youtube.com/channel/UCVk5evkQQ-YijLpU1Wgc8ww',
+    facebook: 'https://www.facebook.com/groups/sisterscaringforsisters/about/',
+    instagram: 'https://www.instagram.com/caringsistersclub',
+    tiktok: 'https://www.tiktok.com/tag/caringsistersorganization',
+  },
   logoText: { top: 'CARING SISTERS', sub: 'club', motto: 'Love · Respect · Empowerment' },
 };
 

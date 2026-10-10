@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
 import { MapPin, Phone, Mail, Clock, Send, Loader2 } from 'lucide-react';
+import { SocialLinks } from '../components/SocialLinks';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 import { useToast } from '../hooks/use-toast';
 
@@ -27,9 +28,9 @@ export default function Contact() {
   };
 
   const info = [
-    { icon: MapPin, label: 'Address', value: org.address },
-    { icon: Phone, label: 'Phone', value: org.phone },
-    { icon: Mail, label: 'Email', value: org.email },
+    { icon: MapPin, label: 'Address', value: org.address, href: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(org.address)}` },
+    { icon: Phone, label: 'Phone', value: org.phone, href: org.phoneHref },
+    { icon: Mail, label: 'Email', value: org.email, href: `mailto:${org.email}` },
     { icon: Clock, label: 'Hours', value: org.hours },
   ];
 
@@ -53,12 +54,18 @@ export default function Contact() {
                   </span>
                   <div>
                     <p className="eyebrow text-[#B4247E] mb-1">{c.label}</p>
-                    <p className="text-[#3B0A2E] text-[15px]">{c.value}</p>
+                    {c.href ? (
+                      <a href={c.href} target={c.href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer"
+                        className="text-[#3B0A2E] text-[15px] hover:text-[#B4247E] transition-colors" data-testid={`contact-info-${c.label.toLowerCase()}`}>{c.value}</a>
+                    ) : <p className="text-[#3B0A2E] text-[15px]" data-testid={`contact-info-${c.label.toLowerCase()}`}>{c.value}</p>}
                   </div>
                 </div>
               );
             })}
-            <p className="text-[12px] text-[#241019]/50 italic">Contact details are sample placeholders for demonstration.</p>
+            <div className="bg-white rounded-2xl p-6 border border-[#3B0A2E]/8">
+              <p className="eyebrow text-[#B4247E] mb-3">Follow Our Sisterhood</p>
+              <SocialLinks itemClassName="bg-[#3B0A2E] text-white hover:bg-[#B4247E]" />
+            </div>
           </Reveal>
 
           <Reveal delay={120}>
