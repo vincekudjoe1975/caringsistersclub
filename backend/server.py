@@ -7040,7 +7040,7 @@ async def admin_candidates(user=Depends(require_admin)):
     for uid, (u, s) in (await _standing_all(_today_et().year)).items():
         since = _since_date(u)
         out.append({"user_id": uid, "name": u.get("name"), "eligible": bool(s["good_standing"] and since and since <= cutoff),
-                    "reason": "" if s["good_standing"] else "Not in good standing" if since and since <= cutoff else "Less than 1 year of membership"})
+                    "reason": "Less than 1 year of membership" if not (since and since <= cutoff) else "" if s["good_standing"] else "Not in good standing"})
     return sorted(out, key=lambda c: (not c["eligible"], (c["name"] or "").lower()))
 
 

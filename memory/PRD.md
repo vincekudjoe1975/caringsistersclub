@@ -278,3 +278,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Data: users.member_status/member_profile/member_application; collections member_invites, member_announcements, member_threads, member_docs.
 - Backlog (planned, not built): dues tracking ($10 reg + $10/mo, Jan 31 deadline), meeting attendance + warning/fine rules, voting/elections (2/3 for amendments, terms), bereavement/birthday contributions.
 - Note: old "Become a Member" tab on /volunteer still posts a plain submission; consider pointing it to /membership.
+
+## 2026-06 Member Portal phase 2 (iteration 23 — 35/35 backend, all frontend flows pass)
+- Dues: $10 × months of membership in the year (full year $120), due Jan 31 (or 30 days after joining). Ledger (member_ledger) of charges (registration on approval, fines, birthday $25, other) & payments (cash/zelle/check/card). Status paid/due/overdue; good standing = active, not overdue, no termination flag. Members pay by card via Stripe (member_checkouts, webhook metadata.kind=member_dues + status poll, idempotent key stripe:<sid>); dues kept OUT of payment_transactions so donation reports are unaffected.
+- Attendance (member_meetings): staff mark present/absent/excused; Article V flags computed (2 in a row warning email, 3 in a row auto $10 fine, officer 3 absences removal flag, 4+ termination flag). Meetings before member_since ignored. Officer title via roster.
+- Voting (member_ballots): resolution (majority), amendment (2/3 of yes+no, 10-day notice enforced), election (candidates need 1+ yr & good standing). Quorum = >half of members in good standing. Secret: member_votes {_id uuid, ballot_id, choice}; member_voters unique (ballot,user). Notice email to all members on creation.
+- Birthdays: month/day in profile; portal home card with "Send wishes" -> yearly "Happy Birthday" Discussion thread; staff start $25 collection per celebrant.
+- Backlog: automatic dues reminder emails before Jan 31; bereavement contributions (6.4); Dec registration/termination workflow; minutes/vote record export for the Secretary.

@@ -1,0 +1,40 @@
+{
+  "summary": "Full phase-2 Member Portal testing (dues, attendance, voting, birthdays). Backend: new /app/backend/tests/test_members_phase2.py with 35 pytest cases — ALL 35 PASS. Covered registration fee on approve, dues math (joined-prior-year = $120, overdue flagging, good_standing), Stripe checkout URL creation + cross-user checkout isolation (404), overpay rejection, admin cash/zelle payment + charge + ledger delete, idempotent $25 birthday collection, 4-meeting absence progression (warning -> fine -> termination -> good_standing=false), auto-fine removal when 3rd absence changes to present, officer_removal flag for office-holder with 3 absences, amendment 10-day notice rule, election rejects <1yr candidate, candidates endpoint flags new member ineligible, resolution ballot vote cast + duplicate (409) + not-in-good-standing (403), secret-ballot schema contains ONLY {_id, ballot_id, choice} (no user link), live admin totals, close ballot -> member sees results/outcome, birthday profile Feb-31 rejected / valid saved / birthdays endpoint lists self, wish creates/updates 'Happy Birthday, <first>!' thread. Security: anonymous 401 on /members/standing /members/ballots /members/birthdays; non-admin 403 on /admin/members/dues and /admin/members/meetings. Regression: announcements/directory/bylaws/threads still 200. Frontend: Playwright verified portal tabs (news/talk/votes/dues/people/bylaws/me), Dues tab (dues-status, dues-balance, good-standing all populated; PayBox shown when balance>0, overpay triggers dues-pay-error 'Please choose an amount between $1 and your balance due.', valid pay redirects to checkout.stripe.com), Votes tab shows cannot-vote-<bid> for member in bad standing, Announcements shows birthdays-card with 'That's you!' marker on self + wish-btn-<uid> that opens wish-input-<uid>/wish-send-<uid> and posts yielding wish-sent 'Your wishes for Bea QA Tester were posted in Discussion.' Admin /admin -> admin-view-members -> all three sub tabs (members-sub-dues/meetings/votes) present; filters dues-filter-all/unpaid/overdue/paid; dues-open-<uid> ledger panel renders ledger-type/amount/method/kind/add-btn; meeting-title/date/create-btn and attendance-flags present; ballot-form with ballot-kind-resolution/amendment/election present.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/admin/members/candidates", "issue": "When good_standing=true AND member_since <1 year, 'reason' is returned as empty string instead of 'Less than 1 year of membership'. Operator-precedence quirk in the ternary at server.py line ~7042. Frontend shouldn't surface anything misleading, but the message is informative and should be set."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_members_phase2.py",
+    "/app/backend/tests/test_members_portal.py",
+    "/app/test_reports/pytest/iter23.xml"
+  ],
+  "action_items": [
+    "Low-priority: fix 'reason' string in admin_candidates when a would-be candidate is in good standing but <1 year of membership (return 'Less than 1 year of membership' rather than ''). Current ternary: '\"\" if s[\"good_standing\"] else \"Not in good standing\" if since and since <= cutoff else \"Less than 1 year of membership\"' — swap the outer condition to check the eligibility reason first.",
+    "Spec note: the request mentioned selectors wish-input / wish-send but actual testids are wish-input-<uid> / wish-send-<uid> (per-member). Working as implemented; worth noting if automated flows elsewhere assume the shorter name."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py is now 7163 lines — well past the 700-line guideline. Phase 2 added 600 more lines inline. Should split into members/dues.py, members/ballots.py, members/attendance.py, members/birthdays.py routers.",
+    "admin_candidates reason string has an operator-precedence bug (minor UX, not security).",
+    "_apply_attendance_rules does a full re-scan of all active users on every attendance save. Fine at Caring Sisters Club scale but worth noting; a future indexed query by {user_id, year, kind:'fine', auto:true} would help.",
+    "Secret ballot design is clean: member_votes rows carry only {_id, ballot_id, choice} with a random UUID _id (no ObjectId timestamp that could re-order voters). Verified by direct DB read in test_vote_rows_have_no_voter_identifier.",
+    "Stripe webhook path records member_dues via idempotency key 'stripe:<session_id>' through the ledger unique index — safe against double-processing. Verified ledger key index at startup."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_members_phase2.py"
+  ],
+  "success_rate": {"backend": "100% (35/35)", "frontend": "100% of listed data-testids present and working"},
+  "test_credentials": "Admin: session_token=qa_tok_123 (qa_session.py up). Members: mem_tok_a (qa.sister.a@example.com) + mem_tok_b (qa.sister.b@example.com) via qa_members.py up. Both tear-downs executed after testing.",
+  "seed_data_creation": "Via qa_session.py up and qa_members.py up (torn down post-test). Transient DB inserts: QA Meeting 1-4 (deleted), QA Resolution + QA UI Resolution ballots (deleted), birthday thread 'Happy Birthday, Bea QA Tester!' (left — collected via qa_members.down regex 'birthday:qa_mem'), ledger rows for QA members (collected via qa_members.down).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 2 member portal (dues/attendance/voting/birthdays) is fully functional. Regression suite is /app/backend/tests/test_members_phase2.py (35 tests). Run sequentially: pytest backend/tests/test_members_phase2.py -n 0. BEFORE run: python3 /app/backend/tests/qa_session.py up && python3 /app/backend/tests/qa_members.py down && python3 /app/backend/tests/qa_members.py up. AFTER run: qa_members.py down && qa_session.py down. The suite backdates member_since via direct Mongo updates to exercise full-year dues math, and resets ballot/meeting state inline. Phase-1 regression suite (/app/backend/tests/test_members_portal.py, 24 tests) also still green. Birthday-collect UI button appears only for members whose birthday is in the current month and whose collection hasn't already started — expected behavior.",
+  "rca of the issue": "N/A — no issues found that block the feature. One minor UX string bug in admin_candidates reason reporting (details in minor issues)."
+}
