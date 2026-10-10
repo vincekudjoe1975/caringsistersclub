@@ -221,3 +221,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - settings.site: wl_alert_mode instant|digest|threshold, wl_alert_threshold (5), forecast_weekly (true). _waitlist_join_alert (background on waitlist join), _send_waitlist_digest (daily), _send_forecast (Mondays, scheduled_runs forecast:YYYY-Www). PUT /api/admin/reports/forecast-settings, GET /api/admin/reports/program-forecast, POST .../send. ProgramForecast.jsx in Reports.
 - Badges: volunteer_milestones.share_token; GET /api/badges/{token} (short name only), /api/share/badge/{token}(/card.png) OG; page /badge/:token. ShareBar(url,text,testid) exported from YearInReview.jsx.
 - YIR attribution: db.yir_clicks {year,source,clicks}; /api/t/yir/{year}/email redirect, POST /api/yir/{year}/click; payment_transactions.source 'yir-(email|page)-YYYY' (from Donate ?src → sessionStorage csc_source); GET /api/admin/year-in-review/{year}/results.
+
+## 2026 — Session cloning, badge wall, appeal comparison, forecast history (iteration_15; priority-window signup bug fixed after)
+- POST /api/admin/programs/{pid}/clone {capacity, transfer claim|auto|none} → hidden "(Session N)" with transfer_from/transfer_mode; on publish (PUT published true) _transfer_waitlist copies oldest waitlisted (originals transferred:true, excluded by _wl_q/_seats_q). claim → 48h offers (offer_override) + program.priority_until (public signups waitlisted, _fill_seats paused). program_signup projection must include priority_until.
+- Snapshots: db.program_snapshots (monthly auto in daily loop for previous month; season via POST /api/admin/programs/{pid}/close-season which archives enrollments: season_archived:true). GET /api/admin/programs/{pid}/history.
+- Badge wall: GET /api/volunteer-hours/badge-wall (settings.site.badge_wall_mode optin|all), admin GET/PUT /api/admin/badge-wall.
+- GET /api/admin/reports/appeal-comparison (segment_emails.kind segment|scheduled|recurring + YIR emails).

@@ -3222,7 +3222,7 @@ async def _send_signup_confirm(email: str, name: str, prog: dict, waitlist: bool
 async def program_signup(slug: str, payload: ProgramSignupIn, request: Request, background: BackgroundTasks):
     _rate_limit(request, "submission", max_hits=5, window_s=60)
     name, email = _validate_person({"name": payload.name, "email": payload.email, "message": payload.message})
-    prog = await db.programs.find_one({"slug": slug[:100], "published": True}, {"_id": 0, "id": 1, "title": 1, "slug": 1, "capacity": 1})
+    prog = await db.programs.find_one({"slug": slug[:100], "published": True}, {"_id": 0, "id": 1, "title": 1, "slug": 1, "capacity": 1, "priority_until": 1})
     if not prog:
         raise HTTPException(status_code=404, detail="Program not found")
     full = bool((await _with_seats(dict(prog))).get("full"))
