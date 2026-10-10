@@ -3,6 +3,8 @@ import { Loader2, TrendingUp, TrendingDown, Minus, Download, Clock3, Check, X, B
 import { api, BACKEND_URL, mediaSrc } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 import { ProgramForecast } from '../components/ProgramForecast';
+import { ForecastHistory } from '../components/ForecastHistory';
+import { AppealComparison } from '../components/AppealComparison';
 
 const monthLabel = (k) => new Date(`${k}-01T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 const csvCell = (v) => { let t = String(v ?? ''); if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`; return `"${t.replace(/"/g, '""')}"`; };
@@ -96,6 +98,7 @@ function HoursReview() {
     <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 p-6" data-testid="hours-review">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold flex items-center gap-2"><Clock3 size={18} className="text-[#B4247E]" /> Volunteer Hours <span className="text-[13px] font-sans font-normal text-[#241019]/55" data-testid="hours-approved-total">({approved.toFixed(1)} approved hours)</span></h3>
+        <BadgeWallSetting />
         <div className="inline-flex gap-1 p-1 rounded-full bg-[#faf2f7]">
           {[['pending', `Pending (${items.filter((h) => h.status === 'pending').length})`], ['reviewed', 'Reviewed']].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} data-testid={`hours-tab-${k}`} className={`px-4 py-1.5 rounded-full text-[12.5px] font-semibold ${tab === k ? 'text-white' : 'text-[#3B0A2E]'}`} style={tab === k ? { background: '#3B0A2E' } : {}}>{l}</button>
@@ -120,6 +123,24 @@ function HoursReview() {
         ))}</tbody></table>
       )}
     </div>
+  );
+}
+
+function BadgeWallSetting() {
+  const { toast } = useToast();
+  const [mode, setMode] = useState(null);
+  useEffect(() => { api.get('/admin/badge-wall').then(({ data }) => setMode(data.mode)).catch(() => {}); }, []);
+  const change = async (e) => {
+    const m = e.target.value; setMode(m);
+    try { await api.put('/admin/badge-wall', { mode: m }); toast({ title: 'Badge wall updated' }); } catch { toast({ title: 'Save failed', variant: 'destructive' }); }
+  };
+  if (!mode) return null;
+  return (
+    <label className="text-[12.5px] text-[#3B0A2E] font-semibold flex items-center gap-2" data-testid="badge-wall-setting">Badge wall shows:
+      <select value={mode} onChange={change} data-testid="badge-wall-mode-select" className="rounded-full px-3 py-1.5 border border-[#3B0A2E]/15 font-normal">
+        <option value="optin">Only leaderboard opt-ins</option><option value="all">Everyone who earned a badge</option>
+      </select>
+    </label>
   );
 }
 
@@ -288,6 +309,8 @@ export default function AdminReports() {
       <h2 className="font-serif text-[24px] text-[#3B0A2E] font-semibold mb-5">Reports</h2>
       <YearInReviewAdmin />
       <ProgramForecast />
+      <ForecastHistory />
+      <AppealComparison />
       <StoryRequestResults />
       <SignupReport />
       <HoursReview />

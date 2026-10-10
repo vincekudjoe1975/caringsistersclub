@@ -1580,7 +1580,7 @@ async def donor_segment_count(segment: str, user=Depends(require_admin)):
     return {"segment": segment, "count": len(recipients)}
 
 
-async def _dispatch_segment_appeal(seg: str, subject: str, message: str, sent_by: str, sent_by_name: str) -> dict:
+async def _dispatch_segment_appeal(seg: str, subject: str, message: str, sent_by: str, sent_by_name: str, kind: str = "segment") -> dict:
     recipients = await _donor_segment_recipients(seg)
     if not recipients:
         return {"recipients": 0, "sent": 0, "empty": True}
@@ -1594,7 +1594,7 @@ async def _dispatch_segment_appeal(seg: str, subject: str, message: str, sent_by
     await db.segment_emails.insert_one({
         "id": appeal_id, "clicks": 0,
         "segment": seg, "subject": subject, "recipients": len(recipients),
-        "sent": sent, "sent_by": sent_by, "sent_by_name": sent_by_name,
+        "sent": sent, "sent_by": sent_by, "sent_by_name": sent_by_name, "kind": kind,
         "sent_at": datetime.now(timezone.utc).isoformat(),
     })
     return {"recipients": len(recipients), "sent": sent, "appeal_id": appeal_id}
@@ -1769,6 +1769,7 @@ async def _run_scheduled_appeals() -> dict:
         result = await _dispatch_segment_appeal(
             a["segment"], a["subject"], a["message"],
             a.get("created_by"), a.get("created_by_name") or "Scheduled",
+            "recurring" if (a.get("repeat") or "none") != "none" else "scheduled",
         )
         now_iso = datetime.now(timezone.utc).isoformat()
         summary = {"recipients": result.get("recipients", 0), "sent": result.get("sent", 0)}
@@ -2790,18 +2791,21 @@ def _clean_program(p: ProgramIn) -> dict:
     }
 
 
+def _seats_q(p: dict) -> dict:
+    return {"type": "program_signup", "stage": {"$ne": "not_fit"}, "season_archived": {"$ne": True}, "transferred": {"$ne": True},
+            "$and": [{"$or": [{"program_id": p["id"]}, {"program_id": {"$exists": False}, "data.program_slug": p["slug"]}]},
+                     {"$or": [{"waitlist": {"$ne": True}}, {"stage": "enrolled"}]}]}
+
+
 async def _seats_taken(p: dict) -> int:
-    return await db.submissions.count_documents({
-        "type": "program_signup", "stage": {"$ne": "not_fit"},
-        "$and": [{"$or": [{"program_id": p["id"]}, {"program_id": {"$exists": False}, "data.program_slug": p["slug"]}]},
-                 {"$or": [{"waitlist": {"$ne": True}}, {"stage": "enrolled"}]}]})
+    return await db.submissions.count_documents(_seats_q(p))
 
 
 async def _with_seats(p: dict) -> dict:
     cap = p.get("capacity") or 0
     if cap:
         p["seats_left"] = max(0, cap - await _seats_taken(p))
-        p["full"] = p["seats_left"] == 0
+        p["full"] = p["seats_left"] == 0 or (p.get("priority_until") or "") > _now_iso()
     return p
 
 
@@ -2882,6 +2886,8 @@ async def admin_update_program(pid: str, payload: ProgramIn, background: Backgro
     if data["title"] != cur["title"]:
         data["slug"] = await _unique_slug(data["title"], exclude_id=pid)
     await db.programs.update_one({"id": pid}, {"$set": {**data, "updated_at": _now_iso()}})
+    if data["published"] and cur.get("transfer_from") and not cur.get("transfer_done"):
+        await _transfer_waitlist(pid)
     background.add_task(_fill_seats, pid)
     return await db.programs.find_one({"id": pid}, {"_id": 0})
 
@@ -3286,7 +3292,9 @@ async def _fill_seats(pid: str) -> int:
     if not p or not p.get("capacity") or not p.get("published"):
         return 0
     now = datetime.now(timezone.utc)
-    wq = {"type": "program_signup", "program_id": pid, "waitlist": True, "stage": {"$nin": ["enrolled", "not_fit"]}}
+    wq = _wl_q(pid)
+    if (p.get("priority_until") or "") > now.isoformat():
+        return 0
     await db.submissions.update_many({**wq, "offer_status": "open", "offer_expires": {"$lte": now.isoformat()}}, {"$set": {"offer_status": "expired"}})
     free = p["capacity"] - await _seats_taken(p)
     if free <= 0:
@@ -3356,7 +3364,7 @@ async def waitlist_claim(payload: ClaimIn, request: Request, background: Backgro
 
 
 def _wl_q(pid: str) -> dict:
-    return {"type": "program_signup", "program_id": pid, "waitlist": True, "stage": {"$nin": ["enrolled", "not_fit"]}}
+    return {"type": "program_signup", "program_id": pid, "waitlist": True, "stage": {"$nin": ["enrolled", "not_fit"]}, "transferred": {"$ne": True}}
 
 
 async def _wl_position(sub: dict):
@@ -4481,6 +4489,202 @@ async def admin_yir_results(year: int, user=Depends(require_admin)):
     return {"year": year, **out}
 
 
+# ---------- Session cloning ----------
+class CloneIn(BaseModel):
+    capacity: int = 0
+    transfer: str = "claim"
+
+
+_CLONE_SKIP = ("id", "slug", "created_at", "updated_at", "order", "home_testimonial_ids", "seats_left", "full", "priority_until",
+               "transfer_done", "transfer_from", "transfer_mode", "transferred_count", "season_started_at")
+
+
+@api_router.post("/admin/programs/{pid}/clone")
+async def admin_clone_program(pid: str, payload: CloneIn, user=Depends(require_admin)):
+    src = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not src:
+        raise HTTPException(status_code=404, detail="Program not found")
+    if payload.transfer not in ("claim", "auto", "none"):
+        raise HTTPException(status_code=400, detail="Invalid waitlist option")
+    if not 0 <= payload.capacity <= 100000:
+        raise HTTPException(status_code=400, detail="Invalid seat limit")
+    root = src.get("cloned_from") or src["id"]
+    base = re.sub(r"\s*\(Session \d+\)$", "", src["title"])
+    n = await db.programs.count_documents({"$or": [{"id": root}, {"cloned_from": root}]}) + 1
+    title = f"{base} (Session {n})"[:120]
+    last = await db.programs.find_one({}, {"_id": 0, "order": 1}, sort=[("order", -1)])
+    doc = {**{k: v for k, v in src.items() if k not in _CLONE_SKIP}, "id": str(uuid.uuid4()), "slug": await _unique_slug(title), "title": title,
+           "capacity": payload.capacity, "published": False, "cloned_from": root, "home_testimonial_ids": [],
+           "order": (last or {}).get("order", -1) + 1, "created_at": _now_iso(), "season_started_at": _now_iso()}
+    if payload.transfer != "none":
+        doc.update({"transfer_from": src["id"], "transfer_mode": payload.transfer, "transfer_done": False})
+    await db.programs.insert_one(dict(doc))
+    waiting = await db.submissions.count_documents(_wl_q(src["id"]))
+    return {**doc, "source_waitlist": waiting}
+
+
+async def _transfer_waitlist(pid: str) -> int:
+    new = await db.programs.find_one({"id": pid}, {"_id": 0})
+    src = await db.programs.find_one({"id": new.get("transfer_from")}, {"_id": 0}) or {"title": "the original session"}
+    mode, cap = new.get("transfer_mode") or "claim", new.get("capacity") or 0
+    await db.programs.update_one({"id": pid}, {"$set": {"transfer_done": True}})
+    subs = await db.submissions.find(_wl_q(new["transfer_from"]), {"_id": 0}).sort("created_at", 1).to_list(cap or 1000)
+    now = datetime.now(timezone.utc)
+    for x in subs:
+        nd = {"id": str(uuid.uuid4()), "type": "program_signup", "program_id": pid, "read": False, "created_at": x["created_at"],
+              "transferred_from": x["id"], "status_token": secrets.token_urlsafe(24),
+              "data": {**x["data"], "program": new["title"], "program_slug": new["slug"]}}
+        if mode == "auto":
+            nd.update({"waitlist": False})
+            nd["data"]["list"] = f"Moved from {src['title']} waitlist"
+        else:
+            tok = secrets.token_urlsafe(24)
+            nd.update({"waitlist": True, "offer_status": "open", "offer_token": tok, "offer_mode": "transfer", "offer_override": True,
+                       "offer_sent_at": now.isoformat(), "offer_expires": (now + timedelta(hours=OFFER_HOURS)).isoformat()})
+            nd["data"]["list"] = f"Priority offer from {src['title']} waitlist"
+        await db.submissions.insert_one(dict(nd))
+        await db.submissions.update_one({"id": x["id"]}, {"$set": {"transferred": True, "transferred_to": pid, "data.list": f"Transferred to {new['title']}"}})
+        if mode == "auto":
+            await _spot_email(nd, new, "auto")
+        else:
+            await _spot_email(nd, new, "claim", f"{PUBLIC_APP_URL}/waitlist/claim?token={nd['offer_token']}")
+    upd = {"transferred_count": len(subs)}
+    if mode == "claim" and subs:
+        upd["priority_until"] = (now + timedelta(hours=OFFER_HOURS)).isoformat()
+    await db.programs.update_one({"id": pid}, {"$set": upd})
+    return len(subs)
+
+
+# ---------- Forecast history (snapshots) ----------
+async def _snapshot(p: dict, kind: str, label: str, start: str, end: str, save: bool = True) -> dict:
+    base = {"type": "program_signup", "$or": [{"program_id": p["id"]}, {"program_id": {"$exists": False}, "data.program_slug": p["slug"]}]}
+    cap = p.get("capacity") or 0
+    taken = await _seats_taken(p)
+    filled_at = days = None
+    if cap and taken >= cap:
+        nth = await db.submissions.find(_seats_q(p), {"_id": 0, "created_at": 1}).sort("created_at", 1).skip(cap - 1).limit(1).to_list(1)
+        if nth:
+            filled_at = nth[0]["created_at"]
+            season = p.get("season_started_at") or p.get("created_at") or filled_at
+            days = max(0, (datetime.fromisoformat(filled_at) - datetime.fromisoformat(season)).days)
+    doc = {"id": str(uuid.uuid4()), "program_id": p["id"], "title": p["title"], "kind": kind, "label": label, "start": start, "end": end,
+           "capacity": cap, "taken": taken, "waitlist": await db.submissions.count_documents(_wl_q(p["id"])),
+           "signups": await db.submissions.count_documents({**base, "created_at": {"$gte": start, "$lt": end}}),
+           "filled_at": filled_at, "days_to_fill": days, "created_at": _now_iso()}
+    if save:
+        await db.program_snapshots.insert_one(dict(doc))
+    return doc
+
+
+async def _monthly_snapshots():
+    today = datetime.now(timezone.utc).date()
+    first = today.replace(day=1)
+    prev = (first - timedelta(days=1)).replace(day=1)
+    period = prev.strftime("%Y-%m")
+    for p in await db.programs.find({"published": True}, {"_id": 0}).to_list(200):
+        if not await db.program_snapshots.find_one({"program_id": p["id"], "kind": "monthly", "label": period}):
+            await _snapshot(p, "monthly", period, prev.isoformat(), first.isoformat())
+
+
+@api_router.get("/admin/programs/{pid}/history")
+async def admin_program_history(pid: str, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    snaps = await db.program_snapshots.find({"program_id": pid}, {"_id": 0}).sort("end", 1).to_list(500)
+    season = p.get("season_started_at") or p.get("created_at") or _now_iso()
+    current = await _snapshot(p, "current", "Current season", season, _now_iso(), save=False)
+    return {"program": p["title"], "season_started_at": season, "monthly": [x for x in snaps if x["kind"] == "monthly"],
+            "seasons": [x for x in snaps if x["kind"] == "season"], "current": current}
+
+
+class CloseSeasonIn(BaseModel):
+    label: str = ""
+
+
+@api_router.post("/admin/programs/{pid}/close-season")
+async def admin_close_season(pid: str, payload: CloseSeasonIn, background: BackgroundTasks, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Program not found")
+    season = p.get("season_started_at") or p.get("created_at") or _now_iso()
+    label = payload.label.strip()[:80] or f"Season ending {datetime.now(timezone.utc).strftime('%b %Y')}"
+    snap = await _snapshot(p, "season", label, season, _now_iso())
+    q = _seats_q(p)
+    q.pop("stage")
+    res = await db.submissions.update_many(q, {"$set": {"season_archived": True}})
+    await db.programs.update_one({"id": pid}, {"$set": {"season_started_at": _now_iso()}})
+    background.add_task(_fill_seats, pid)
+    return {"snapshot": snap, "archived": res.modified_count}
+
+
+# ---------- Badge wall ----------
+@api_router.get("/volunteer-hours/badge-wall")
+async def badge_wall():
+    mode = (await _site()).get("badge_wall_mode") or "optin"
+    out, seen = [], set()
+    async for m in db.volunteer_milestones.find({}, {"_id": 0}).sort("awarded_at", -1).limit(200):
+        key = (m["email"], m["threshold"])
+        if key in seen:
+            continue
+        seen.add(key)
+        if mode == "optin" and not await db.volunteer_hours.find_one({"email": m["email"], "leaderboard": True}, {"_id": 1}):
+            continue
+        last = await db.volunteer_hours.find_one({"email": m["email"], "status": "approved"}, {"_id": 0, "name": 1}, sort=[("created_at", -1)])
+        out.append({"name": _short_name((last or {}).get("name", "")), "threshold": m["threshold"], "awarded_at": m["awarded_at"],
+                    "label": m.get("label") or f"{m['threshold']} Hours", "share_token": m.get("share_token")})
+        if len(out) >= 12:
+            break
+    return {"items": out}
+
+
+class BadgeWallIn(BaseModel):
+    mode: str
+
+
+@api_router.get("/admin/badge-wall")
+async def admin_get_badge_wall(user=Depends(require_admin)):
+    return {"mode": (await _site()).get("badge_wall_mode") or "optin"}
+
+
+@api_router.put("/admin/badge-wall")
+async def admin_set_badge_wall(payload: BadgeWallIn, user=Depends(require_admin)):
+    if payload.mode not in ("optin", "all"):
+        raise HTTPException(status_code=400, detail="Invalid mode")
+    await db.settings.update_one({"key": "site"}, {"$set": {"badge_wall_mode": payload.mode}}, upsert=True)
+    return {"mode": payload.mode}
+
+
+# ---------- Appeal comparison ----------
+@api_router.get("/admin/reports/appeal-comparison")
+async def admin_appeal_comparison(user=Depends(require_admin)):
+    rows = []
+    items = await db.segment_emails.find({}, {"_id": 0}).sort("sent_at", -1).to_list(500)
+    stats = {}
+    async for r in db.payment_transactions.aggregate([
+        {"$match": {"appeal_id": {"$in": [a["id"] for a in items if a.get("id")]}, "payment_status": "paid"}},
+        {"$group": {"_id": "$appeal_id", "gifts": {"$sum": 1}, "raised": {"$sum": "$amount"}}}]):
+        stats[r["_id"]] = r
+    for a in items:
+        st = stats.get(a.get("id"), {})
+        rows.append({"id": a.get("id"), "kind": a.get("kind") or "segment", "name": a.get("subject", ""), "segment": a.get("segment", ""),
+                     "sent_at": a.get("sent_at"), "recipients": a.get("sent") or a.get("recipients") or 0, "clicks": a.get("clicks", 0),
+                     "gifts": st.get("gifts", 0), "raised": round(float(st.get("raised", 0)), 2)})
+    years = await db.yir_emails.distinct("year")
+    for y in years:
+        logs = await db.yir_emails.find({"year": y}, {"_id": 0}).sort("started_at", 1).to_list(50)
+        c = await db.yir_clicks.find_one({"year": y, "source": "email"}, {"_id": 0, "clicks": 1}) or {}
+        paid = await db.payment_transactions.find({"source": f"yir-email-{y}", "payment_status": "paid"}, {"_id": 0, "amount": 1}).to_list(10000)
+        rows.append({"id": f"yir-{y}", "kind": "year_in_review", "name": f"{y} Year in Review", "segment": "donors & volunteers",
+                     "sent_at": logs[0]["started_at"], "recipients": sum((x.get("sent") if x.get("status") == "done" else x.get("recipients")) or 0 for x in logs),
+                     "clicks": c.get("clicks", 0), "gifts": len(paid), "raised": round(sum(float(t.get("amount") or 0) for t in paid), 2)})
+    for r in rows:
+        r["click_rate"] = round(100 * r["clicks"] / r["recipients"], 1) if r["recipients"] else None
+        r["per_recipient"] = round(r["raised"] / r["recipients"], 2) if r["recipients"] else None
+    rows.sort(key=lambda r: r.get("sent_at") or "", reverse=True)
+    return {"items": rows}
+
+
 @api_router.get("/volunteer-hours/leaderboard")
 async def hours_leaderboard():
     year = datetime.now(timezone.utc).strftime("%Y")
@@ -4674,6 +4878,7 @@ async def _daily_scheduler():
             await _send_enrollment_reminders()
             await _send_waitlist_digest()
             await _send_forecast()
+            await _monthly_snapshots()
             await db.donor_manage_tokens.delete_many({"expires_at": {"$lt": datetime.now(timezone.utc).isoformat()}})
         except Exception as e:
             logging.error(f"Daily scheduler error: {e}")

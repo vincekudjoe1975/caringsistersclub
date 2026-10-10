@@ -6,7 +6,8 @@ import { TestimonialsEditor } from './AdminHome';
 import { useSignupReport, Trend } from './AdminReports';
 import { uploadImage, imgSrc } from '../lib/useHomeContent';
 import { WaitlistPanel } from '../components/WaitlistPanel';
-import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, X, UploadCloud, Tags, ExternalLink, ListOrdered } from 'lucide-react';
+import { CloneProgramDialog } from '../components/CloneProgram';
+import { Loader2, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, X, UploadCloud, Tags, ExternalLink, ListOrdered, Copy } from 'lucide-react';
 
 const EMPTY = { title: '', category: '', image_url: '', summary: '', body: '', goals: [], impact: [], cta_text: 'Get Involved', cta_link: '/volunteer', published: true, gallery: [], testimonials: [], home_testimonial_ids: [], capacity: 0, waitlist_mode: 'claim' };
 const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E] bg-white';
@@ -229,7 +230,7 @@ function CategoryEditor({ categories, onSaved }) {
   );
 }
 
-function ProgramRow({ p, first, last, onMove, onEdit, onToggle, onDelete, onWaitlist }) {
+function ProgramRow({ p, first, last, onMove, onEdit, onToggle, onDelete, onWaitlist, onClone }) {
   const iconBtn = 'p-2 text-[#3B0A2E] hover:text-[#B4247E] disabled:opacity-25';
   return (
     <div className={`bg-white rounded-2xl border border-[#3B0A2E]/8 p-4 flex flex-col sm:flex-row gap-4 sm:items-center ${p.published ? '' : 'opacity-60'}`} data-testid="admin-program-row">
@@ -242,6 +243,7 @@ function ProgramRow({ p, first, last, onMove, onEdit, onToggle, onDelete, onWait
         <div className="flex items-center gap-2">
           <h4 className="font-serif text-[18px] text-[#3B0A2E] font-semibold truncate" data-testid="admin-program-title">{p.title}</h4>
           {!p.published && <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#eef1f5] text-[#53657d]">Hidden</span>}
+          {p.transfer_from && !p.transfer_done && <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#fdf3e1] text-[#8a6a2c]" data-testid="admin-program-transfer-pending">Waitlist {p.transfer_mode === 'auto' ? 'moves in' : 'gets first offer'} on publish</span>}
           {p.capacity > 0 && <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#faf2f7] text-[#B4247E]" data-testid="admin-program-seats">{p.capacity - p.seats_left}/{p.capacity} seats{p.full ? ' · full' : ''}</span>}
         </div>
         <p className="text-[12.5px] text-[#241019]/60 truncate">{p.category || 'No category'} &middot; {p.summary}</p>
@@ -250,6 +252,7 @@ function ProgramRow({ p, first, last, onMove, onEdit, onToggle, onDelete, onWait
         {p.published && <a href={`/initiatives/${p.slug}`} target="_blank" rel="noreferrer" className={iconBtn} title="View"><ExternalLink size={16} /></a>}
         <button onClick={onToggle} className={iconBtn} title={p.published ? 'Unpublish' : 'Publish'} data-testid="program-toggle-publish-btn">{p.published ? <EyeOff size={16} /> : <Eye size={16} />}</button>
         {p.capacity > 0 && <button onClick={onWaitlist} className="px-3 py-1.5 rounded-full text-[12px] font-semibold text-[#B4247E] flex items-center gap-1" style={{ border: '1px solid rgba(180,36,126,0.3)' }} data-testid="program-waitlist-btn"><ListOrdered size={14} /> Waitlist</button>}
+        <button onClick={onClone} className={iconBtn} title="Clone as new session" data-testid="program-clone-btn"><Copy size={15} /></button>
         <button onClick={onEdit} className={iconBtn} data-testid="program-edit-btn"><Pencil size={16} /></button>
         <button onClick={onDelete} className="p-2 text-red-500 hover:text-red-700" data-testid="program-delete-btn"><Trash2 size={16} /></button>
       </div>
@@ -262,6 +265,7 @@ export default function AdminPrograms() {
   const [categories, setCategories] = useState([]);
   const [editing, setEditing] = useState(null);
   const [waitlist, setWaitlist] = useState(null);
+  const [clone, setClone] = useState(null);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
@@ -301,9 +305,10 @@ export default function AdminPrograms() {
       {items === null ? <div className="flex justify-center py-16"><Loader2 className="animate-spin text-[#B4247E]" size={30} /></div> : (
         <div className="space-y-3">{items.map((p, i) => (
           <ProgramRow key={p.id} p={p} first={i === 0} last={i === items.length - 1} onMove={(d) => move(i, d)}
-            onEdit={() => setEditing(p)} onToggle={() => toggle(p)} onDelete={() => remove(p)} onWaitlist={() => setWaitlist(p)} />
+            onEdit={() => setEditing(p)} onToggle={() => toggle(p)} onDelete={() => remove(p)} onWaitlist={() => setWaitlist(p)} onClone={() => setClone(p)} />
         ))}</div>
       )}
+      {clone && <CloneProgramDialog program={clone} onClose={() => setClone(null)} onDone={load} />}
       {waitlist && <WaitlistPanel program={waitlist} onClose={() => { setWaitlist(null); load(); }} />}
       {editing && <ProgramForm initial={editing} categories={categories} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
     </div>

@@ -123,3 +123,5 @@ code {
 ::-webkit-scrollbar-track { background: var(--csc-ivory); }
 ::-webkit-scrollbar-thumb { background: var(--csc-plum-soft); border-radius: 8px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--csc-plum); }
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }

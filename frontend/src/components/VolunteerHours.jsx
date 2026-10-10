@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Loader2, Clock3, CheckCircle2, Trophy, Award } from 'lucide-react';
 import { api } from '../lib/api';
 import { errMsg } from '../pages/Events';
@@ -95,6 +96,33 @@ export const Leaderboard = () => {
             </li>
           ))}
         </ol>
+      </div>
+    </section>
+  );
+};
+
+export const BadgeWall = () => {
+  const [items, setItems] = useState([]);
+  useEffect(() => { api.get('/volunteer-hours/badge-wall').then(({ data }) => setItems(data.items || [])).catch(() => {}); }, []);
+  if (!items.length) return null;
+  return (
+    <section className="pb-16 lg:pb-20" data-testid="badge-wall">
+      <div className="max-w-5xl mx-auto px-5 lg:px-8">
+        <h2 className="font-serif text-[28px] lg:text-[32px] text-[#3B0A2E] font-semibold mb-2 flex items-center gap-3"><Award size={26} className="text-[#CBA24B]" /> Recent badge earners</h2>
+        <p className="text-[#241019]/65 text-[14.5px] mb-7">Every hour counts. Congratulations to these sisters on their latest milestones!</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+          {items.map((b, i) => {
+            const card = (
+              <div className="bg-white rounded-2xl p-5 border border-[#3B0A2E]/8 flex items-center gap-4 card-hover h-full" style={{ animation: `fadeUp .5s ease ${i * 60}ms both` }}>
+                <span className="w-14 h-14 shrink-0 rounded-full flex items-center justify-center font-serif font-bold text-[16px] border-[3px]" style={{ ...BADGE_STYLE[b.threshold], borderColor: '#CBA24B' }}>{b.threshold}h</span>
+                <span className="min-w-0"><span className="block font-semibold text-[#3B0A2E] text-[14.5px] truncate" data-testid="badge-wall-name">{b.name}</span>
+                  <span className="block text-[12px] text-[#241019]/60 truncate">{b.label}</span>
+                  <span className="block text-[11px] text-[#241019]/45">{new Date(b.awarded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span></span>
+              </div>
+            );
+            return b.share_token ? <Link key={i} to={`/badge/${b.share_token}`} data-testid="badge-wall-item">{card}</Link> : <div key={i} data-testid="badge-wall-item">{card}</div>;
+          })}
+        </div>
       </div>
     </section>
   );

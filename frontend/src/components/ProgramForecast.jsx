@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Loader2, Gauge, AlertTriangle, Send } from 'lucide-react';
+import { Loader2, Gauge, AlertTriangle, Send, Copy } from 'lucide-react';
+import { CloneProgramDialog } from './CloneProgram';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 
@@ -28,7 +29,7 @@ function AlertSettings({ s, onChange }) {
   );
 }
 
-function Row({ r }) {
+function Row({ r, onClone }) {
   return (
     <tr className="border-t border-[#3B0A2E]/8" data-testid="forecast-row">
       <td className="px-3 py-3"><p className="font-semibold text-[#3B0A2E]">{r.title}</p>
@@ -37,6 +38,7 @@ function Row({ r }) {
       <td className="px-3 py-3"><Spark weeks={r.weekly} /><p className="text-[11px] text-[#241019]/55 mt-1">{r.rate}/wk</p></td>
       <td className="px-3 py-3 text-[12.5px]" data-testid="forecast-days">{r.days_to_fill === null ? '—' : r.days_to_fill === 0 ? 'Full' : `~${r.days_to_fill} days`}</td>
       <td className="px-3 py-3 font-semibold text-[#3B0A2E]" data-testid="forecast-waitlist">{r.waitlist}</td>
+      <td className="px-3 py-3 text-right">{r.flag && <button onClick={() => onClone(r)} data-testid="forecast-clone-btn" className="text-[12px] font-semibold px-3 py-1.5 rounded-full text-[#B4247E] whitespace-nowrap inline-flex items-center gap-1" style={{ border: '1px solid rgba(180,36,126,0.3)' }}><Copy size={12} /> Clone session</button>}</td>
     </tr>
   );
 }
@@ -45,6 +47,7 @@ export const ProgramForecast = () => {
   const { toast } = useToast();
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [clone, setClone] = useState(null);
   const load = useCallback(() => api.get('/admin/reports/program-forecast').then(({ data }) => setD(data)).catch(() => setD({ items: [], settings: null })), []);
   useEffect(() => { load(); }, [load]);
   const update = async (patch) => {
@@ -62,6 +65,7 @@ export const ProgramForecast = () => {
   const flagged = d?.items?.filter((r) => r.flag).length || 0;
   return (
     <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 p-6 mb-6" data-testid="program-forecast">
+      {clone && <CloneProgramDialog program={clone} onClose={() => setClone(null)} onDone={load} />}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold flex items-center gap-2"><Gauge size={18} className="text-[#B4247E]" /> Program fill forecast {flagged > 0 && <span className="text-[11.5px] font-sans font-semibold px-2.5 py-0.5 rounded-full bg-[#f5e9ec] text-[#9b3b4f]" data-testid="forecast-flag-count">{flagged} flagged</span>}</h3>
         <button onClick={send} disabled={busy} data-testid="forecast-send-btn" className="text-[12.5px] font-semibold px-4 py-2 rounded-full text-white bg-[#3B0A2E] flex items-center gap-1.5 disabled:opacity-50">{busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Email forecast now</button>
@@ -70,8 +74,8 @@ export const ProgramForecast = () => {
         <>
           {d.settings && <AlertSettings s={d.settings} onChange={update} />}
           {d.items.length === 0 ? <p className="text-[13px] text-[#241019]/55">No published programs yet.</p> : (
-            <div className="overflow-x-auto"><table className="w-full text-left text-[13px]"><thead><tr className="text-[11px] uppercase tracking-wide text-[#241019]/50"><th className="px-3 py-2">Program</th><th className="px-3 py-2">Seats filled</th><th className="px-3 py-2">Last 4 weeks</th><th className="px-3 py-2">Days to fill</th><th className="px-3 py-2">Waitlist</th></tr></thead>
-              <tbody>{d.items.map((r) => <Row key={r.id} r={r} />)}</tbody></table></div>
+            <div className="overflow-x-auto"><table className="w-full text-left text-[13px]"><thead><tr className="text-[11px] uppercase tracking-wide text-[#241019]/50"><th className="px-3 py-2">Program</th><th className="px-3 py-2">Seats filled</th><th className="px-3 py-2">Last 4 weeks</th><th className="px-3 py-2">Days to fill</th><th className="px-3 py-2">Waitlist</th><th /></tr></thead>
+              <tbody>{d.items.map((r) => <Row key={r.id} r={r} onClone={setClone} />)}</tbody></table></div>
           )}
           <p className="text-[11.5px] text-[#241019]/50 mt-3">Flagged when the waitlist is 25%+ of capacity or the program is projected to fill within 14 days at the current sign-up pace.</p>
         </>
