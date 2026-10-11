@@ -105,7 +105,7 @@ export default function CheckIn() {
         <div className="flex items-center justify-between mb-3"><p className="font-serif text-[20px] font-semibold">Door check-in</p><Link to="/admin" className="text-[12.5px] text-[#F7EFE9]/70">Admin</Link></div>
         <select data-testid="ci-meeting-select" value={mid} onChange={(e) => setMid(e.target.value)} className="w-full rounded-xl px-3 py-2.5 text-[14px] text-[#241019] mb-3">
           {!list.length && <option value="">No meetings in the next 30 days</option>}
-          {list.map((m) => <option key={m.id} value={m.id}>{new Date(m.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {m.title}</option>)}
+          {list.map((m) => <option key={m.id} value={m.id}>{`${new Date(m.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${m.title}`}</option>)}
         </select>
         {sheet && (
           <div className="grid grid-cols-3 gap-2 text-center mb-3">

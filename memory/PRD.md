@@ -309,3 +309,12 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Door check-in: /checkin?m=<mid> mobile page (admin) — search + Check in with guests, undo, QR scan (html5-qrcode) of member code "CSC:<users.member_checkin_token>" (shown as QR in My Profile via qrcode.react), Finish marks remaining active members absent; all paths run _apply_attendance_rules.
 - Spotlight archive: /members/spotlights -> portal "Spotlights" gallery + modal.
 - Prayer & Support board (member_prayers): request/praise, anonymous (masked to others, visible to author/admin), praying toggle, encouragements, author marks answered, author/admin delete.
+
+## 2026-06 Member Portal phase 7 (iteration 28 — 35/35 backend phase 7; phase 6+7 suites 72/72 together; all frontend flows pass)
+- Avatars: POST/DELETE /members/photo (category 'avatar'), admin POST/DELETE /admin/members/{uid}/photo; sets users.picture + picture_custom (Google sign-in no longer overwrites) and back-fills author_picture on threads/prayers. Avatar.jsx prefixes /api URLs.
+- Gathering albums (member_gathering_photos): portal "Photos" tab; in-person meetings dated <= today; member uploads pending -> staff approve (Admin > Members > Gathering photos), staff uploads auto-approved; private file route /members/gathering-photos/{pid}/file; media category 'gathering' blocked from public /media/file and /media list.
+- Self check-in: meeting.door_token; /checkin "Door QR" modal (reset possible) -> /self-checkin?m=&t= (Google sign-in, AuthCallback preserves query); open only on meeting date (ET) and before Finish; checkins.by='self'; attendance rules applied.
+- Prayer emails: praying_log; daily author digest >=6pm ET (digest_at), weekly Monday digest >=8am ET to active members unless member_profile.prayer_weekly == False (My Profile checkbox). Once-markers in scheduled_runs (_id key).
+- Birthdays: >=7am ET card to celebrant + notice to all other active members + birthday thread (member_bday_sent_year idempotency; Feb 29 -> Feb 28 non-leap); /members/birthdays/today -> home banner; staff monthly list on the 1st to settings.staff_notify_email.
+- Member write rate limits now per user (member-post:<uid>).
+- Backlog: per-sister opt-out for birthday notices; photo captions/download; staff alert email when photos await review; notify sister when her photo is approved.

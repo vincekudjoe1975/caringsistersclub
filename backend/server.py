@@ -6411,7 +6411,7 @@ def _author(user: dict) -> dict:
 
 @api_router.post("/members/threads")
 async def members_new_thread(payload: PostIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     title, body = payload.title.strip()[:140], payload.body.strip()[:5000]
     if not title or not body:
         raise HTTPException(status_code=400, detail="Please add a title and a message.")
@@ -6423,7 +6423,7 @@ async def members_new_thread(payload: PostIn, request: Request, user=Depends(req
 
 @api_router.post("/members/threads/{tid}/replies")
 async def members_reply(tid: str, payload: PostIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     body = payload.body.strip()[:3000]
     if not body:
         raise HTTPException(status_code=400, detail="Please write a reply.")
@@ -6823,7 +6823,7 @@ class WishIn(BaseModel):
 
 @api_router.post("/members/birthdays/{uid}/wish")
 async def members_birthday_wish(uid: str, payload: WishIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     msg = payload.message.strip()[:1000]
     if not msg:
         raise HTTPException(status_code=400, detail="Please write a birthday message.")
@@ -7585,7 +7585,7 @@ class SuggestionIn(BaseModel):
 
 @api_router.post("/members/meetings/{mid}/suggestions")
 async def members_agenda_suggest(mid: str, payload: SuggestionIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     text = payload.text.strip()[:500]
     if not text:
         raise HTTPException(status_code=400, detail="Please write your suggestion.")
@@ -8524,7 +8524,7 @@ async def members_prayers(user=Depends(require_member)):
 
 @api_router.post("/members/prayers")
 async def members_prayer_new(payload: PrayerIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     body = payload.body.strip()[:2000]
     if payload.kind not in ("request", "praise") or not body:
         raise HTTPException(status_code=400, detail="Please write your prayer request or praise report.")
@@ -8553,7 +8553,7 @@ class EncourageIn(BaseModel):
 
 @api_router.post("/members/prayers/{pid}/encourage")
 async def members_prayer_encourage(pid: str, payload: EncourageIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     body = payload.body.strip()[:1000]
     if not body:
         raise HTTPException(status_code=400, detail="Please write a word of encouragement.")
