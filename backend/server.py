@@ -6401,6 +6401,7 @@ class MemberProfile(BaseModel):
     push_events: bool = True
     push_votes: bool = True
     push_bday: bool = True
+    push_weekly: bool = True
     quiet_on: bool = False
     quiet_start: str = "21:00"
     quiet_end: str = "08:00"
@@ -6419,7 +6420,7 @@ async def members_profile(payload: MemberProfile, user=Depends(require_member)):
     prof = {"city": payload.city.strip()[:80], "phone": payload.phone.strip()[:30], "bio": payload.bio.strip()[:600], "show_contact": payload.show_contact,
             "birthday_month": int(bm) if bm else None, "birthday_day": int(bd) if bd else None, "prayer_weekly": payload.prayer_weekly,
             "bday_notices": payload.bday_notices, "bday_card": payload.bday_card, "push_news": payload.push_news, "push_prayer": payload.push_prayer,
-            "push_events": payload.push_events, "push_votes": payload.push_votes, "push_bday": payload.push_bday,
+            "push_events": payload.push_events, "push_votes": payload.push_votes, "push_bday": payload.push_bday, "push_weekly": payload.push_weekly,
             "quiet_on": payload.quiet_on, "quiet_start": payload.quiet_start, "quiet_end": payload.quiet_end}
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_profile": prof}})
     return prof
@@ -10165,7 +10166,7 @@ def _push_one(sub: dict, data: str) -> bool:
         return False
 
 
-PUSH_KINDS = {"announcement": "push_news", "prayer": "push_prayer", "event": "push_events", "vote": "push_votes", "birthday": "push_bday", "wish": "push_bday", "custom": "", "test": ""}
+PUSH_KINDS = {"announcement": "push_news", "prayer": "push_prayer", "event": "push_events", "vote": "push_votes", "birthday": "push_bday", "wish": "push_bday", "weekly": "push_weekly", "custom": "", "test": ""}
 
 
 def _quiet_now(prof: dict, now=None) -> bool:
@@ -10196,8 +10197,8 @@ async def _push_users(uids, title: str, body: str, url: str, kind: str, exclude_
     if pref:
         q[f"member_profile.{pref}"] = {"$ne": False}
     targets = await db.users.find(q, {"_id": 0, "user_id": 1, "member_profile": 1}).to_list(5000)
-    data = json.dumps({"title": title[:80], "body": body[:180], "url": url})
     log_id = str(uuid.uuid4())
+    data = json.dumps({"title": title[:80], "body": body[:180], "url": url, "log_id": log_id})
     sent = failed = removed = held = 0
     for u in targets:
         if kind != "test" and _quiet_now(u.get("member_profile") or {}):
@@ -10320,6 +10321,8 @@ async def _push_loop():
             await _push_events()
             await _push_birthdays()
             await _release_held()
+            await _send_scheduled()
+            await _push_weekly()
         except Exception as e:
             logging.error(f"Push loop error: {e}")
         await asyncio.sleep(300)
@@ -10329,6 +10332,8 @@ async def _push_loop():
 async def _start_push_loop():
     await db.push_marks.create_index("key", unique=True)
     await db.push_log.create_index("sent_at")
+    await db.push_taps.create_index([("log_id", 1), ("user_id", 1)], unique=True)
+    await db.push_scheduled.create_index([("status", 1), ("send_at", 1)])
     asyncio.create_task(_push_loop())
 
 
@@ -10369,7 +10374,160 @@ async def admin_push_test(payload: AdminPushIn, request: Request, user=Depends(r
 @api_router.get("/admin/members/push/history")
 async def admin_push_history(kind: str = "", user=Depends(require_admin)):
     q = {"kind": kind} if kind in PUSH_KINDS else {}
-    return await db.push_log.find(q, {"_id": 0}).sort("sent_at", -1).to_list(300)
+    rows = await db.push_log.find(q, {"_id": 0}).sort("sent_at", -1).to_list(300)
+    taps = {t["_id"]: t["n"] async for t in db.push_taps.aggregate([{"$match": {"log_id": {"$in": [r["id"] for r in rows]}}}, {"$group": {"_id": "$log_id", "n": {"$sum": 1}}}])}
+    for r in rows:
+        r["tapped"] = taps.get(r["id"], 0)
+    return rows
+
+
+class TapIn(BaseModel):
+    log_id: str
+
+
+@api_router.post("/members/push/tapped")
+async def members_push_tapped(payload: TapIn, user=Depends(require_member)):
+    if await db.push_log.find_one({"id": payload.log_id}, {"_id": 1}):
+        try:
+            await db.push_taps.insert_one({"log_id": payload.log_id, "user_id": user["user_id"], "at": _now_iso()})
+        except Exception:
+            pass
+    return {"ok": True}
+
+
+# --- Scheduled alerts ---
+class ScheduledPushIn(BaseModel):
+    title: str
+    body: str
+    url: str = "/members"
+    send_at: str
+
+
+def _clean_scheduled(p: ScheduledPushIn) -> dict:
+    title, body = p.title.strip()[:80], p.body.strip()[:180]
+    if not title or not body:
+        raise HTTPException(status_code=400, detail="Please add a title and a message.")
+    try:
+        at = datetime.strptime(p.send_at, "%Y-%m-%dT%H:%M").replace(tzinfo=EVENT_TZ).astimezone(timezone.utc)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Please pick a valid date and time.")
+    if at <= datetime.now(timezone.utc) + timedelta(minutes=1):
+        raise HTTPException(status_code=400, detail="Please pick a time in the future.")
+    return {"title": title, "body": body, "url": p.url.strip() if p.url.strip().startswith("/") else "/members", "send_at": at.isoformat(), "send_at_local": p.send_at}
+
+
+@api_router.get("/admin/members/push/scheduled")
+async def admin_push_scheduled(user=Depends(require_admin)):
+    return await db.push_scheduled.find({"status": "scheduled"}, {"_id": 0}).sort("send_at", 1).to_list(200)
+
+
+@api_router.post("/admin/members/push/scheduled")
+async def admin_push_schedule(payload: ScheduledPushIn, user=Depends(require_admin)):
+    doc = {"id": str(uuid.uuid4()), **_clean_scheduled(payload), "status": "scheduled", "created_by": user.get("email"), "created_at": _now_iso()}
+    await db.push_scheduled.insert_one(dict(doc))
+    return doc
+
+
+@api_router.put("/admin/members/push/scheduled/{sid}")
+async def admin_push_schedule_edit(sid: str, payload: ScheduledPushIn, user=Depends(require_admin)):
+    res = await db.push_scheduled.update_one({"id": sid, "status": "scheduled"}, {"$set": _clean_scheduled(payload)})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="That alert was already sent or cancelled.")
+    return await db.push_scheduled.find_one({"id": sid}, {"_id": 0})
+
+
+@api_router.delete("/admin/members/push/scheduled/{sid}")
+async def admin_push_schedule_cancel(sid: str, user=Depends(require_admin)):
+    res = await db.push_scheduled.update_one({"id": sid, "status": "scheduled"}, {"$set": {"status": "cancelled", "cancelled_at": _now_iso()}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="That alert was already sent or cancelled.")
+    return {"ok": True}
+
+
+async def _send_scheduled() -> int:
+    n = 0
+    while True:
+        d = await db.push_scheduled.find_one_and_update({"status": "scheduled", "send_at": {"$lte": _now_iso()}}, {"$set": {"status": "sending"}}, projection={"_id": 0})
+        if not d:
+            return n
+        n += await _push_members(d["title"], d["body"], d["url"], kind="custom")
+        await db.push_scheduled.update_one({"id": d["id"]}, {"$set": {"status": "sent", "sent_at": _now_iso()}})
+
+
+# --- Weekly "This Week" summary ---
+async def _this_week(now=None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    today = now.astimezone(EVENT_TZ).date()
+    end, start = (today + timedelta(days=7)).isoformat(), (today - timedelta(days=7))
+    since = datetime.combine(start, datetime.min.time(), tzinfo=EVENT_TZ).astimezone(timezone.utc).isoformat()
+    gatherings = [{"id": m["id"], "title": m["title"], "date": m["date"], "time": m.get("time", ""), "location": m.get("location", ""), "kind": m.get("kind", "general")}
+                  for m in await db.member_meetings.find({"date": {"$gte": today.isoformat(), "$lte": end}}, {"_id": 0}).sort("date", 1).to_list(30)]
+    sessions = []
+    for x in await db.program_sessions.find({"date": {"$gte": today.isoformat(), "$lte": end}}, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(60):
+        pr = await db.programs.find_one({"id": x["program_id"], "published": True}, {"_id": 0, "title": 1, "slug": 1})
+        if pr:
+            sessions.append({"id": x["id"], "program": pr["title"], "date": x["date"], "start_time": x.get("start_time", ""), "location": x.get("location", "")})
+    nowi = now.isoformat()
+    votes = [{"id": b["id"], "title": b["title"], "closes_at": b["closes_at"], "kind": b["kind"]}
+             for b in await db.member_ballots.find({"closed_at": {"$exists": False}, "opens_at": {"$lte": nowi}, "closes_at": {"$gt": nowi}}, {"_id": 0}).sort("closes_at", 1).to_list(20)]
+    birthdays = []
+    for i in range(8):
+        d = today + timedelta(days=i)
+        birthdays += [{"user_id": b["user_id"], "name": b.get("name", ""), "date": d.isoformat()} for b in await _todays_birthdays(d)]
+    news = [{"id": a["id"], "title": a["title"], "created_at": a["created_at"]} for a in await db.member_announcements.find({"created_at": {"$gte": since}}, {"_id": 0}).sort("created_at", -1).to_list(20)]
+    spot = [{"id": x["id"], "name": x.get("name", ""), "month": x["month"]} for x in await db.member_spotlights.find({"status": "published", "month": {"$lte": _cur_month()}, "published_at": {"$gte": since}}, {"_id": 0}).to_list(5)]
+    minutes = [{"id": m["id"], "title": m["title"], "date": m["date"]} for m in await db.member_meetings.find({"minutes.status": "approved", "minutes.updated_at": {"$gte": since}}, {"_id": 0}).to_list(10)]
+    return {"week_of": today.isoformat(), "gatherings": gatherings, "sessions": sessions, "votes": votes, "birthdays": birthdays,
+            "announcements": news, "spotlights": spot, "minutes": minutes}
+
+
+@api_router.get("/members/this-week")
+async def members_this_week(user=Depends(require_member)):
+    return await _this_week()
+
+
+def _week_line(w: dict) -> str:
+    parts = [(len(w["gatherings"]) + len(w["sessions"]), "gathering", "gatherings"), (len(w["votes"]), "open vote", "open votes"),
+             (len(w["birthdays"]), "birthday", "birthdays"), (len(w["announcements"]), "new announcement", "new announcements")]
+    bits = [f"{n} {one if n == 1 else many}" for n, one, many in parts if n]
+    return ("This week: " + ", ".join(bits) + ". Tap for the full summary.") if bits else "A quiet week ahead. Tap to see what's coming up."
+
+
+async def _send_weekly() -> int:
+    return await _push_members("Your week with the Club", _week_line(await _this_week()), "/members?tab=week", kind="weekly")
+
+
+async def _push_weekly(now=None) -> int:
+    et = (now or datetime.now(timezone.utc)).astimezone(EVENT_TZ)
+    if et.weekday() != 6 or et.hour < 18:
+        return 0
+    cfg = await db.settings.find_one({"key": "weekly_summary"}, {"_id": 0}) or {}
+    if cfg.get("paused") or not await _push_mark(f"weekly:{et.date().isoformat()}"):
+        return 0
+    return await _send_weekly()
+
+
+class WeeklyCfgIn(BaseModel):
+    paused: bool
+
+
+@api_router.get("/admin/members/weekly-summary")
+async def admin_weekly_cfg(user=Depends(require_admin)):
+    cfg = await db.settings.find_one({"key": "weekly_summary"}, {"_id": 0}) or {}
+    last = await db.push_log.find_one({"kind": "weekly"}, {"_id": 0, "sent_at": 1}, sort=[("sent_at", -1)])
+    return {"paused": bool(cfg.get("paused")), "last_sent": (last or {}).get("sent_at", ""), "preview": _week_line(await _this_week())}
+
+
+@api_router.put("/admin/members/weekly-summary")
+async def admin_weekly_cfg_set(payload: WeeklyCfgIn, user=Depends(require_admin)):
+    await db.settings.update_one({"key": "weekly_summary"}, {"$set": {"paused": payload.paused}}, upsert=True)
+    return {"paused": payload.paused}
+
+
+@api_router.post("/admin/members/weekly-summary/send")
+async def admin_weekly_send(request: Request, user=Depends(require_admin)):
+    await _rate_limit(request, f"admin-weekly:{user['user_id']}", max_hits=3, window_s=600)
+    return {"sent": await _send_weekly()}
 
 # Include the router in the main app
 app.include_router(api_router)

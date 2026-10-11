@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
-import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText, Star, HandHeart, Camera } from 'lucide-react';
+import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText, Star, HandHeart, Camera, CalendarDays } from 'lucide-react';
 import { MemberApply } from '../components/members/MemberApply';
 import { Announcements } from '../components/members/Announcements';
 import { Discussion } from '../components/members/Discussion';
@@ -15,6 +15,7 @@ import { Minutes } from '../components/members/Minutes';
 import { SpotlightArchive, PrayerBoard } from '../components/members/Phase6';
 import { PhotoAlbums } from '../components/members/Phase7';
 import { InstallApp } from '../components/InstallApp';
+import { ThisWeek } from '../components/members/ThisWeek';
 import { CheckinPassButton, OfflinePass } from '../components/members/CheckinPass';
 
 const BADGES = { news: 1, talk: 1, prayer: 1, votes: 1, photos: 1, spotlights: 1, minutes: 1 };
@@ -30,6 +31,7 @@ const TABS = [
   { k: 'photos', l: 'Photos', icon: Camera, C: PhotoAlbums },
   { k: 'minutes', l: 'Minutes', icon: FileText, C: Minutes },
   { k: 'bylaws', l: 'Bylaws', icon: ScrollText, C: Bylaws },
+  { k: 'week', l: 'This Week', icon: CalendarDays, C: ThisWeek },
   { k: 'me', l: 'My Profile', icon: UserCircle, C: MyProfile },
 ];
 

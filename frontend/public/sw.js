@@ -1,4 +1,4 @@
-const CACHE = 'csc-shell-v2';
+const CACHE = 'csc-shell-v3';
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/icon-192.png', '/manifest.json'])).catch(() => {}));
@@ -30,13 +30,17 @@ self.addEventListener('push', (e) => {
   let d = {};
   try { d = e.data.json(); } catch { d = { title: 'Caring Sisters Club', body: e.data ? e.data.text() : '' }; }
   e.waitUntil(self.registration.showNotification(d.title || 'Caring Sisters Club', {
-    body: d.body || '', icon: '/icon-192.png', badge: '/icon-192.png', data: { url: d.url || '/members' },
+    body: d.body || '', icon: '/icon-192.png', badge: '/icon-192.png', data: { url: d.url || '/members', log_id: d.log_id || '' },
   }));
 });
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const url = (e.notification.data && e.notification.data.url) || '/members';
+  const data = e.notification.data || {};
+  const url = data.url || '/members';
+  if (data.log_id) {
+    fetch('/api/members/push/tapped', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ log_id: data.log_id }) }).catch(() => {});
+  }
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((cs) => {
     if (!url.startsWith('/')) return self.clients.openWindow(url);
     const c = cs.find((x) => x.url.startsWith(self.location.origin));

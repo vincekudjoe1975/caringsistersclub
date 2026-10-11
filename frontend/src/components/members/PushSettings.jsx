@@ -3,7 +3,7 @@ import { BellRing, Loader2, Moon } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useToast } from '../../hooks/use-toast';
 
-const PREFS = [['push_news', 'New announcements'], ['push_prayer', 'New prayer requests and praise reports'], ['push_events', 'Gatherings and sessions I signed up for (the day before)'], ['push_votes', 'Votes opening and closing soon'], ['push_bday', "Sisters' birthdays (and my own)"]];
+const PREFS = [['push_news', 'New announcements'], ['push_prayer', 'New prayer requests and praise reports'], ['push_events', 'Gatherings and sessions I signed up for (the day before)'], ['push_votes', 'Votes opening and closing soon'], ['push_bday', "Sisters' birthdays (and my own)"], ['push_weekly', 'Sunday evening "This Week" summary']];
 
 const timeCls = 'w-full mt-1.5 rounded-xl border border-[#3B0A2E]/15 px-3 py-2.5 text-[14px] bg-white font-normal focus:outline-none focus:border-[#B4247E]';
 
