@@ -9287,6 +9287,7 @@ class LeaderIn(BaseModel):
     photo_url: str = ""
     email: str = ""
     linkedin: str = ""
+    quote: str = ""
     visible: bool = True
 
 
@@ -9305,7 +9306,7 @@ def _clean_leader(p: LeaderIn) -> dict:
     if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise HTTPException(status_code=400, detail="Invalid email")
     return {"name": p.name.strip()[:120], "role": p.role.strip()[:120], "group": p.group, "intro": p.intro.strip()[:400], "bio": p.bio.strip()[:8000],
-            "photo_url": photo, "email": email, "linkedin": link, "visible": p.visible}
+            "photo_url": photo, "email": email, "linkedin": link, "quote": p.quote.strip().strip('"“”')[:240], "visible": p.visible}
 
 
 @api_router.get("/leaders")
@@ -9725,6 +9726,42 @@ async def admin_album_delete(aid: str, user=Depends(require_admin)):
         raise HTTPException(status_code=404, detail="Album not found")
     await db.media.update_many({"album_key": a["key"]}, {"$unset": {"album_key": ""}})
     return {"ok": True}
+
+
+# ---------- Dated session check-in ----------
+@api_router.get("/admin/sessions/{sid}/roster")
+async def admin_session_roster(sid: str, user=Depends(require_admin)):
+    s = await db.program_sessions.find_one({"id": sid}, {"_id": 0})
+    if s is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    p = await db.programs.find_one({"id": s["program_id"]}, {"_id": 0, "title": 1}) or {}
+    rows = await db.submissions.find({**_session_taken_q(sid), "released": {"$ne": True}}, {"_id": 0, "id": 1, "data": 1, "attendance": 1}).sort("created_at", 1).to_list(2000)
+    return {"program": p.get("title", ""), "label": _session_label(s), "date": s["date"],
+            "items": [{"id": r["id"], "name": r["data"].get("name"), "email": r["data"].get("email"), "phone": r["data"].get("phone", ""), "attendance": r.get("attendance")} for r in rows]}
+
+
+@api_router.post("/admin/sessions/{sid}/attendance")
+async def admin_session_attendance(sid: str, payload: AttendanceIn, background: BackgroundTasks, user=Depends(require_admin)):
+    if not await db.program_sessions.find_one({"id": sid}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Session not found")
+    q, ok = _session_taken_q(sid), ("attended", "no_show", None)
+    if payload.all is not None:
+        if payload.all not in ok:
+            raise HTTPException(status_code=400, detail="Invalid attendance value")
+        unmarked = {**q, "attendance": None} if payload.all == "no_show" else q
+        res = await db.submissions.update_many(unmarked, {"$set": {"attendance": payload.all, "attendance_at": _now_iso()}})
+        if payload.all == "attended":
+            background.add_task(_check_streaks, [x["data"].get("email") async for x in db.submissions.find(q, {"_id": 0, "data.email": 1})])
+        return {"updated": res.modified_count}
+    n = 0
+    for subid, v in list(payload.updates.items())[:2000]:
+        if v not in ok:
+            raise HTTPException(status_code=400, detail="Invalid attendance value")
+        n += (await db.submissions.update_one({**q, "id": subid}, {"$set": {"attendance": v, "attendance_at": _now_iso()}})).modified_count
+    ids = [k for k, v in payload.updates.items() if v == "attended"]
+    if ids:
+        background.add_task(_check_streaks, [x["data"].get("email") async for x in db.submissions.find({"id": {"$in": ids}}, {"_id": 0, "data.email": 1})])
+    return {"updated": n}
 
 
 # Include the router in the main app

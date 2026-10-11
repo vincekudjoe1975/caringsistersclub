@@ -26,12 +26,13 @@ export function LeaderStrip() {
         <div className="absolute inset-y-0 right-0 w-16 lg:w-32 z-10 pointer-events-none" style={{ background: 'linear-gradient(270deg,#F7EFE9,transparent)' }} />
         <div className="csc-marquee-track gap-10 px-5" style={{ animationDuration: `${Math.max(30, loop.length * 4)}s`, animationPlayState: paused ? 'paused' : 'running' }}>
           {loop.map((m, i) => (
-            <button key={`${m.id}-${i}`} data-testid={i < team.length ? `leader-strip-item-${i}` : undefined} onClick={() => setOpen(i % team.length)} className="group shrink-0 w-44 text-center whitespace-normal focus:outline-none">
+            <button key={`${m.id}-${i}`} data-testid={i < team.length ? `leader-strip-item-${i}` : undefined} onClick={() => setOpen(i % team.length)} className="group shrink-0 w-52 text-center whitespace-normal focus:outline-none">
               <div className="w-36 h-36 mx-auto rounded-full overflow-hidden p-1 transition-transform duration-500 group-hover:scale-105" style={{ background: 'linear-gradient(135deg,#CBA24B,#B4247E)' }}>
                 <div className="w-full h-full rounded-full overflow-hidden"><LeaderPhoto m={m} className="transition-transform duration-700 group-hover:scale-110" /></div>
               </div>
               <p className="font-serif text-[18px] text-[#3B0A2E] font-semibold mt-4 leading-tight">{m.name}</p>
               <p className="text-[12.5px] text-[#B4247E] font-semibold mt-1">{m.role}</p>
+              {m.quote && <p data-testid={i < team.length ? `leader-strip-quote-${i}` : undefined} className="font-serif italic text-[13.5px] text-[#241019]/70 mt-2 line-clamp-3 leading-snug">“{m.quote}”</p>}
               <span className="text-[11px] uppercase tracking-[0.2em] text-[#241019]/45 opacity-0 group-hover:opacity-100 transition-opacity">Read bio</span>
             </button>
           ))}

@@ -42,6 +42,7 @@ import CheckIn from './pages/CheckIn';
 import SelfCheckIn from './pages/SelfCheckIn';
 import BirthdayWall from './pages/BirthdayWall';
 import GalleryAlbum from './pages/GalleryAlbum';
+import SessionCheckIn from './pages/SessionCheckIn';
 import { Loader2 } from 'lucide-react';
 
 function ScrollToTop() {
@@ -73,7 +74,7 @@ function Shell() {
     return <AuthCallback />;
   }
 
-  const bare = location.pathname.startsWith('/admin') || location.pathname.startsWith('/vote-record') || location.pathname.startsWith('/treasurer-report') || location.pathname.startsWith('/annual-report') || location.pathname === '/checkin' || location.pathname.startsWith('/birthday-wishes') || location.pathname === '/login';
+  const bare = location.pathname.startsWith('/admin') || location.pathname.startsWith('/vote-record') || location.pathname.startsWith('/treasurer-report') || location.pathname.startsWith('/annual-report') || location.pathname === '/checkin' || location.pathname.startsWith('/birthday-wishes') || location.pathname.startsWith('/session-checkin') || location.pathname === '/login';
 
   return (
     <>
@@ -109,6 +110,7 @@ function Shell() {
           <Route path="/events" element={<Events />} />
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/gallery/album/:slug" element={<GalleryAlbum />} />
+          <Route path="/session-checkin/:sid" element={<SessionCheckIn />} />
           <Route path="/transparency" element={<Transparency />} />
           <Route path="/donate" element={<Donate />} />
           <Route path="/payment/success" element={<PaymentSuccess />} />

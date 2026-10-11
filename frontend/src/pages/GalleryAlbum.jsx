@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { api, mediaSrc } from '../lib/api';
 import Reveal from '../components/Reveal';
 import { Lightbox } from './Gallery';
+import { ShareButtons } from '../components/AlbumExtras';
 import { Loader2, ArrowLeft, Play } from 'lucide-react';
 
 export default function GalleryAlbum() {
@@ -29,6 +30,7 @@ export default function GalleryAlbum() {
       <section className="py-14 lg:py-20">
         <div className="max-w-7xl mx-auto px-5 lg:px-8">
           {a.story && <p data-testid="album-story" className="max-w-3xl text-[16px] lg:text-[17px] leading-[1.85] text-[#241019]/75 whitespace-pre-line mb-12">{a.story}</p>}
+          <div className="mb-8"><ShareButtons title={a.title} text={a.story ? a.story.slice(0, 140) : `Photos from ${a.title}`} /></div>
           {items.length > 0 && <button data-testid="album-start-btn" onClick={() => setIdx(0)} className="btn-magenta rounded-full px-6 py-3 text-[14px] font-semibold flex items-center gap-2 mb-10"><Play size={15} /> View photos</button>}
           <div className="columns-1 sm:columns-2 lg:columns-3 gap-5 [&>*]:mb-5">
             {items.map((g, i) => (

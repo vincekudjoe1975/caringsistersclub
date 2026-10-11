@@ -66,6 +66,7 @@ export function LeaderModal({ list, index, setIndex, onClose }) {
             <h2 data-testid="leader-modal-name" className="font-serif text-[34px] text-[#3B0A2E] font-semibold leading-tight">{m.name}</h2>
             <p data-testid="leader-modal-role" className="text-[#B4247E] font-semibold text-[15px] mt-1 mb-6">{m.role}</p>
           </div>
+          {m.quote && <blockquote data-testid="leader-modal-quote" className="font-serif italic text-[20px] leading-snug text-[#3B0A2E] border-l-4 border-[#CBA24B] pl-5 mb-6">“{m.quote}”</blockquote>}
           <div data-testid="leader-modal-bio" className="text-[15px] leading-[1.85] text-[#241019]/80 whitespace-pre-line">{bio || 'Biography coming soon.'}</div>
           {(m.email || m.linkedin) && (
             <div className="flex flex-wrap gap-3 mt-7">

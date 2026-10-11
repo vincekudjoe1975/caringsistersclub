@@ -67,6 +67,7 @@ export default function AdminSessions() {
             <span className="text-[13px] text-[#241019]/70 flex items-center gap-1 flex-1 min-w-[160px]"><MapPin size={13} /> {s.location || 'Location TBA'}</span>
             <span data-testid={`session-seats-${s.id}`} className="text-[13px] text-[#241019]/70 flex items-center gap-1"><Users size={13} /> {s.signups} signed up{s.seats ? ` / ${s.seats}` : ''}</span>
             <span className="flex gap-3 text-[#241019]/50">
+              <a data-testid={`session-checkin-${s.id}`} href={`/session-checkin/${s.id}`} className="text-[12.5px] font-semibold text-[#B4247E] hover:underline">Check-in</a>
               <button data-testid={`session-edit-${s.id}`} onClick={() => setEdit(s)} className="hover:text-[#B4247E]"><Pencil size={15} /></button>
               <button data-testid={`session-delete-${s.id}`} onClick={() => del(s)} className="hover:text-red-600"><Trash2 size={15} /></button>
             </span>

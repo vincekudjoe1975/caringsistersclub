@@ -6,7 +6,7 @@ import { LeaderPhoto } from '../components/LeaderModal';
 import { Loader2, Plus, GripVertical, Pencil, Trash2, Eye, EyeOff, UploadCloud, X, Users } from 'lucide-react';
 
 const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
-const EMPTY = { name: '', role: '', group: 'board', intro: '', bio: '', photo_url: '', email: '', linkedin: '', visible: true };
+const EMPTY = { name: '', role: '', group: 'board', intro: '', bio: '', quote: '', photo_url: '', email: '', linkedin: '', visible: true };
 
 function LeaderForm({ initial, onClose, onSaved }) {
   const { toast } = useToast();
@@ -51,6 +51,7 @@ function LeaderForm({ initial, onClose, onSaved }) {
           <label className="text-[13px] font-semibold text-[#3B0A2E] flex items-end gap-2 pb-2.5"><input type="checkbox" checked={f.visible} onChange={(e) => setF({ ...f, visible: e.target.checked })} data-testid="leader-visible-input" className="accent-[#B4247E] w-4 h-4" /> Show on website</label>
         </div>
         <label className="block text-[13px] font-semibold text-[#3B0A2E]">Short intro (shown on hover and the card)<textarea rows={2} maxLength={400} value={f.intro} onChange={set('intro')} data-testid="leader-intro-input" className={`${input} resize-none`} /></label>
+        <label className="block text-[13px] font-semibold text-[#3B0A2E]">Personal quote (optional, shown on the Home page strip and in the bio)<input maxLength={240} value={f.quote} onChange={set('quote')} data-testid="leader-quote-input" placeholder="e.g. When one sister rises, we all rise." className={input} /></label>
         <label className="block text-[13px] font-semibold text-[#3B0A2E]">Full biography (shown when the card is opened)<textarea rows={8} maxLength={8000} value={f.bio} onChange={set('bio')} data-testid="leader-bio-input" className={`${input} resize-y`} /></label>
         <div className="grid sm:grid-cols-2 gap-4">
           <label className="text-[13px] font-semibold text-[#3B0A2E]">Email (optional)<input type="email" value={f.email} onChange={set('email')} data-testid="leader-email-input" className={input} /></label>
