@@ -8843,7 +8843,10 @@ async def members_album_download(mid: str, user=Depends(require_member)):
                 except Exception as e:
                     logging.warning(f"Album zip skip {p['id']}: {e}")
                     continue
-                z.writestr(f"{i:03d}_{_dl_name(p.get('uploader_name', ''))}.{p['storage_path'].rsplit('.', 1)[-1]}", data)
+                z.writestr(f"{i:03d}_{_dl_name(p.get('caption') or p.get('uploader_name', ''))}.{p['storage_path'].rsplit('.', 1)[-1]}", data)
+            caps = [f"{i:03d}  {p['caption']} (shared by {p.get('uploader_name', '')})" for i, p in enumerate(rows, 1) if p.get("caption")]
+            if caps:
+                z.writestr("captions.txt", f"{m['title']} ({m['date']})\n\n" + "\n".join(caps) + "\n")
         return buf.getvalue()
     content = await asyncio.to_thread(build)
     name = f"{_dl_name(m['title'])}_{m['date']}.zip"
@@ -9085,6 +9088,166 @@ async def _member_phase7_scheduled():
         await _send_photo_approved()
     if hour >= 9 and ps["staff_alert"] in ("daily", "both") and await _once(f"photo-pending:{today.isoformat()}"):
         await _send_photo_pending_summary()
+    if hour >= 18:
+        await _send_wish_reminders(today + timedelta(days=1), "eve")
+        await _send_wish_reminders(today, "day")
+    if hour >= 10:
+        await _auto_recaps(today)
+
+
+# ---------- Member Portal phase 9: wish reminders, captions, slideshow, gathering recaps ----------
+class CaptionIn(BaseModel):
+    caption: str = ""
+
+
+@api_router.put("/members/gathering-photos/{pid}/caption")
+async def members_photo_caption(pid: str, payload: CaptionIn, user=Depends(require_member)):
+    q = {"id": pid} if user.get("role") == "admin" else {"id": pid, "uploader_id": user["user_id"], "status": "pending"}
+    if not (await db.member_gathering_photos.update_one(q, {"$set": {"caption": payload.caption.strip()[:200]}})).matched_count:
+        raise HTTPException(status_code=403, detail="You can edit your caption until the photo is approved.")
+    return {"caption": payload.caption.strip()[:200]}
+
+
+@api_router.get("/members/albums-slideshow")
+async def members_slideshow(user=Depends(require_member)):
+    rows = await db.member_gathering_photos.find({"status": "approved"}, {"_id": 0}).sort("created_at", 1).to_list(1000)
+    titles = {m["id"]: m for m in await db.member_meetings.find({"id": {"$in": list({r["meeting_id"] for r in rows})}}, {"_id": 0, "id": 1, "title": 1, "date": 1}).to_list(500)}
+    rows.sort(key=lambda r: ((titles.get(r["meeting_id"]) or {}).get("date", ""), r["created_at"]))
+    return [{**_gphoto_view(p, user), "gathering_title": (titles.get(p["meeting_id"]) or {}).get("title", "")} for p in rows]
+
+
+# --- Birthday wish reminders ---
+async def _send_wish_reminders(day, kind: str) -> int:
+    sent = 0
+    for b in await _todays_birthdays(day):
+        if not await _once(f"wishrem:{kind}:{b['user_id']}:{day.isoformat()}"):
+            continue
+        t = await db.member_threads.find_one({"key": f"birthday:{b['user_id']}:{day.year}"}, {"_id": 0, "replies.author_id": 1})
+        wished = {r["author_id"] for r in (t or {}).get("replies", [])}
+        first = (b.get("name") or "Sister").split(" ")[0]
+        heading = f"Tomorrow is {first}'s birthday!" if kind == "eve" else f"There's still time to wish {first} a happy birthday"
+        lead = f"Tomorrow is {b.get('name')}'s birthday. " if kind == "eve" else f"Today is {b.get('name')}'s birthday and the day is almost over. "
+        for u in await db.users.find({"member_status": "active", "user_id": {"$nin": [b["user_id"], *wished]}, "email": {"$nin": [None, ""]},
+                                      "member_profile.bday_notices": {"$ne": False}}, {"_id": 0, "email": 1, "name": 1}).to_list(2000):
+            html = _member_email_html("Birthday wishes", heading, f"Dear {(u.get('name') or 'Sister').split(' ')[0]},\n\n{lead}"
+                                      "Leave her a few kind words in the member portal. They'll appear on her birthday wishes card.", f"Send {first} wishes", "/members")
+            try:
+                await send_email(to=u["email"], subject=heading[:150], html=html)
+                sent += 1
+            except Exception as e:
+                logging.warning(f"Wish reminder failed: {e}")
+    return sent
+
+
+# --- Gathering recap email ---
+async def _recap_photos(mid: str, ids: Optional[list] = None) -> list:
+    q = {"meeting_id": mid, "status": "approved"}
+    if ids is not None:
+        q["id"] = {"$in": ids[:6]}
+    rows = await db.member_gathering_photos.find(q, {"_id": 0}).sort("created_at", 1).to_list(6 if ids is None else 6)
+    for p in rows:
+        if not p.get("recap_token"):
+            p["recap_token"] = secrets.token_urlsafe(18)
+            await db.member_gathering_photos.update_one({"id": p["id"]}, {"$set": {"recap_token": p["recap_token"]}})
+    return rows
+
+
+async def _recap_html(m: dict, photos: list, note: str, first: str = "Sister") -> str:
+    base = PUBLIC_APP_URL.rstrip("/")
+    cells = "".join(
+        f'<td width="50%" style="padding:6px;vertical-align:top"><img src="{base}/api/recap-photo/{p["id"]}?t={p["recap_token"]}" width="260" '
+        f'style="width:100%;max-width:260px;border-radius:12px;display:block" alt="{_esc(p.get("caption") or m["title"])}"/>'
+        + (f'<p style="font-size:12px;color:#8a7380;margin:6px 2px 0">{_esc(p["caption"])}</p>' if p.get("caption") else "") + "</td>"
+        + ("</tr><tr>" if i % 2 == 1 and i < len(photos) - 1 else "") for i, p in enumerate(photos))
+    grid = f'<table role="presentation" width="100%" style="margin:6px 0 20px"><tr>{cells}</tr></table>' if photos else ""
+    when = datetime.fromisoformat(m["date"]).strftime("%A, %B %-d")
+    msg = _esc(note or "Thank you to every sister who joined us. Here are a few moments we captured together.").replace(chr(10), "<br/>")
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Gathering recap") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 6px">{_esc(m["title"])}</h1>'
+        f'<p style="font-size:13px;color:#8a7380;margin:0 0 16px">{when}' + (f' · {_esc(m["location"])}' if m.get("location") else "") + '</p>'
+        f'<p style="font-size:15px;line-height:1.7;color:#4a3340;margin:0 0 14px">Dear {_esc(first)},<br/><br/>{msg}</p>{grid}'
+        + _btn(f"{PUBLIC_APP_URL}/members", "See the full album", primary=True) +
+        '<p style="font-size:12px;color:#8a7380;margin:18px 0 0">Albums are private to members. Sign in with your Google account to view and download them.</p>'
+        '</td></tr></table></td></tr></table>'
+    )
+
+
+@api_router.get("/recap-photo/{pid}")
+async def recap_photo(pid: str, t: str = ""):
+    p = await db.member_gathering_photos.find_one({"id": pid, "status": "approved"}, {"_id": 0})
+    if p is None or not p.get("recap_token") or not secrets.compare_digest(p["recap_token"], t):
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        data, _ = get_object(p["storage_path"])
+    except Exception:
+        raise HTTPException(status_code=404, detail="File missing")
+    return Response(content=data, media_type=p["content_type"], headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400"})
+
+
+async def _send_recap(mid: str, photo_ids: Optional[list], note: str, by: str) -> int:
+    m = await db.member_meetings.find_one_and_update({"id": mid, "recap_sent_at": {"$exists": False}}, {"$set": {"recap_sent_at": _now_iso(), "recap_by": by}}, {"_id": 0})
+    if m is None:
+        return -1
+    photos = await _recap_photos(mid, photo_ids)
+    sent = 0
+    for u in await db.users.find({"member_status": "active", "email": {"$nin": [None, ""]}}, {"_id": 0, "email": 1, "name": 1}).to_list(2000):
+        try:
+            await send_email(to=u["email"], subject=f"Recap: {m['title']}"[:150], html=await _recap_html(m, photos, note, (u.get("name") or "Sister").split(" ")[0]))
+            sent += 1
+        except Exception as e:
+            logging.warning(f"Recap email failed: {e}")
+    await db.member_meetings.update_one({"id": mid}, {"$set": {"recap_count": sent, "recap_photo_ids": [p["id"] for p in photos]}})
+    return sent
+
+
+class RecapIn(BaseModel):
+    photo_ids: List[str] = []
+    note: str = ""
+
+
+@api_router.get("/admin/members/recaps")
+async def admin_recaps(user=Depends(require_admin)):
+    rows = await db.member_meetings.find({"kind": "in-person", "date": {"$lte": _today_et().isoformat()}}, {"_id": 0, "id": 1, "title": 1, "date": 1, "recap_sent_at": 1, "recap_by": 1, "recap_count": 1}).sort("date", -1).to_list(24)
+    for m in rows:
+        m["photos"] = [_gphoto_view(p, user) for p in await db.member_gathering_photos.find({"meeting_id": m["id"], "status": "approved"}, {"_id": 0}).sort("created_at", 1).to_list(300)]
+    return rows
+
+
+@api_router.post("/admin/members/recaps/{mid}/preview")
+async def admin_recap_preview(mid: str, payload: RecapIn, user=Depends(require_admin)):
+    m = await db.member_meetings.find_one({"id": mid, "kind": "in-person"}, {"_id": 0})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Gathering not found")
+    if len(payload.photo_ids) > 6:
+        raise HTTPException(status_code=400, detail="Choose up to 6 photos.")
+    return {"html": await _recap_html(m, await _recap_photos(mid, payload.photo_ids), payload.note.strip()[:2000], (user.get("name") or "Sister").split(" ")[0])}
+
+
+@api_router.post("/admin/members/recaps/{mid}/send")
+async def admin_recap_send(mid: str, payload: RecapIn, background: BackgroundTasks, user=Depends(require_admin)):
+    m = await db.member_meetings.find_one({"id": mid, "kind": "in-person"}, {"_id": 0, "recap_sent_at": 1, "date": 1})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Gathering not found")
+    if m.get("recap_sent_at"):
+        raise HTTPException(status_code=400, detail="A recap was already sent for this gathering.")
+    if len(payload.photo_ids) > 6:
+        raise HTTPException(status_code=400, detail="Choose up to 6 photos.")
+    background.add_task(_send_recap, mid, payload.photo_ids, payload.note.strip()[:2000], user.get("email") or "staff")
+    return {"ok": True}
+
+
+async def _auto_recaps(today) -> int:
+    n = 0
+    for m in await db.member_meetings.find({"kind": "in-person", "recap_sent_at": {"$exists": False}, "date": {"$lte": (today - timedelta(days=3)).isoformat(), "$gte": (today - timedelta(days=10)).isoformat()}},
+                                           {"_id": 0, "id": 1}).to_list(20):
+        if await db.member_gathering_photos.find_one({"meeting_id": m["id"], "status": "approved"}, {"_id": 1}):
+            await _send_recap(m["id"], None, "", "auto")
+            n += 1
+    return n
 
 
 # Include the router in the main app

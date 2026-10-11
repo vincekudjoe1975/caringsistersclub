@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../lib/api';
-import { Camera, Upload, Trash2, ArrowLeft, X, Loader2, Cake, Check, Clock, ImageOff, Download, Gift } from 'lucide-react';
+import { Slideshow } from './Slideshow';
+import { Camera, Upload, Trash2, ArrowLeft, X, Loader2, Cake, Check, Clock, ImageOff, Download, Gift, Play } from 'lucide-react';
 
 export const src = (u) => (u && u.startsWith('/api') ? `${process.env.REACT_APP_BACKEND_URL}${u}` : u);
 const longDate = (d) => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
@@ -8,22 +9,25 @@ const multipart = { headers: { 'Content-Type': 'multipart/form-data' } };
 
 function Uploader({ mid, onDone, isAdmin }) {
   const [busy, setBusy] = useState(false);
+  const [cap, setCap] = useState('');
   const [msg, setMsg] = useState('');
   const upload = async (files) => {
     if (!files?.length) return;
     setBusy(true); setMsg('');
     let ok = 0;
     for (const f of files) {
-      const fd = new FormData(); fd.append('file', f);
+      const fd = new FormData(); fd.append('file', f); fd.append('caption', cap);
       try { await api.post(`/members/albums/${mid}/photos`, fd, multipart); ok += 1; } catch (ex) { setMsg(ex?.response?.data?.detail || 'Some photos could not be uploaded.'); }
     }
     setBusy(false);
     if (ok && !isAdmin) api.post(`/members/albums/${mid}/photos/done`).catch(() => {});
+    setCap('');
     if (ok) setMsg(isAdmin ? `${ok} photo${ok === 1 ? '' : 's'} added.` : `Thank you! ${ok} photo${ok === 1 ? '' : 's'} sent for staff review.`);
     onDone();
   };
   return (
     <div className="flex flex-wrap items-center gap-3">
+      <input data-testid="album-caption-input" value={cap} onChange={(e) => setCap(e.target.value)} maxLength={200} placeholder="Caption (optional)" className="rounded-full border border-[#3B0A2E]/15 px-4 py-2 text-[13px] w-48 focus:outline-none focus:border-[#B4247E]" />
       <label data-testid="album-upload-btn" className="btn-magenta rounded-full px-5 py-2.5 text-[13.5px] font-semibold flex items-center gap-2 cursor-pointer">
         {busy ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Add photos
         <input data-testid="album-upload-input" type="file" accept="image/*" multiple className="hidden" disabled={busy} onChange={(e) => upload(Array.from(e.target.files || []))} />
@@ -36,6 +40,8 @@ function Uploader({ mid, onDone, isAdmin }) {
 function Album({ mid, me, onBack }) {
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(null);
+  const [show, setShow] = useState(false);
+  const [capEdit, setCapEdit] = useState('');
   const load = useCallback(() => api.get(`/members/albums/${mid}`).then(({ data }) => setD(data)), [mid]);
   useEffect(() => { load(); }, [load]);
   if (!d) return <p className="text-[#241019]/50">Loading…</p>;
@@ -46,6 +52,7 @@ function Album({ mid, me, onBack }) {
       <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
         <div><h2 className="font-serif text-[26px] text-[#3B0A2E] font-semibold">{d.gathering.title}</h2><p className="text-[13px] text-[#241019]/60">{longDate(d.gathering.date)}{d.gathering.location ? ` · ${d.gathering.location}` : ''}</p></div>
         <div className="flex flex-wrap items-center gap-3">
+          {d.photos.some((p) => p.status === 'approved') && <button data-testid="album-slideshow-btn" onClick={() => setShow(true)} className="rounded-full px-5 py-2.5 text-[13.5px] font-semibold bg-[#3B0A2E] text-white flex items-center gap-2"><Play size={15} /> Slideshow</button>}
           {d.photos.some((p) => p.status === 'approved') && <a data-testid="album-download-zip" href={`${process.env.REACT_APP_BACKEND_URL}/api/members/albums/${mid}/download`} className="rounded-full px-5 py-2.5 text-[13.5px] font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] flex items-center gap-2 hover:border-[#B4247E] transition-colors"><Download size={15} /> Download album</a>}
           {d.can_upload && <Uploader mid={mid} onDone={load} isAdmin={me.is_admin} />}
         </div>
@@ -53,15 +60,23 @@ function Album({ mid, me, onBack }) {
       {!d.photos.length && <p data-testid="album-empty" className="text-[#241019]/60 py-10 text-center">No photos yet. Share your favourite moments from this gathering.</p>}
       <div className="columns-2 md:columns-3 gap-3 [&>*]:mb-3">
         {d.photos.map((p) => (
-          <button key={p.id} data-testid={`album-photo-${p.id}`} onClick={() => setOpen(p)} className="relative block w-full rounded-xl overflow-hidden group">
+          <button key={p.id} data-testid={`album-photo-${p.id}`} onClick={() => { setOpen(p); setCapEdit(p.caption || ''); }} className="relative block w-full rounded-xl overflow-hidden group">
             <img src={src(p.url)} alt={p.caption || 'Gathering photo'} className={`w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${p.status === 'pending' ? 'opacity-60' : ''}`} />
+            {p.caption && <span data-testid={`album-caption-${p.id}`} className="absolute bottom-0 inset-x-0 text-left text-white text-[12px] px-3 py-2 bg-gradient-to-t from-black/70 to-transparent">{p.caption}</span>}
             {p.status === 'pending' && <span data-testid={`album-pending-${p.id}`} className="absolute top-2 left-2 bg-white/90 text-[#3B0A2E] text-[11px] font-semibold rounded-full px-2.5 py-0.5 flex items-center gap-1"><Clock size={11} /> Awaiting review</span>}
           </button>
         ))}
       </div>
+      {show && <Slideshow photos={d.photos.filter((p) => p.status === 'approved')} title={d.gathering.title} onClose={() => setShow(false)} />}
       {open && (
         <div data-testid="album-lightbox" className="fixed inset-0 z-50 bg-black/85 flex flex-col items-center justify-center p-4" onClick={() => setOpen(null)}>
-          <img src={src(open.url)} alt="" className="max-h-[80vh] max-w-full rounded-xl" onClick={(e) => e.stopPropagation()} />
+          <img src={src(open.url)} alt="" className="max-h-[75vh] max-w-full rounded-xl" onClick={(e) => e.stopPropagation()} />
+          {(me.is_admin || (open.mine && open.status === 'pending')) ? (
+            <form className="flex gap-2 mt-3 w-full max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={async (e) => { e.preventDefault(); await api.put(`/members/gathering-photos/${open.id}/caption`, { caption: capEdit }); setOpen({ ...open, caption: capEdit }); load(); }}>
+              <input data-testid="album-caption-edit" value={capEdit} onChange={(e) => setCapEdit(e.target.value)} maxLength={200} placeholder="Add a caption" className="flex-1 rounded-full px-4 py-2 text-[13px] text-[#241019]" />
+              <button data-testid="album-caption-save" className="btn-magenta rounded-full px-4 py-2 text-[13px] font-semibold">Save</button>
+            </form>
+          ) : open.caption ? <p data-testid="album-lightbox-caption" className="text-white font-serif text-[18px] mt-3">{open.caption}</p> : null}
           <div className="flex items-center gap-4 mt-4 text-white/85 text-[13px]" onClick={(e) => e.stopPropagation()}>
             <span>Shared by {open.uploader_name}</span>
             {open.status === 'approved' && <a data-testid="album-photo-download" href={`${src(open.url)}?download=1`} className="flex items-center gap-1 text-[#CBA24B]"><Download size={14} /> Download</a>}
@@ -77,13 +92,19 @@ function Album({ mid, me, onBack }) {
 export function PhotoAlbums({ me }) {
   const [rows, setRows] = useState(null);
   const [mid, setMid] = useState(null);
+  const [all, setAll] = useState(null);
+  const playAll = async () => { const { data } = await api.get('/members/albums-slideshow'); setAll(data); };
   useEffect(() => { if (!mid) api.get('/members/albums').then(({ data }) => setRows(data)).catch(() => setRows([])); }, [mid]);
   if (mid) return <Album mid={mid} me={me} onBack={() => setMid(null)} />;
   if (rows === null) return <p className="text-[#241019]/50">Loading…</p>;
   return (
     <div>
       <h2 className="font-serif text-[24px] text-[#3B0A2E] font-semibold mb-1 flex items-center gap-2"><Camera size={20} className="text-[#CBA24B]" /> Gathering photos</h2>
-      <p className="text-[13.5px] text-[#241019]/60 mb-6">Private albums from our in-person gatherings. Photos shared by sisters appear after a quick staff review.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
+        <p className="text-[13.5px] text-[#241019]/60">Private albums from our in-person gatherings. Photos shared by sisters appear after a quick staff review.</p>
+        {rows.some((a) => a.count > 0) && <button data-testid="albums-slideshow-all" onClick={playAll} className="rounded-full px-5 py-2.5 text-[13.5px] font-semibold bg-[#3B0A2E] text-white flex items-center gap-2"><Play size={15} /> Play all albums</button>}
+      </div>
+      {all && <Slideshow photos={all} title="Gathering photos" onClose={() => setAll(null)} />}
       {!rows.length && <p data-testid="albums-empty" className="text-[#241019]/60">Albums open after our first in-person gathering.</p>}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="albums-grid">
         {rows.map((a) => (
