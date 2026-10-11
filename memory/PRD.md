@@ -380,3 +380,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - PWA: manifest.json, icons (192/512/maskable/apple-touch), sw.js (pass-through), theme #3B0A2E; InstallApp banner (Android prompt / iOS tip, dismissible) on /members and /admin for phones.
 - Mobile menu close button aria-label. Redeploy queued (outcome pending notification).
 - Backlog: offline page/caching, push notifications for announcements.
+
+## 2026-06 — Splash, tab badges, offline check-in, push alerts (iteration_38: backend 12/12, frontend 100%)
+- Splash (components/Splash.jsx): standalone/home-screen launch (or ?splash=1), logo + title + random welcome line, ~1.5s fade, once per session.
+- Tab badges: GET /api/members/badges, POST /api/members/badges/seen (users.member_seen); dots on news/talk/prayer/votes/photos/spotlights/minutes.
+- Offline check-in: QR cached in localStorage csc_checkin_code (cleared on logout); portal header "My check-in code" button + modal; offline /members shows saved code; sw.js caches app shell.
+- Web push (pywebpush, VAPID_* in backend/.env, db.push_subs): opt-in in My Profile (push_news/push_prayer prefs); auto alerts on new announcement & prayer (author excluded, anonymous respected); admin custom alert in Members > People & content. Dead subs (404/410) auto-removed.
+- Redeploy queued (outcome pending notification). iPhone push requires home-screen install (iOS 16.4+).

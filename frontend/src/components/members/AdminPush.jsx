@@ -23,7 +23,7 @@ export const AdminPush = ({ toast }) => {
       <input data-testid="admin-push-title" placeholder="Alert title" maxLength={80} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={inputCls} />
       <textarea data-testid="admin-push-body" rows={3} placeholder="Short message" maxLength={180} value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} className={inputCls} />
       <div className="flex flex-wrap items-center gap-3">
-        <select data-testid="admin-push-url" value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} className={`${inputCls} w-auto`}>{DEST.map(([v, l]) => <option key={v} value={v}>Opens: {l}</option>)}</select>
+        <select data-testid="admin-push-url" value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} className={`${inputCls} w-auto`}>{DEST.map(([v, l]) => <option key={v} value={v}>{`Opens: ${l}`}</option>)}</select>
         <button data-testid="admin-push-send" disabled={busy} className="btn-magenta rounded-full px-5 py-2 font-semibold ml-auto flex items-center gap-1.5 disabled:opacity-60">{busy ? <Loader2 size={14} className="animate-spin" /> : <BellRing size={14} />} Send alert</button>
       </div>
     </form>

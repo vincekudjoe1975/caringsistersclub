@@ -1,0 +1,42 @@
+{
+  "summary": "Iter 38 - Full E2E for Splash + Portal badges + Offline check-in + Push settings + Admin push. Backend 12/12 pytest green, UI flows all verified at 390 and 1440. Both QA sessions torn down at end.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin > Phone alert > destination <select>", "issues": ["React console warning (not blocking): the <option> renders a <span data-ve-dynamic> child (hydration warning: '<span> cannot be a child of <option>'). AdminPush.jsx line 26 wraps the option label with a dynamic <span> through the compile-time instrumentation. Functionally fine; worth suppressing or restructuring to avoid noisy console warnings."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter38_badges_push.py", "/app/test_reports/pytest/iter38.xml"],
+  "action_items": [
+    "Optional: silence the <option><span>...</span></option> hydration warning in /app/frontend/src/components/members/AdminPush.jsx (DEST.map renders {l} which gets wrapped in a dynamic span by the dev-time emergent instrumentation).",
+    "No functional fixes needed; both features meet spec."
+  ],
+  "critical_code_review_comments": [
+    "Portal badges: /api/members/badges initialises member_seen when empty (returns all-false on first call) and compares each tab's latest timestamp against seen - correct. POST /members/badges/seen validates against BADGE_TABS tuple (news/talk/prayer/votes/photos/spotlights/minutes) and returns 400 for unknown tabs. UI calls seen() both for the previous tab and the tab being opened in pick(), and clears local badges state, so no dot on the currently-open tab.",
+    "Web push: subscribe enforces https:// endpoints (400 otherwise), upserts by endpoint. _push_members runs under BackgroundTasks (admin_announce + members_prayer_new) so API latency is unaffected (verified <3s). _push_one returns None on 404/410 and the caller deletes the dead sub - correct auto-cleanup path.",
+    "Admin push: strips title/body, enforces 400 on empty, rate-limits 10/600s per admin, URL whitelisted to start with '/' else forced to /members - good hardening.",
+    "Splash: gated by (?splash OR display-mode:standalone) AND !sessionStorage.csc_splash, sets flag on mount, fade at 1500ms, unmount at 2100ms - exactly spec. Click to dismiss supported.",
+    "CheckinPass: localStorage csc_checkin_code is written on fetch; OfflinePass renders only when navigator.onLine===false AND code exists; logout clears code (verified).",
+    "PushSettings handles unsupported browser with a friendly line (push-unsupported); error path shows destructive toast with provider's message. Checkboxes are controlled via parent `p`/`set` so they get saved by Save profile - good."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter38_badges_push.py"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (all task UI checks pass)"},
+  "test_credentials": "Used cookie session_token=qa_tok_123 (QA admin) + mem_tok_a for non-member 403. Both torn down at end (qa_session.py down + qa_members.py down).",
+  "seed_data_creation": "Created & deleted one QA announcement during flow; final cleanup verified.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All iter 38 features (Splash on ?splash= + standalone, portal badges per tab with persistence, OfflinePass + CheckinPass button + modal, PushSettings card with toggle+toast+checkboxes, AdminPush box with stats+send) are green. Backend pytest file /app/backend/tests/test_iter38_badges_push.py is the regression suite - run with session_token=qa_tok_123 cookie available (bring up via `python3 /app/backend/tests/qa_session.py up`). One cosmetic console warning in AdminPush <option><span>...</span></option> hydration remains - UI unaffected.",
+  "evidence": {
+    "backend": "pytest 12 passed in 4.28s; junit at /app/test_reports/pytest/iter38.xml",
+    "splash_shown_with_query": "Observed [data-testid=app-splash] with [data-testid=app-splash-line] 'Friendship. Growth. Giving.' and detached after 2.3s; sessionStorage.csc_splash='1' set.",
+    "splash_hidden_without_query": "Plain /members visit after session: splash never mounts.",
+    "badges_flow": "Create announcement -> reload with current tab=talk -> portal-badge-news visible; click portal-tab-news -> badge clears; switch away -> still clear; reload -> still clear (persistence verified).",
+    "checkin_pass": "portal-checkin-btn opens checkin-pass-modal with QR SVG; close works; csc_checkin_code='CSC:YEbUtTAl' in localStorage. Logout clears csc_checkin_code -> null.",
+    "offline": "Playwright context.set_offline(True) + reload /members shows member-login-card + offline-pass-btn; modal shows checkin-pass-offline note.",
+    "push_settings": "push-settings card visible; push-status 'Off for this device.'; push-toggle-btn click in headless -> destructive toast 'Could not change alerts' (no crash) - matches spec. profile-push-news + profile-push-prayer checkboxes present.",
+    "admin_push": "admin-push box present with admin-push-stats showing '0 members on 0 devices'; sending QA UI Push -> toast 'Alert sent to 0 devices'.",
+    "regression_390_1440": "portal-tabbar grid-template-columns '108px 108px 108px' at 390 (3 cols), display 'flex' at 1440; scrollWidth==innerWidth==390 (no horizontal overflow)."
+  }
+}
