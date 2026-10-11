@@ -72,7 +72,7 @@ export default function AdminTeam({ currentUserId }) {
           {users.map((u) => (
             <div key={u.user_id} className="flex items-center justify-between gap-3 p-4">
               <div className="flex items-center gap-3 min-w-0">
-                {u.picture ? <img src={u.picture} alt="" className="w-9 h-9 rounded-full" referrerPolicy="no-referrer" /> : <span className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold" style={{ background: '#B4247E' }}>{(u.name || u.email || '?').charAt(0)}</span>}
+                {u.picture ? <img loading="lazy" decoding="async" src={u.picture} alt="" className="w-9 h-9 rounded-full" referrerPolicy="no-referrer" /> : <span className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold" style={{ background: '#B4247E' }}>{(u.name || u.email || '?').charAt(0)}</span>}
                 <div className="min-w-0">
                   <p className="text-[14px] text-[#3B0A2E] font-semibold truncate">{u.name || u.email}{u.user_id === currentUserId && <span className="text-[#241019]/45 font-normal"> (you)</span>}</p>
                   <p className="text-[12px] text-[#241019]/55 truncate">{u.email}</p>

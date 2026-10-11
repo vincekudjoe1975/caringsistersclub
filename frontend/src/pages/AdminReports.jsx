@@ -168,7 +168,7 @@ function YirShareImage({ year, d, onSaved }) {
   const src = d.image_url ? mediaSrc(d.image_url) : `${BACKEND_URL}/api/share/year-in-review/${year}/card.png?v=${d.donations_total}-${d.volunteer_hours}-${d.signups}`;
   return (
     <div className="mt-5 grid md:grid-cols-[320px_1fr] gap-5 items-start" data-testid="yir-share-image">
-      <img src={src} alt="Share preview" className="w-full rounded-xl border border-[#3B0A2E]/10" data-testid="yir-share-image-preview" />
+      <img loading="lazy" decoding="async" src={src} alt="Share preview" className="w-full rounded-xl border border-[#3B0A2E]/10" data-testid="yir-share-image-preview" />
       <div>
         <p className="text-[13.5px] font-semibold text-[#3B0A2E] mb-1">Social share image</p>
         <p className="text-[12.5px] text-[#241019]/60 mb-3">{d.image_url ? 'Using your uploaded image.' : 'Auto-generated from this year\'s numbers; it updates as the data changes.'} Shown when the page is shared on Facebook, X, LinkedIn or WhatsApp.</p>

@@ -30,7 +30,7 @@ function EntryCard({ e, onOpen }) {
   const [label, color] = KIND[e.kind];
   return (
     <button onClick={onOpen} className="text-left w-full bg-white rounded-2xl border border-[#3B0A2E]/8 overflow-hidden flex flex-col sm:flex-row card-hover" data-testid="session-card">
-      {img(e.image_url) && <img src={img(e.image_url)} alt={e.title} className="sm:w-44 h-36 sm:h-auto object-cover" />}
+      {img(e.image_url) && <img loading="lazy" decoding="async" src={img(e.image_url)} alt={e.title} className="sm:w-44 h-36 sm:h-auto object-cover" />}
       <div className="p-5 flex-1 flex flex-col">
         <span className="text-[11px] uppercase tracking-wide font-semibold mb-1" style={{ color }}>{label}{e.category && e.category !== 'Event' ? ` · ${e.category}` : ''}</span>
         <h3 className="font-serif text-[20px] text-[#3B0A2E] font-semibold mb-1" data-testid="session-title">{e.title}</h3>
@@ -48,7 +48,7 @@ function DetailModal({ e, onClose }) {
   return (
     <div data-testid="session-detail-modal" className="fixed inset-0 z-[70] bg-[#29061F]/70 backdrop-blur-[12px] flex items-end md:items-center justify-center md:p-6 animate-[fadeIn_.25s_ease]" onClick={onClose}>
       <div onClick={(x) => x.stopPropagation()} className="bg-white w-full md:max-w-xl rounded-t-[28px] md:rounded-[28px] overflow-hidden max-h-[90vh] overflow-y-auto relative animate-[slideUp_.35s_ease]">
-        {img(e.image_url) && <img src={img(e.image_url)} alt={e.title} className="w-full h-52 object-cover" />}
+        {img(e.image_url) && <img loading="lazy" decoding="async" src={img(e.image_url)} alt={e.title} className="w-full h-52 object-cover" />}
         <button data-testid="session-detail-close" onClick={onClose} className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/90 text-[#3B0A2E] flex items-center justify-center hover:rotate-90 transition-transform duration-300"><X size={20} /></button>
         <div className="p-7">
           <span className="text-[11px] uppercase tracking-[0.2em] font-semibold" style={{ color }}>{label}{e.category && e.category !== 'Event' ? ` · ${e.category}` : ''}</span>
@@ -125,7 +125,7 @@ function SubscribeBar() {
 
 export default function Sessions() {
   const [data, setData] = useState(null);
-  const [view, setView] = useState('calendar');
+  const [view, setView] = useState(() => (typeof window !== 'undefined' && window.innerWidth < 640 ? 'list' : 'calendar'));
   const [kind, setKind] = useState('all');
   const [cat, setCat] = useState('');
   const [open, setOpen] = useState(null);

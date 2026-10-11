@@ -63,7 +63,7 @@ export default function Volunteer() {
             <form onSubmit={submit} className="bg-white rounded-2xl p-8 lg:p-10 border border-[#3B0A2E]/8 space-y-5">
               <div className="grid sm:grid-cols-2 gap-5">
                 <Field label="Full Name" required value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
-                <Field label="Email" type="email" required value={form.email} onChange={(v) => setForm({ ...form, email: v })} />
+                <Field label="Email" type="email" autoComplete="email" inputMode="email" required value={form.email} onChange={(v) => setForm({ ...form, email: v })} />
                 <Field label="Phone" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
                 <Field label="City" value={form.city} onChange={(v) => setForm({ ...form, city: v })} />
               </div>

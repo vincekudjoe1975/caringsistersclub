@@ -78,7 +78,7 @@ export default function Contact() {
                 </div>
                 <div>
                   <label className="text-[13px] font-semibold text-[#3B0A2E]">Email</label>
-                  <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} data-testid="contact-email-input"
+                  <input required type="email" autoComplete="email" inputMode="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} data-testid="contact-email-input"
                     className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
                 </div>
               </div>

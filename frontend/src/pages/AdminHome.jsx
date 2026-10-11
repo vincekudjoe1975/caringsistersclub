@@ -22,7 +22,7 @@ export function ImageUpload({ value, onChange, category, testid, fallback, round
   const src = imgSrc(value, fallback);
   return (
     <div className="flex items-center gap-3">
-      {src ? <img src={src} alt="" className={`${round ? 'w-12 h-12 rounded-full' : 'w-24 h-16 rounded-lg'} object-cover border border-[#3B0A2E]/10`} />
+      {src ? <img loading="lazy" decoding="async" src={src} alt="" className={`${round ? 'w-12 h-12 rounded-full' : 'w-24 h-16 rounded-lg'} object-cover border border-[#3B0A2E]/10`} />
         : <span className={`${round ? 'w-12 h-12 rounded-full' : 'w-24 h-16 rounded-lg'} bg-[#faf2f7] border border-[#3B0A2E]/10`} />}
       <label className="text-[12.5px] font-semibold text-[#B4247E] flex items-center gap-1.5 cursor-pointer">
         {busy ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14} />} {value ? 'Replace' : 'Upload'}

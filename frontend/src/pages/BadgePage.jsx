@@ -27,7 +27,7 @@ export default function BadgePage() {
         <h1 className="font-serif text-4xl sm:text-5xl text-[#3B0A2E] font-semibold mb-3" data-testid="badge-name">{b.name}</h1>
         <p className="text-[17px] text-[#241019]/70 mb-1">earned the <strong className="text-[#B4247E]" data-testid="badge-label">{b.label}</strong> badge</p>
         <p className="text-[13px] text-[#241019]/50 mb-10">Awarded {date} by The Caring Sisters Club</p>
-        <img src={`${BACKEND_URL}/api/share/badge/${token}/card.png`} alt={`${b.label} badge card`} className="w-full max-w-xl mx-auto rounded-2xl shadow-lg mb-10" data-testid="badge-card-image" />
+        <img loading="lazy" decoding="async" src={`${BACKEND_URL}/api/share/badge/${token}/card.png`} alt={`${b.label} badge card`} className="w-full max-w-xl mx-auto rounded-2xl shadow-lg mb-10" data-testid="badge-card-image" />
         <h2 className="font-serif text-[22px] text-[#3B0A2E] font-semibold mb-4">Share my badge</h2>
         <ShareBar testid="badge" url={`${BACKEND_URL}/api/share/badge/${token}`} text={`I earned the ${b.label} ${b.kind === 'participant' ? '' : 'volunteer '}badge with The Caring Sisters Club!`} />
         <Link to={b.kind === 'participant' ? '/sessions' : '/volunteer'} data-testid="badge-volunteer-link" className="inline-block mt-10 btn-gold rounded-full px-7 py-3 font-semibold text-[14px]">{b.kind === 'participant' ? 'Join a session' : 'Volunteer with us too'}</Link>

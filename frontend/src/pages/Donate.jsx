@@ -95,7 +95,7 @@ export default function Donate() {
             </div>
             <div className="relative mb-6">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#3B0A2E] font-semibold">$</span>
-              <input type="number" min={1} placeholder="Other amount" value={custom} onChange={(e) => setCustom(e.target.value)}
+              <input type="number" inputMode="decimal" min={1} placeholder="Other amount" value={custom} onChange={(e) => setCustom(e.target.value)}
                 className="w-full rounded-xl border-2 border-[#3B0A2E]/12 pl-8 pr-4 py-3.5 text-[15px] focus:outline-none focus:border-[#B4247E]" />
             </div>
 
@@ -116,7 +116,7 @@ export default function Donate() {
               </div>
               <div>
                 <label className="text-[13px] font-semibold text-[#3B0A2E]">Email <span className="text-[#241019]/40 font-normal">(optional)</span></label>
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                <input type="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)}
                   className="w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
               </div>
             </div>

@@ -76,7 +76,7 @@ export const ProgramSignup = ({ program: p }) => {
               <SeatsBadge p={p} className="mb-5" />
               <div className="grid sm:grid-cols-2 gap-4 mt-2">
                 <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Full Name</label><input required value={form.name} onChange={set('name')} className={inp} data-testid="signup-name-input" /></div>
-                <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Email</label><input required type="email" value={form.email} onChange={set('email')} className={inp} data-testid="signup-email-input" /></div>
+                <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Email</label><input required type="email" autoComplete="email" inputMode="email" value={form.email} onChange={set('email')} className={inp} data-testid="signup-email-input" /></div>
               </div>
               {sessions.length > 0 && (
                 <div className="mt-4"><label className="text-[13px] font-semibold text-[#3B0A2E]">Choose a session *</label>

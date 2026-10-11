@@ -40,7 +40,7 @@ export default function Home() {
           </div>
           <Reveal className="relative">
             <div className="relative rounded-[24px] overflow-hidden img-zoom" style={{ boxShadow: '0 40px 80px -30px rgba(0,0,0,0.6)' }}>
-              <img src={hero.image} alt="Confident professional woman of the Diaspora in a magenta blazer" className="w-full h-[420px] lg:h-[560px] object-cover" />
+              <img fetchpriority="high" src={hero.image} alt="Confident professional woman of the Diaspora in a magenta blazer" className="w-full h-[420px] lg:h-[560px] object-cover" />
               <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, transparent 55%, rgba(41,6,31,0.55))' }} />
             </div>
             <div className="absolute -bottom-6 -left-6 bg-[#F7EFE9] rounded-2xl px-6 py-4 shadow-xl hidden md:block">
@@ -57,7 +57,7 @@ export default function Home() {
       <section className="py-20 lg:py-28">
         <div className="max-w-7xl mx-auto px-5 lg:px-8 grid lg:grid-cols-2 gap-14 items-center">
           <Reveal className="img-zoom rounded-[24px] overflow-hidden order-2 lg:order-1">
-            <img src={imgSrc(home.mission_image, DEFAULT_MISSION_IMAGE)} alt="A member of the Caring Sisters Club smiling with confidence" className="w-full h-[440px] object-cover" />
+            <img loading="lazy" decoding="async" src={imgSrc(home.mission_image, DEFAULT_MISSION_IMAGE)} alt="A member of the Caring Sisters Club smiling with confidence" className="w-full h-[440px] object-cover" />
           </Reveal>
           <Reveal delay={120} className="order-1 lg:order-2">
             <p className="eyebrow text-[#B4247E] mb-4">{home.mission_heading}</p>

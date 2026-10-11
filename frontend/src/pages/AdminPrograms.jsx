@@ -28,7 +28,7 @@ function ImageField({ value, onChange, title }) {
   };
   return (
     <div className="flex items-center gap-4">
-      <img src={eventImg(value)} alt="" className="w-28 h-20 rounded-lg object-cover border border-[#3B0A2E]/10" />
+      <img loading="lazy" decoding="async" src={eventImg(value)} alt="" className="w-28 h-20 rounded-lg object-cover border border-[#3B0A2E]/10" />
       <label className="text-[13px] font-semibold text-[#B4247E] flex items-center gap-2 cursor-pointer">
         {uploading ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={15} />} {value ? 'Replace image' : 'Upload image'}
         <input type="file" accept="image/*" className="hidden" data-testid="program-image-input" onChange={(e) => upload(e.target.files?.[0])} />
@@ -164,7 +164,7 @@ function GalleryEditor({ items, onChange }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {items.map((g, i) => (
           <div key={g.url} className="relative" data-testid="program-gallery-item">
-            <img src={imgSrc(g.url)} alt="" className="w-full h-24 rounded-lg object-cover" />
+            <img loading="lazy" decoding="async" src={imgSrc(g.url)} alt="" className="w-full h-24 rounded-lg object-cover" />
             <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} data-testid={`program-gallery-del-${i}`}
               className="absolute top-1 right-1 w-6 h-6 rounded-full bg-white/90 text-red-500 flex items-center justify-center"><X size={13} /></button>
             <input value={g.caption} onChange={(e) => onChange(items.map((x, j) => (j === i ? { ...x, caption: e.target.value } : x)))}
@@ -272,7 +272,7 @@ function ProgramRow({ p, first, last, onMove, onEdit, onToggle, onDelete, onWait
         <button onClick={() => onMove(-1)} disabled={first} className={iconBtn} data-testid="program-move-up-btn"><ArrowUp size={15} /></button>
         <button onClick={() => onMove(1)} disabled={last} className={iconBtn} data-testid="program-move-down-btn"><ArrowDown size={15} /></button>
       </div>
-      <img src={eventImg(p.image_url)} alt="" className="w-full sm:w-28 h-20 rounded-xl object-cover" />
+      <img loading="lazy" decoding="async" src={eventImg(p.image_url)} alt="" className="w-full sm:w-28 h-20 rounded-xl object-cover" />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <h4 className="font-serif text-[18px] text-[#3B0A2E] font-semibold truncate" data-testid="admin-program-title">{p.title}</h4>

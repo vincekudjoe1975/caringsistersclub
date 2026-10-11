@@ -23,7 +23,7 @@ export default function About() {
       <section className="py-20 lg:py-24">
         <div className="max-w-7xl mx-auto px-5 lg:px-8 grid lg:grid-cols-2 gap-14 items-center">
           <Reveal className="img-zoom rounded-[24px] overflow-hidden">
-            <img src={imgSrc(a.mission_image, mission.image)} alt="Caring Sisters Club member" className="w-full h-[460px] object-cover" />
+            <img loading="lazy" decoding="async" src={imgSrc(a.mission_image, mission.image)} alt="Caring Sisters Club member" className="w-full h-[460px] object-cover" />
           </Reveal>
           <Reveal delay={120}>
             <p className="eyebrow text-[#B4247E] mb-4">Our Mission</p>
@@ -84,7 +84,7 @@ export default function About() {
                     <span className="eyebrow text-[#CBA24B]">{s.year}</span>
                     <h3 className="font-serif text-[20px] text-[#3B0A2E] font-semibold mt-1 mb-2">{s.title}</h3>
                     <p className="text-[#241019]/70 text-[14.5px] leading-relaxed">{s.text}</p>
-                    {s.image && <img src={imgSrc(s.image)} alt={s.title} className="mt-4 w-full h-40 object-cover rounded-xl" />}
+                    {s.image && <img loading="lazy" decoding="async" src={imgSrc(s.image)} alt={s.title} className="mt-4 w-full h-40 object-cover rounded-xl" />}
                   </div>
                 </div>
               </Reveal>

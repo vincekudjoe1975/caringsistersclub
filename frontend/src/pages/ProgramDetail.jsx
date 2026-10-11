@@ -35,7 +35,7 @@ export default function ProgramDetail() {
   return (
     <div data-testid="program-detail">
       <section className="relative pt-36 pb-20 lg:pt-44 lg:pb-28 overflow-hidden" style={{ background: '#29061F' }}>
-        <img src={eventImg(p.image_url)} alt="" className="absolute inset-0 w-full h-full object-cover opacity-30" />
+        <img loading="lazy" decoding="async" src={eventImg(p.image_url)} alt="" className="absolute inset-0 w-full h-full object-cover opacity-30" />
         <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(41,6,31,0.95) 30%, rgba(41,6,31,0.45))' }} />
         <div className="relative max-w-5xl mx-auto px-5 lg:px-8">
           <Link to="/initiatives" className="inline-flex items-center gap-2 text-[#F7EFE9]/70 hover:text-[#F7EFE9] text-[13.5px] mb-6"><ArrowLeft size={15} /> All Programs</Link>
@@ -128,7 +128,7 @@ function Gallery({ items }) {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {items.map((g, i) => (
             <button key={g.url} onClick={() => setIdx(i)} className="img-zoom rounded-xl overflow-hidden aspect-[4/3] block" data-testid="program-gallery-photo">
-              <img src={imgSrc(g.url)} alt={g.caption || ''} className="w-full h-full object-cover" />
+              <img loading="lazy" decoding="async" src={imgSrc(g.url)} alt={g.caption || ''} className="w-full h-full object-cover" />
             </button>
           ))}
         </div>
@@ -138,7 +138,7 @@ function Gallery({ items }) {
           <DialogTitle className="sr-only">{cur?.caption || 'Program photo'}</DialogTitle>
           {cur && (
             <div className="relative">
-              <img src={imgSrc(cur.url)} alt={cur.caption || ''} className="w-full max-h-[75vh] object-contain rounded-lg" />
+              <img loading="lazy" decoding="async" src={imgSrc(cur.url)} alt={cur.caption || ''} className="w-full max-h-[75vh] object-contain rounded-lg" />
               {cur.caption && <p className="text-[#F7EFE9]/85 text-[14px] text-center mt-3">{cur.caption}</p>}
               {items.length > 1 && <>
                 <button onClick={() => go(-1)} className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/85 flex items-center justify-center" data-testid="gallery-prev-btn"><ChevronLeft size={20} /></button>

@@ -32,7 +32,7 @@ export function SpotlightArchive() {
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="spotlight-gallery">
         {rows.map((s) => (
           <button key={s.id} data-testid={`spotlight-tile-${s.id}`} onClick={() => setOpen(s)} className="text-left bg-white rounded-2xl overflow-hidden border border-[#3B0A2E]/8 hover:-translate-y-1 transition-transform duration-300">
-            {s.photo_url ? <img src={src(s.photo_url)} alt={s.name} referrerPolicy="no-referrer" className="w-full h-52 object-cover" /> : <div className="h-52" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }} />}
+            {s.photo_url ? <img loading="lazy" decoding="async" src={src(s.photo_url)} alt={s.name} referrerPolicy="no-referrer" className="w-full h-52 object-cover" /> : <div className="h-52" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }} />}
             <div className="p-4"><p className="text-[11.5px] text-[#CBA24B] font-semibold uppercase tracking-wider">{monthLabel(s.month)}</p><p className="font-serif text-[19px] text-[#3B0A2E] font-semibold">{s.name}</p><p className="text-[13px] text-[#241019]/65 line-clamp-2 mt-1">{s.story}</p></div>
           </button>
         ))}
@@ -40,7 +40,7 @@ export function SpotlightArchive() {
       {open && (
         <div data-testid="spotlight-modal" className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setOpen(null)}>
           <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            {open.photo_url && <img src={src(open.photo_url)} alt={open.name} referrerPolicy="no-referrer" className="w-full max-h-96 object-cover" />}
+            {open.photo_url && <img loading="lazy" decoding="async" src={src(open.photo_url)} alt={open.name} referrerPolicy="no-referrer" className="w-full max-h-96 object-cover" />}
             <div className="p-7">
               <div className="flex justify-between"><p className="eyebrow text-[#CBA24B] flex items-center gap-2"><Star size={14} /> {monthLabel(open.month)}</p><button data-testid="spotlight-modal-close" onClick={() => setOpen(null)}><X size={20} /></button></div>
               <h3 className="font-serif text-[28px] text-[#3B0A2E] font-semibold mt-1 mb-3">{open.name}</h3>

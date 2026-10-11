@@ -72,7 +72,7 @@ function EventForm({ initial, onClose, onSaved }) {
         </Field>
         <Field label="Description"><textarea rows={4} value={form.description} onChange={set('description')} data-testid="event-description-input" className={`${input} resize-none`} /></Field>
         <div className="flex items-center gap-4">
-          <img src={eventImg(form.image_url)} alt="" className="w-28 h-20 rounded-lg object-cover border border-[#3B0A2E]/10" />
+          <img loading="lazy" decoding="async" src={eventImg(form.image_url)} alt="" className="w-28 h-20 rounded-lg object-cover border border-[#3B0A2E]/10" />
           <label className="text-[13px] font-semibold text-[#B4247E] flex items-center gap-2 cursor-pointer">
             {uploading ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={15} />} {form.image_url ? 'Replace image' : 'Upload image'}
             <input type="file" accept="image/*" className="hidden" data-testid="event-image-input" onChange={(e) => upload(e.target.files?.[0])} />
@@ -197,7 +197,7 @@ function AdminEventRow({ ev, onEdit, onRsvps, onDelete }) {
   const pct = Math.min(100, Math.round((ev.seats_taken / ev.capacity) * 100));
   return (
     <div className={`bg-white rounded-2xl border border-[#3B0A2E]/8 p-4 flex flex-col sm:flex-row gap-4 sm:items-center ${past ? 'opacity-60' : ''}`} data-testid="admin-event-row">
-      <img src={eventImg(ev.image_url)} alt="" className="w-full sm:w-32 h-24 rounded-xl object-cover" />
+      <img loading="lazy" decoding="async" src={eventImg(ev.image_url)} alt="" className="w-full sm:w-32 h-24 rounded-xl object-cover" />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
           <h4 className="font-serif text-[18px] text-[#3B0A2E] font-semibold truncate">{ev.title}</h4>

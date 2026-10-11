@@ -10,17 +10,18 @@ const CHIPS = [['all', 'All'], ['event', 'Events'], ['program', 'Programs']];
 
 export function Lightbox({ items, idx, setIdx }) {
   const g = items[idx];
+  const touch = React.useRef(null);
   const go = useCallback((d) => setIdx((p) => (p + d + items.length) % items.length), [items.length, setIdx]);
   useEffect(() => {
     const k = (e) => { if (e.key === 'Escape') setIdx(null); else if (e.key === 'ArrowRight') go(1); else if (e.key === 'ArrowLeft') go(-1); };
     window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k);
   }, [go, setIdx]);
   return (
-    <div data-testid="gallery-lightbox" className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-8 animate-[fadeIn_.25s_ease]" style={{ background: 'rgba(41,6,31,0.94)' }} onClick={() => setIdx(null)}>
+    <div data-testid="gallery-lightbox" onTouchStart={(e) => { touch.current = e.touches[0].clientX; }} onTouchEnd={(e) => { if (touch.current == null) return; const dx = e.changedTouches[0].clientX - touch.current; touch.current = null; if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1); }} className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-8 animate-[fadeIn_.25s_ease]" style={{ background: 'rgba(41,6,31,0.94)' }} onClick={() => setIdx(null)}>
       <button data-testid="gallery-lightbox-close" className="absolute top-5 right-5 text-[#F7EFE9] hover:text-[#CBA24B] z-10" onClick={() => setIdx(null)}><X size={32} /></button>
-      <button data-testid="gallery-lightbox-prev" className="absolute left-2 md:left-6 text-[#F7EFE9] hover:text-[#CBA24B] z-10" onClick={(e) => { e.stopPropagation(); go(-1); }}><ChevronLeft size={40} /></button>
+      <button data-testid="gallery-lightbox-prev" className="absolute left-1 md:left-6 p-2 text-[#F7EFE9] hover:text-[#CBA24B] z-10 bg-black/20 md:bg-transparent rounded-full" onClick={(e) => { e.stopPropagation(); go(-1); }}><ChevronLeft size={40} /></button>
       <div key={idx} className="max-w-6xl w-full flex flex-col lg:flex-row gap-6 items-center animate-[zoomIn_.35s_ease]" onClick={(e) => e.stopPropagation()}>
-        <img src={g.src} alt={g.caption} className="w-full lg:w-[68%] max-h-[62vh] lg:max-h-[80vh] object-contain rounded-xl" />
+        <img loading="lazy" decoding="async" src={g.src} alt={g.caption} className="w-full lg:w-[68%] max-h-[62vh] lg:max-h-[80vh] object-contain rounded-xl" />
         {(g.caption || g.description || g.tag_label) && (
           <div className="lg:flex-1 w-full text-[#F7EFE9] max-h-[30vh] lg:max-h-[80vh] overflow-y-auto">
             {g.tag_label && <p className="eyebrow text-[#CBA24B] mb-2 flex items-center gap-1.5">{g.tag_type === 'event' ? <CalendarHeart size={13} /> : <Layers size={13} />} {g.tag_label}</p>}
@@ -31,7 +32,7 @@ export function Lightbox({ items, idx, setIdx }) {
           </div>
         )}
       </div>
-      <button data-testid="gallery-lightbox-next" className="absolute right-2 md:right-6 text-[#F7EFE9] hover:text-[#CBA24B] z-10" onClick={(e) => { e.stopPropagation(); go(1); }}><ChevronRight size={40} /></button>
+      <button data-testid="gallery-lightbox-next" className="absolute right-1 md:right-6 p-2 text-[#F7EFE9] hover:text-[#CBA24B] z-10 bg-black/20 md:bg-transparent rounded-full" onClick={(e) => { e.stopPropagation(); go(1); }}><ChevronRight size={40} /></button>
     </div>
   );
 }
@@ -73,7 +74,7 @@ export default function Gallery() {
                 <Reveal key={a.slug} delay={(i % 3) * 90}>
                   <Link to={`/gallery/album/${a.slug}`} data-testid={`gallery-album-${a.slug}`} className="group block bg-white rounded-2xl overflow-hidden border border-[#3B0A2E]/8 transition-[transform,box-shadow] duration-500 hover:-translate-y-1.5 hover:shadow-[0_30px_60px_-30px_rgba(59,10,46,0.45)]">
                     <div className="h-64 relative overflow-hidden">
-                      {a.cover_url ? <img src={mediaSrc(a.cover_url)} alt={a.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]" /> : <div className="w-full h-full" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }} />}
+                      {a.cover_url ? <img loading="lazy" decoding="async" src={mediaSrc(a.cover_url)} alt={a.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]" /> : <div className="w-full h-full" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }} />}
                       <span className="absolute top-3 right-3 bg-white/90 text-[#3B0A2E] text-[11.5px] font-semibold rounded-full px-3 py-1">{a.count} photo{a.count === 1 ? '' : 's'}</span>
                     </div>
                     <div className="p-6">
@@ -106,7 +107,7 @@ export default function Gallery() {
             {items.map((g, i) => (
               <Reveal key={`${g.src}-${i}`} delay={(i % 3) * 80}>
                 <button data-testid={`gallery-item-${i}`} onClick={() => setIdx(i)} className="block w-full img-zoom rounded-2xl overflow-hidden relative group">
-                  <img src={g.src} alt={g.caption} className={`w-full object-cover ${g.uploaded ? '' : g.tall ? 'h-[420px]' : 'h-[290px]'}`} />
+                  <img loading="lazy" decoding="async" src={g.src} alt={g.caption} className={`w-full object-cover ${g.uploaded ? '' : g.tall ? 'h-[420px]' : 'h-[290px]'}`} />
                   {g.tag_label && <span className="absolute top-3 left-3 bg-white/90 text-[#3B0A2E] text-[11px] font-semibold rounded-full px-3 py-1">{g.tag_label}</span>}
                   <div className="absolute inset-0 flex flex-col justify-end p-5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-left" style={{ background: 'linear-gradient(transparent 45%, rgba(41,6,31,0.85))' }}>
                     <p className="text-[#F7EFE9] text-[15px] font-semibold">{g.caption}</p>

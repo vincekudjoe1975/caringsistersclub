@@ -47,7 +47,7 @@ export const LogHours = () => {
               <p className="text-[14px] text-[#241019]/65 mb-5">Already volunteering with us? Record your time so we can celebrate it in our impact report.</p>
               <div className="grid sm:grid-cols-2 gap-4">
                 <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Full Name</label><input required value={form.name} onChange={set('name')} className={inp} data-testid="hours-name-input" /></div>
-                <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Email</label><input required type="email" value={form.email} onChange={set('email')} className={inp} data-testid="hours-email-input" /></div>
+                <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Email</label><input required type="email" autoComplete="email" inputMode="email" value={form.email} onChange={set('email')} className={inp} data-testid="hours-email-input" /></div>
                 <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Program</label>
                   <select required value={form.program_id} onChange={set('program_id')} className={inp} data-testid="hours-program-select">
                     <option value="">Choose a program…</option>
@@ -56,7 +56,7 @@ export const LogHours = () => {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Date</label><input required type="date" max={today()} value={form.date} onChange={set('date')} className={inp} data-testid="hours-date-input" /></div>
-                  <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Hours</label><input required type="number" min={0.25} max={24} step={0.25} value={form.hours} onChange={set('hours')} className={inp} data-testid="hours-hours-input" /></div>
+                  <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Hours</label><input required type="number" inputMode="decimal" min={0.25} max={24} step={0.25} value={form.hours} onChange={set('hours')} className={inp} data-testid="hours-hours-input" /></div>
                 </div>
               </div>
               <div className="mt-4"><label className="text-[13px] font-semibold text-[#3B0A2E]">What did you do? (optional)</label><input value={form.note} onChange={set('note')} className={inp} data-testid="hours-note-input" /></div>
@@ -201,7 +201,7 @@ export const CertificateRequest = () => {
           <p className="text-[#F7EFE9]/75 text-[14px] mb-5">Earned a 50 or 100-hour badge? Enter the email you log hours with and we'll send your printable certificate.</p>
           {msg ? <p className="text-[14px] text-[#CBA24B] font-semibold flex items-center gap-2" data-testid="certificate-request-success"><CheckCircle2 size={18} /> {msg}</p> : (
             <form onSubmit={submit} className="flex flex-col sm:flex-row gap-3">
-              <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" data-testid="certificate-email-input" className="flex-1 rounded-full px-5 py-3 text-[14px] text-[#241019] focus:outline-none" />
+              <input required type="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" data-testid="certificate-email-input" className="flex-1 rounded-full px-5 py-3 text-[14px] text-[#241019] focus:outline-none" />
               <button type="submit" disabled={busy} data-testid="certificate-request-btn" className="btn-gold rounded-full px-7 py-3 font-semibold text-[14px] flex items-center justify-center gap-2 disabled:opacity-60">{busy && <Loader2 size={15} className="animate-spin" />} Email My Certificate</button>
             </form>
           )}

@@ -30,7 +30,7 @@ export default function SisterhoodPage() {
             })}
           </div>
         )}
-        <img src={`${BACKEND_URL}/api/share/sisterhood/${token}/card.png`} alt="All my badges" className="w-full max-w-xl mx-auto rounded-2xl shadow-lg mb-8" data-testid="sisterhood-card-image" />
+        <img loading="lazy" decoding="async" src={`${BACKEND_URL}/api/share/sisterhood/${token}/card.png`} alt="All my badges" className="w-full max-w-xl mx-auto rounded-2xl shadow-lg mb-8" data-testid="sisterhood-card-image" />
         <h2 className="font-serif text-[22px] text-[#3B0A2E] font-semibold mb-4">Share all my badges</h2>
         <ShareBar testid="sisterhood" url={`${BACKEND_URL}/api/share/sisterhood/${token}`} text={`I've earned ${d.badges.length} badges with The Caring Sisters Club!`} />
       </div>

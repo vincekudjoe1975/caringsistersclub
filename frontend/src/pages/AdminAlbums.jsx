@@ -28,7 +28,7 @@ function AlbumForm({ album, photos, onClose, onSaved }) {
             <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
               {mine.map((p) => (
                 <button type="button" key={p.id} data-testid={`album-cover-${p.id}`} onClick={() => setF({ ...f, cover_id: p.id })} className={`relative rounded-lg overflow-hidden ring-2 ${f.cover_id === p.id ? 'ring-[#B4247E]' : 'ring-transparent'}`}>
-                  <img src={mediaSrc(p.url)} alt="" className="w-full h-16 object-cover" />
+                  <img loading="lazy" decoding="async" src={mediaSrc(p.url)} alt="" className="w-full h-16 object-cover" />
                   {f.cover_id === p.id && <span className="absolute top-1 right-1 bg-[#B4247E] text-white rounded-full p-0.5"><Check size={10} /></span>}
                 </button>
               ))}
@@ -62,7 +62,7 @@ export function AdminAlbums({ albums, photos, reload }) {
         <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
           {albums.map((a) => (
             <div key={a.key} data-testid={`album-row-${a.slug}`} className="flex items-center gap-3 rounded-xl border border-[#3B0A2E]/8 p-2.5">
-              {a.cover_url ? <img src={mediaSrc(a.cover_url)} alt="" className="w-14 h-14 rounded-lg object-cover" /> : <span className="w-14 h-14 rounded-lg" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }} />}
+              {a.cover_url ? <img loading="lazy" decoding="async" src={mediaSrc(a.cover_url)} alt="" className="w-14 h-14 rounded-lg object-cover" /> : <span className="w-14 h-14 rounded-lg" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }} />}
               <div className="flex-1 min-w-0"><p className="font-semibold text-[13.5px] text-[#3B0A2E] truncate">{a.title}</p><p className="text-[11.5px] text-[#241019]/55">{a.manual ? 'Custom' : a.tag_type === 'event' ? 'Event tag' : 'Program tag'} · {a.count} photo{a.count === 1 ? '' : 's'}{a.story ? '' : ' · no story yet'}</p></div>
               <button data-testid={`album-edit-${a.slug}`} onClick={() => setEdit(a)} className="text-[#241019]/50 hover:text-[#B4247E]"><Pencil size={15} /></button>
               {a.manual && <button data-testid={`album-delete-${a.slug}`} onClick={() => del(a)} className="text-[#241019]/50 hover:text-red-600"><Trash2 size={15} /></button>}

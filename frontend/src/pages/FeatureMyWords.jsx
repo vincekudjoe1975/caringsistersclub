@@ -42,7 +42,7 @@ export default function FeatureMyWords() {
       <p className="text-[13.5px] text-[#241019]/60 mb-5">About {info.program || 'your session'}. We'll show your first name and last initial.</p>
       <blockquote className="rounded-xl px-5 py-4 mb-6 text-left italic text-[14px] text-[#3B0A2E]" style={{ background: '#faf2f7', borderLeft: '4px solid #B4247E' }} data-testid="feature-words-quote">"{info.quote}"</blockquote>
       <div className="flex items-center justify-center gap-4 mb-6">
-        {photo && <img src={mediaSrc(photo)} alt="Your upload" className="w-16 h-16 rounded-full object-cover" data-testid="feature-words-photo-preview" />}
+        {photo && <img loading="lazy" decoding="async" src={mediaSrc(photo)} alt="Your upload" className="w-16 h-16 rounded-full object-cover" data-testid="feature-words-photo-preview" />}
         <label className="text-[13px] font-semibold text-[#B4247E] flex items-center gap-1.5 cursor-pointer px-4 py-2 rounded-full" style={{ border: '1px solid rgba(180,36,126,0.3)' }}>
           {busy === 'photo' ? <Loader2 size={14} className="animate-spin" /> : <ImagePlus size={14} />} {photo ? 'Change photo' : 'Add a photo (optional)'}
           <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => upload(e.target.files?.[0])} data-testid="feature-words-photo-input" />

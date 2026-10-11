@@ -24,7 +24,7 @@ export function Slideshow({ photos, title, onClose }) {
   return (
     <div ref={ref} data-testid="slideshow" className="fixed inset-0 z-[60] bg-black select-none">
       {photos.map((x, j) => (
-        <img key={x.id} src={full(x.url)} alt={x.caption || ''} className="absolute inset-0 w-full h-full object-contain transition-opacity duration-1000" style={{ opacity: j === i ? 1 : 0 }} />
+        <img loading="lazy" decoding="async" key={x.id} src={full(x.url)} alt={x.caption || ''} className="absolute inset-0 w-full h-full object-contain transition-opacity duration-1000" style={{ opacity: j === i ? 1 : 0 }} />
       ))}
       <button data-testid="slideshow-prev-zone" aria-label="Previous" onClick={() => go(-1)} className="absolute inset-y-0 left-0 w-1/3" />
       <button data-testid="slideshow-next-zone" aria-label="Next" onClick={() => go(1)} className="absolute inset-y-0 right-0 w-1/3" />

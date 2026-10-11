@@ -29,7 +29,7 @@ function StoryCard({ st, programs, onDone }) {
   return (
     <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 p-5" data-testid="story-submission">
       <div className="flex items-start gap-3">
-        {st.photo_url ? <img src={mediaSrc(st.photo_url)} alt="" className="w-12 h-12 rounded-full object-cover" /> : <span className="w-12 h-12 rounded-full bg-[#faf2f7]" />}
+        {st.photo_url ? <img loading="lazy" decoding="async" src={mediaSrc(st.photo_url)} alt="" className="w-12 h-12 rounded-full object-cover" /> : <span className="w-12 h-12 rounded-full bg-[#faf2f7]" />}
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-[#3B0A2E]">{st.name} <span className="font-normal text-[12px] text-[#241019]/55">{st.email}{st.role && ` · ${st.role}`}</span></p>
           <p className="text-[11.5px] text-[#241019]/50">{new Date(st.created_at).toLocaleString()}{st.program_title && ` · submitted on ${st.program_title}`}</p>

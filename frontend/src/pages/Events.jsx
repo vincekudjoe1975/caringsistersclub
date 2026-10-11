@@ -37,7 +37,7 @@ function EventCard({ ev, onRsvp }) {
   return (
     <div className="card-hover bg-white rounded-2xl overflow-hidden border border-[#3B0A2E]/8 grid md:grid-cols-[300px_1fr]" data-testid="event-card">
       <div className="img-zoom h-56 md:h-full">
-        <img src={eventImg(ev.image_url)} alt={ev.title} className="w-full h-full object-cover" />
+        <img loading="lazy" decoding="async" src={eventImg(ev.image_url)} alt={ev.title} className="w-full h-full object-cover" />
       </div>
       <div className="p-7 lg:p-9 flex flex-col justify-center">
         <div className="flex items-center gap-3 mb-3">
@@ -127,11 +127,11 @@ function RsvpForm({ ev, initialMode, onDone }) {
       </div>
       <div>
         <label className="text-[13px] font-semibold text-[#3B0A2E]">Email</label>
-        <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} data-testid="rsvp-email-input" className={input} />
+        <input required type="email" autoComplete="email" inputMode="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} data-testid="rsvp-email-input" className={input} />
       </div>
       <div>
         <label className="text-[13px] font-semibold text-[#3B0A2E]">Number of Guests (including you)</label>
-        <input type="number" min={1} max={10} value={form.guests} onChange={(e) => setForm({ ...form, guests: e.target.value })} data-testid="rsvp-guests-input" className={input} />
+        <input type="number" inputMode="decimal" min={1} max={10} value={form.guests} onChange={(e) => setForm({ ...form, guests: e.target.value })} data-testid="rsvp-guests-input" className={input} />
         {tooMany && (
           <p className="text-[12.5px] text-[#B4247E] mt-1.5" data-testid="rsvp-too-many">
             Only {ev.spots_left} spot{ev.spots_left !== 1 ? 's' : ''} left.{' '}

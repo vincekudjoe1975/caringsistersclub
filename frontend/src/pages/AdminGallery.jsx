@@ -40,7 +40,7 @@ function EditDialog({ item, programs, events, albums, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} data-testid="gallery-edit-form" className="bg-white rounded-2xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-7 space-y-4 animate-[zoomIn_.25s_ease]">
         <div className="flex items-center justify-between"><h3 className="font-serif text-[22px] text-[#3B0A2E] font-semibold">Edit photo</h3><button type="button" onClick={onClose}><X size={20} /></button></div>
-        <img src={mediaSrc(item.url)} alt="" className="w-full max-h-64 object-contain rounded-xl bg-[#F7EFE9]" />
+        <img loading="lazy" decoding="async" src={mediaSrc(item.url)} alt="" className="w-full max-h-64 object-contain rounded-xl bg-[#F7EFE9]" />
         <label className="block text-[13px] font-semibold text-[#3B0A2E]">Title<input data-testid="gallery-edit-title" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} maxLength={150} className={input} /></label>
         <label className="block text-[13px] font-semibold text-[#3B0A2E]">Description<textarea data-testid="gallery-edit-desc" rows={4} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} maxLength={2000} className={`${input} resize-y`} /></label>
         <TagFields f={f} setF={setF} programs={programs} events={events} albums={albums} />
@@ -119,7 +119,7 @@ export default function AdminGallery() {
               {rows.map((r) => (
                 <div key={r.id} data-testid={`gallery-row-${r.id}`} draggable onDragStart={() => setDragId(r.id)} onDragOver={(e) => e.preventDefault()} onDrop={() => drop(r.id)}
                   className={`bg-white rounded-2xl overflow-hidden border border-[#3B0A2E]/8 transition-[opacity,transform] ${dragId === r.id ? 'opacity-50 scale-95' : ''} ${r.hidden ? 'opacity-60' : ''}`}>
-                  <div className="h-44 relative"><img src={mediaSrc(r.url)} alt="" className="w-full h-full object-cover" />
+                  <div className="h-44 relative"><img loading="lazy" decoding="async" src={mediaSrc(r.url)} alt="" className="w-full h-full object-cover" />
                     <span className="absolute top-2 left-2 bg-white/90 rounded-full p-1 cursor-grab text-[#3B0A2E]"><GripVertical size={15} /></span>
                     {r.hidden && <span className="absolute top-2 right-2 bg-[#3B0A2E] text-white text-[11px] font-semibold rounded-full px-2.5 py-0.5">Hidden</span>}
                     {r.tag_label && <span className="absolute bottom-2 left-2 bg-white/90 text-[#3B0A2E] text-[11px] font-semibold rounded-full px-2.5 py-0.5">{r.tag_label}</span>}</div>

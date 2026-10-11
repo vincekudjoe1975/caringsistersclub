@@ -128,7 +128,7 @@ export default function Admin() {
             <button onClick={() => navigate('/')} className="text-[#F7EFE9]/80 hover:text-[#F7EFE9] text-[13.5px] flex items-center gap-1.5">
               <Home size={15} /> View Site
             </button>
-            {user && user.picture && <img src={user.picture} alt="" className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />}
+            {user && user.picture && <img loading="lazy" decoding="async" src={user.picture} alt="" className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />}
             <button onClick={logout} className="btn-magenta rounded-full px-4 py-2 text-[13px] font-semibold flex items-center gap-1.5">
               <LogOut size={14} /> Logout
             </button>
@@ -284,7 +284,7 @@ export default function Admin() {
                 {items.map((it) => (
                   <div key={it.id} className="bg-white rounded-2xl overflow-hidden border border-[#3B0A2E]/8 group">
                     <div className="relative h-48">
-                      <img src={mediaSrc(it.url)} alt={it.title || ''} className="w-full h-full object-cover" />
+                      <img loading="lazy" decoding="async" src={mediaSrc(it.url)} alt={it.title || ''} className="w-full h-full object-cover" />
                       <button onClick={() => handleDelete(it.id)} className="absolute top-2 right-2 w-9 h-9 rounded-full bg-white/90 flex items-center justify-center text-red-500 hover:bg-white opacity-0 group-hover:opacity-100 transition-opacity">
                         <Trash2 size={16} />
                       </button>

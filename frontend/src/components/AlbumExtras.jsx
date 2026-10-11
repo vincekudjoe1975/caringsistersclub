@@ -30,7 +30,7 @@ export function LatestAlbum() {
     <section className="py-20 lg:py-24" data-testid="home-latest-album">
       <div className="max-w-7xl mx-auto px-5 lg:px-8">
         <Link to={`/gallery/album/${a.slug}`} data-testid="home-latest-album-link" className="group grid lg:grid-cols-[1.25fr_1fr] rounded-[28px] overflow-hidden bg-white border border-[#3B0A2E]/8 transition-shadow duration-500 hover:shadow-[0_40px_80px_-40px_rgba(59,10,46,0.5)]">
-          <div className="h-72 lg:h-[420px] overflow-hidden">{a.cover_url && <img src={mediaSrc(a.cover_url)} alt={a.title} className="w-full h-full object-cover transition-transform duration-[1200ms] group-hover:scale-[1.05]" />}</div>
+          <div className="h-72 lg:h-[420px] overflow-hidden">{a.cover_url && <img loading="lazy" decoding="async" src={mediaSrc(a.cover_url)} alt={a.title} className="w-full h-full object-cover transition-transform duration-[1200ms] group-hover:scale-[1.05]" />}</div>
           <div className="p-8 lg:p-12 flex flex-col justify-center">
             <p className="eyebrow text-[#B4247E] mb-3">From the gallery{a.date ? ` · ${new Date(`${a.date}T12:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}` : ''}</p>
             <h2 className="font-serif text-[30px] lg:text-[40px] text-[#3B0A2E] font-semibold leading-tight">{a.title}</h2>

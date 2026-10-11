@@ -29,7 +29,7 @@ export default function Footer() {
             <ul className="space-y-2.5">
               {nav.map((n) => (
                 <li key={n.to}>
-                  <Link to={n.to} className="text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9] transition-colors">{n.label}</Link>
+                  <Link to={n.to} className="inline-block py-1.5 lg:py-0 text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9] transition-colors">{n.label}</Link>
                 </li>
               ))}
             </ul>
@@ -38,12 +38,12 @@ export default function Footer() {
           <div>
             <h4 className="eyebrow text-[#CBA24B] mb-4">Get Involved</h4>
             <ul className="space-y-2.5">
-              <li><Link to="/donate" className="text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Donate</Link></li>
-              <li><Link to="/volunteer" className="text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Volunteer & Join</Link></li>
-              <li><Link to="/membership" data-testid="footer-membership" className="text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Membership</Link></li>
-              <li><Link to="/events" className="text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Upcoming Events</Link></li>
-              <li><Link to="/transparency" className="text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Financial Transparency</Link></li>
-              <li><Link to="/manage-gift" data-testid="footer-manage-gift-link" className="text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Manage My Monthly Gift</Link></li>
+              <li><Link to="/donate" className="inline-block py-1.5 lg:py-0 text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Donate</Link></li>
+              <li><Link to="/volunteer" className="inline-block py-1.5 lg:py-0 text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Volunteer & Join</Link></li>
+              <li><Link to="/membership" data-testid="footer-membership" className="inline-block py-1.5 lg:py-0 text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Membership</Link></li>
+              <li><Link to="/events" className="inline-block py-1.5 lg:py-0 text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Upcoming Events</Link></li>
+              <li><Link to="/transparency" className="inline-block py-1.5 lg:py-0 text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Financial Transparency</Link></li>
+              <li><Link to="/manage-gift" data-testid="footer-manage-gift-link" className="inline-block py-1.5 lg:py-0 text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Manage My Monthly Gift</Link></li>
             </ul>
           </div>
 

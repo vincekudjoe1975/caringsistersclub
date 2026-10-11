@@ -7,7 +7,7 @@ const initials = (n) => (n || '?').split(' ').map((x) => x[0]).slice(0, 2).join(
 
 export function LeaderPhoto({ m, className = '' }) {
   return m.photo_url
-    ? <img src={leaderPhoto(m.photo_url)} alt={m.name} className={`w-full h-full object-cover ${className}`} style={{ objectPosition: 'center 20%' }} />
+    ? <img loading="lazy" decoding="async" src={leaderPhoto(m.photo_url)} alt={m.name} className={`w-full h-full object-cover ${className}`} style={{ objectPosition: 'center 20%' }} />
     : <div className={`w-full h-full flex items-center justify-center font-serif text-5xl text-white/80 ${className}`} style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }}>{initials(m.name)}</div>;
 }
 

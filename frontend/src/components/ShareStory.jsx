@@ -33,12 +33,12 @@ function StoryForm({ programSlug, onDone }) {
     <form onSubmit={submit} className="space-y-3 mt-1">
       <div className="grid grid-cols-2 gap-3">
         <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Name</label><input required value={form.name} onChange={set('name')} className={inp} data-testid="story-name-input" /></div>
-        <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Email</label><input required type="email" value={form.email} onChange={set('email')} className={inp} data-testid="story-email-input" /></div>
+        <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Email</label><input required type="email" autoComplete="email" inputMode="email" value={form.email} onChange={set('email')} className={inp} data-testid="story-email-input" /></div>
       </div>
       <div><label className="text-[13px] font-semibold text-[#3B0A2E]">How are you connected? (optional)</label><input value={form.role} onChange={set('role')} placeholder="Member since 2023" className={inp} data-testid="story-role-input" /></div>
       <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Your story</label><textarea required rows={4} value={form.quote} onChange={set('quote')} className={`${inp} resize-y`} data-testid="story-quote-input" /></div>
       <div className="flex items-center gap-3">
-        {form.photo_url && <img src={mediaSrc(form.photo_url)} alt="" className="w-12 h-12 rounded-full object-cover" />}
+        {form.photo_url && <img loading="lazy" decoding="async" src={mediaSrc(form.photo_url)} alt="" className="w-12 h-12 rounded-full object-cover" />}
         <label className="text-[13px] font-semibold text-[#B4247E] flex items-center gap-2 cursor-pointer">
           {uploading ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={15} />} {form.photo_url ? 'Change photo' : 'Add a photo (optional)'}
           <input type="file" accept="image/*" className="hidden" data-testid="story-photo-input" onChange={(e) => upload(e.target.files?.[0])} />

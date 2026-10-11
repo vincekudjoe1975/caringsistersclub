@@ -20,7 +20,7 @@ function WalkIn({ sid, onAdded, onClose }) {
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} data-testid="walkin-form" className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-3 animate-[slideUp_.3s_ease]">
         <div className="flex items-center justify-between"><h3 className="font-serif text-[21px] text-[#3B0A2E] font-semibold">Add walk-in</h3><button type="button" onClick={onClose}><X size={20} /></button></div>
         <label className="block text-[13px] font-semibold text-[#3B0A2E]">Name *<input required autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} data-testid="walkin-name" className={inp} /></label>
-        <label className="block text-[13px] font-semibold text-[#3B0A2E]">Email (optional, for a thank-you note)<input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} data-testid="walkin-email" className={inp} /></label>
+        <label className="block text-[13px] font-semibold text-[#3B0A2E]">Email (optional, for a thank-you note)<input type="email" autoComplete="email" inputMode="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} data-testid="walkin-email" className={inp} /></label>
         <label className="block text-[13px] font-semibold text-[#3B0A2E]">Phone (optional)<input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} data-testid="walkin-phone" className={inp} /></label>
         <button disabled={busy} data-testid="walkin-save" className="btn-magenta rounded-full w-full py-3.5 font-semibold flex items-center justify-center gap-2 disabled:opacity-60">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Check her in</button>
       </form>
@@ -80,7 +80,7 @@ export default function SessionCheckIn() {
       </div>
       {walk && <WalkIn sid={sid} onClose={() => setWalk(false)} onAdded={(row) => { setWalk(false); setD((x) => ({ ...x, items: [...x.items, row] })); }} />}
       {d.items.length > 0 && (
-        <div className="fixed bottom-0 inset-x-0 p-4 bg-white/95 backdrop-blur border-t border-[#3B0A2E]/10">
+        <div className="fixed bottom-0 inset-x-0 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-white/95 backdrop-blur border-t border-[#3B0A2E]/10">
           <button data-testid="sci-mark-rest" onClick={rest} className="w-full rounded-full py-3.5 font-semibold text-[14px] bg-[#3B0A2E] text-white flex items-center justify-center gap-2"><UserX size={17} /> Finish: mark the rest absent</button>
         </div>
       )}

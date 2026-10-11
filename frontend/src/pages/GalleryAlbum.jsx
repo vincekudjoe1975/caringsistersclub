@@ -19,7 +19,7 @@ export default function GalleryAlbum() {
   return (
     <div data-testid="gallery-album-page">
       <section className="relative min-h-[460px] flex items-end overflow-hidden">
-        {a.cover_url && <img src={mediaSrc(a.cover_url)} alt="" className="absolute inset-0 w-full h-full object-cover animate-[zoomIn_1.2s_ease]" />}
+        {a.cover_url && <img loading="lazy" decoding="async" src={mediaSrc(a.cover_url)} alt="" className="absolute inset-0 w-full h-full object-cover animate-[zoomIn_1.2s_ease]" />}
         <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, rgba(41,6,31,0.35) 0%, rgba(41,6,31,0.92) 100%)' }} />
         <div className="relative max-w-7xl mx-auto px-5 lg:px-8 w-full pb-14 pt-36">
           <Link to="/gallery" data-testid="album-back-link" className="text-[13px] font-semibold text-[#F7EFE9]/80 hover:text-[#CBA24B] flex items-center gap-1 mb-5"><ArrowLeft size={14} /> All albums</Link>
@@ -36,7 +36,7 @@ export default function GalleryAlbum() {
             {items.map((g, i) => (
               <Reveal key={photos[i].id} delay={(i % 3) * 80}>
                 <button data-testid={`album-item-${i}`} onClick={() => setIdx(i)} className="block w-full img-zoom rounded-2xl overflow-hidden relative group">
-                  <img src={g.src} alt={g.caption} className="w-full object-cover" />
+                  <img loading="lazy" decoding="async" src={g.src} alt={g.caption} className="w-full object-cover" />
                   {(g.caption || g.description) && (
                     <div className="absolute inset-0 flex flex-col justify-end p-5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-left" style={{ background: 'linear-gradient(transparent 45%, rgba(41,6,31,0.85))' }}>
                       <p className="text-[#F7EFE9] text-[15px] font-semibold">{g.caption}</p>

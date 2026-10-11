@@ -61,7 +61,7 @@ function Album({ mid, me, onBack }) {
       <div className="columns-2 md:columns-3 gap-3 [&>*]:mb-3">
         {d.photos.map((p) => (
           <button key={p.id} data-testid={`album-photo-${p.id}`} onClick={() => { setOpen(p); setCapEdit(p.caption || ''); }} className="relative block w-full rounded-xl overflow-hidden group">
-            <img src={src(p.url)} alt={p.caption || 'Gathering photo'} className={`w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${p.status === 'pending' ? 'opacity-60' : ''}`} />
+            <img loading="lazy" decoding="async" src={src(p.url)} alt={p.caption || 'Gathering photo'} className={`w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${p.status === 'pending' ? 'opacity-60' : ''}`} />
             {p.caption && <span data-testid={`album-caption-${p.id}`} className="absolute bottom-0 inset-x-0 text-left text-white text-[12px] px-3 py-2 bg-gradient-to-t from-black/70 to-transparent">{p.caption}</span>}
             {p.status === 'pending' && <span data-testid={`album-pending-${p.id}`} className="absolute top-2 left-2 bg-white/90 text-[#3B0A2E] text-[11px] font-semibold rounded-full px-2.5 py-0.5 flex items-center gap-1"><Clock size={11} /> Awaiting review</span>}
           </button>
@@ -70,7 +70,7 @@ function Album({ mid, me, onBack }) {
       {show && <Slideshow photos={d.photos.filter((p) => p.status === 'approved')} title={d.gathering.title} onClose={() => setShow(false)} />}
       {open && (
         <div data-testid="album-lightbox" className="fixed inset-0 z-50 bg-black/85 flex flex-col items-center justify-center p-4" onClick={() => setOpen(null)}>
-          <img src={src(open.url)} alt="" className="max-h-[75vh] max-w-full rounded-xl" onClick={(e) => e.stopPropagation()} />
+          <img loading="lazy" decoding="async" src={src(open.url)} alt="" className="max-h-[75vh] max-w-full rounded-xl" onClick={(e) => e.stopPropagation()} />
           {(me.is_admin || (open.mine && open.status === 'pending')) ? (
             <form className="flex gap-2 mt-3 w-full max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={async (e) => { e.preventDefault(); await api.put(`/members/gathering-photos/${open.id}/caption`, { caption: capEdit }); setOpen({ ...open, caption: capEdit }); load(); }}>
               <input data-testid="album-caption-edit" value={capEdit} onChange={(e) => setCapEdit(e.target.value)} maxLength={200} placeholder="Add a caption" className="flex-1 rounded-full px-4 py-2 text-[13px] text-[#241019]" />
@@ -109,7 +109,7 @@ export function PhotoAlbums({ me }) {
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="albums-grid">
         {rows.map((a) => (
           <button key={a.id} data-testid={`album-tile-${a.id}`} onClick={() => setMid(a.id)} className="text-left bg-white rounded-2xl overflow-hidden border border-[#3B0A2E]/8 hover:-translate-y-1 transition-transform duration-300">
-            {a.cover ? <img src={src(a.cover)} alt={a.title} className="w-full h-48 object-cover" /> : <div className="h-48 flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }}><ImageOff className="text-white/40" size={30} /></div>}
+            {a.cover ? <img loading="lazy" decoding="async" src={src(a.cover)} alt={a.title} className="w-full h-48 object-cover" /> : <div className="h-48 flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }}><ImageOff className="text-white/40" size={30} /></div>}
             <div className="p-4"><p className="font-serif text-[18px] text-[#3B0A2E] font-semibold">{a.title}</p><p className="text-[12.5px] text-[#241019]/60">{longDate(a.date)} · <span data-testid={`album-count-${a.id}`}>{a.count}</span> photo{a.count === 1 ? '' : 's'}</p></div>
           </button>
         ))}
@@ -166,7 +166,7 @@ export function AdminGatheringPhotos() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {rows.map((p) => (
             <div key={p.id} data-testid={`gphoto-${p.id}`} className="rounded-xl overflow-hidden border border-[#3B0A2E]/10">
-              <img src={src(p.url)} alt="" className="w-full h-40 object-cover" />
+              <img loading="lazy" decoding="async" src={src(p.url)} alt="" className="w-full h-40 object-cover" />
               <div className="p-3"><p className="text-[12.5px] font-semibold text-[#3B0A2E] truncate">{p.gathering_title}</p><p className="text-[11.5px] text-[#241019]/55">by {p.uploader_name}</p>
                 <div className="flex gap-2 mt-2">
                   <button data-testid={`gphoto-approve-${p.id}`} onClick={() => approve(p.id)} className="btn-magenta rounded-full px-3 py-1 text-[12px] font-semibold flex items-center gap-1"><Check size={12} /> Approve</button>

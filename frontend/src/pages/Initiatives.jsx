@@ -15,7 +15,7 @@ function ProgramCard({ item }) {
   return (
     <div className="card-hover bg-white rounded-2xl overflow-hidden h-full border border-[#3B0A2E]/8 flex flex-col" data-testid="program-card">
       <Link to={`/initiatives/${item.slug}`} className="img-zoom h-52 block">
-        <img src={eventImg(item.image_url)} alt={item.title} className="w-full h-full object-cover" />
+        <img loading="lazy" decoding="async" src={eventImg(item.image_url)} alt={item.title} className="w-full h-full object-cover" />
       </Link>
       <div className="p-7 flex flex-col flex-1">
         {item.category && <span className="eyebrow text-[#CBA24B]">{item.category}</span>}

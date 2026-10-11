@@ -70,7 +70,7 @@ export default function Header() {
           </Link>
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
-              <button aria-label="Open menu" className="text-[#F7EFE9] p-1">
+              <button aria-label="Open menu" className="text-[#F7EFE9] p-2.5 -mr-2">
                 <Menu size={26} />
               </button>
             </SheetTrigger>

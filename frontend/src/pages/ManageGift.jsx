@@ -37,7 +37,7 @@ function RequestForm() {
   return (
     <form onSubmit={submit} className="space-y-4">
       <label className="text-[13px] font-semibold text-[#3B0A2E] block">Email used for your monthly gift</label>
-      <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} data-testid="manage-email-input"
+      <input required type="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} data-testid="manage-email-input"
         className="w-full rounded-lg border border-[#3B0A2E]/15 px-4 py-3 text-[14px] focus:outline-none focus:border-[#B4247E]" placeholder="you@example.com" />
       {error && <p className="text-[13px] text-red-600" data-testid="manage-error">{error}</p>}
       <button type="submit" disabled={busy} data-testid="manage-send-link-btn" className="btn-magenta rounded-full w-full py-3.5 font-semibold flex items-center justify-center gap-2 disabled:opacity-60">

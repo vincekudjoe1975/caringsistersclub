@@ -37,7 +37,7 @@ const Shell = ({ children }) => (
 );
 
 const Card = ({ icon: Icon, title, children, testid }) => (
-  <div data-testid={testid} className="bg-white rounded-3xl p-10 max-w-lg mx-auto text-center" style={{ boxShadow: '0 40px 80px -30px rgba(0,0,0,0.5)' }}>
+  <div data-testid={testid} className="bg-white rounded-3xl p-7 sm:p-10 max-w-lg mx-auto text-center" style={{ boxShadow: '0 40px 80px -30px rgba(0,0,0,0.5)' }}>
     <span className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }}><Icon size={30} className="text-white" /></span>
     <h1 className="font-serif text-[28px] text-[#3B0A2E] font-semibold mb-3">{title}</h1>
     {children}
@@ -76,15 +76,15 @@ function Portal({ me, onChange }) {
           <button data-testid="portal-logout-btn" onClick={logout} className="rounded-full px-5 py-2.5 text-[13px] font-semibold text-[#F7EFE9] border border-white/25 flex items-center gap-1.5 hover:bg-white/10 transition-colors"><LogOut size={14} /> Sign out</button>
         </div>
       </div>
-      <div className="inline-flex flex-wrap gap-1 p-1.5 rounded-full mb-8 bg-white/10 backdrop-blur-md border border-white/15">
+      <div data-testid="portal-tabbar" className="flex md:inline-flex flex-nowrap md:flex-wrap overflow-x-auto md:overflow-visible max-w-full csc-noscrollbar snap-x gap-1 p-1.5 rounded-full mb-8 bg-white/10 backdrop-blur-md border border-white/15">
         {TABS.map(({ k, l, icon: Icon }) => (
-          <button key={k} data-testid={`portal-tab-${k}`} onClick={() => pick(k)}
-            className={`px-5 py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 transition-colors ${tab === k ? 'bg-[#F7EFE9] text-[#3B0A2E]' : 'text-[#F7EFE9]/85 hover:text-white'}`}>
+          <button key={k} data-testid={`portal-tab-${k}`} onClick={(e) => { pick(k); e.currentTarget.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' }); }}
+            className={`shrink-0 snap-start whitespace-nowrap px-4 md:px-5 py-2.5 md:py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 transition-colors ${tab === k ? 'bg-[#F7EFE9] text-[#3B0A2E]' : 'text-[#F7EFE9]/85 hover:text-white'}`}>
             <Icon size={16} /> {l}
           </button>
         ))}
       </div>
-      <div className="bg-[#F7EFE9] rounded-3xl p-6 md:p-10"><Current me={me} onChange={onChange} /></div>
+      <div className="bg-[#F7EFE9] rounded-3xl p-3.5 sm:p-6 md:p-10 -mx-1 sm:mx-0"><Current me={me} onChange={onChange} /></div>
     </>
   );
 }
