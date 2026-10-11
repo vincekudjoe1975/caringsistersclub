@@ -11,6 +11,7 @@ import { AdminDecember } from '../components/members/admin/AdminDecember';
 import { AdminTreasurer } from '../components/members/admin/AdminTreasurer';
 import { AdminReferrers } from '../components/members/admin/AdminReferrers';
 import { AdminImport } from '../components/members/admin/AdminImport';
+import { AdminWelcome } from '../components/members/admin/AdminWelcome';
 import { AdminAnnual, AdminSpotlight } from '../components/members/admin/AdminAnnualSpotlight';
 
 const inputCls = 'w-full rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
@@ -57,6 +58,7 @@ function Roster({ rows, act }) {
           <div className="min-w-0"><p className="text-[14px] font-semibold text-[#3B0A2E] truncate">{m.name} {m.status !== 'active' && <span className="text-[11px] uppercase text-[#B4247E] ml-1">{m.status}</span>}</p><p className="text-[12px] text-[#241019]/50 truncate">{m.email}</p></div>
           <OfficeInput m={m} />
           <JoinedInput m={m} />
+          {m.status === 'active' && <button data-testid={`welcome-send-${m.user_id}`} onClick={async () => { try { await api.post(`/admin/members/${m.user_id}/welcome`); window.alert('Welcome email sent'); } catch (ex) { window.alert(ex?.response?.data?.detail || 'Could not send'); } }} className="text-[12px] text-[#B4247E] font-semibold">Send welcome</button>}
           {m.status === 'active'
             ? <button data-testid={`suspend-${m.user_id}`} onClick={() => act(m.user_id, 'suspend')} className="text-[12.5px] text-[#241019]/55 hover:text-red-600 flex items-center gap-1"><PauseCircle size={14} /> Pause</button>
             : <button data-testid={`reinstate-${m.user_id}`} onClick={() => act(m.user_id, 'reinstate')} className="text-[12.5px] text-[#B4247E] flex items-center gap-1"><PlayCircle size={14} /> Activate</button>}
@@ -159,11 +161,11 @@ export default function AdminMembers() {
   };
   const [sub, setSub] = useState('people');
   const apps = d.members.filter((m) => m.status === 'applied');
-  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['treasurer', 'Treasurer report'], ['referrers', 'Referrers'], ['import', 'Import'], ['annual', 'Annual summary'], ['spotlight', 'Spotlight'], ['december', 'December renewal']];
+  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['treasurer', 'Treasurer report'], ['referrers', 'Referrers'], ['import', 'Import'], ['welcome', 'Welcome email'], ['annual', 'Annual summary'], ['spotlight', 'Spotlight'], ['december', 'December renewal']];
   return (
     <div>
     <div className="flex flex-wrap gap-1 mb-6">{tabs.map(([k, l]) => <button key={k} data-testid={`members-sub-${k}`} onClick={() => setSub(k)} className={`rounded-full px-4 py-2 text-[13px] font-semibold transition-colors ${sub === k ? 'bg-[#3B0A2E] text-white' : 'bg-white border border-[#3B0A2E]/15 text-[#3B0A2E]'}`}>{l}</button>)}</div>
-    {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : sub === 'treasurer' ? <AdminTreasurer /> : sub === 'referrers' ? <AdminReferrers /> : sub === 'import' ? <AdminImport /> : sub === 'annual' ? <AdminAnnual /> : sub === 'spotlight' ? <AdminSpotlight /> : (
+    {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : sub === 'treasurer' ? <AdminTreasurer /> : sub === 'referrers' ? <AdminReferrers /> : sub === 'import' ? <AdminImport /> : sub === 'welcome' ? <AdminWelcome /> : sub === 'annual' ? <AdminAnnual /> : sub === 'spotlight' ? <AdminSpotlight /> : (
     <div className="grid lg:grid-cols-2 gap-6" data-testid="admin-members">
       <Box title={`Applications (${apps.length})`} testid="admin-applications"><Applications rows={apps} act={act} /></Box>
       <Box title="Invite members" testid="admin-invites"><Invites invites={d.invites} reload={load} toast={toast} /></Box>

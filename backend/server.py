@@ -6278,6 +6278,7 @@ async def _activate_invited(user: dict) -> bool:
     if not inv:
         return False
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_status": "active", "member_since": _now_iso()}})
+    asyncio.create_task(_send_welcome(user["user_id"]))
     return True
 
 
@@ -6478,11 +6479,7 @@ async def admin_member_status(uid: str, payload: MemberAction, background: Backg
     if new == "active":
         await db.users.update_one({"user_id": uid}, {"$unset": {"member_ends_at": "", "member_end_reason": ""}})
     if payload.action == "approve" and target.get("email"):
-        first = (target.get("name") or "Sister").split(" ")[0]
-        background.add_task(send_email, to=target["email"], subject="Welcome to the Caring Sisters Club member portal",
-                            html=_member_email_html("Welcome, Sister", f"Welcome, {first}!",
-                                                    "Your membership has been approved. You can now read our bylaws, meet fellow members in the directory, see announcements and join the conversation.",
-                                                    "Open the member portal", "/members"))
+        background.add_task(_send_welcome, uid)
     return {"status": new}
 
 
@@ -7974,12 +7971,6 @@ class ImportCommitIn(BaseModel):
     send_invites: bool = False
 
 
-def _import_invite_html(first: str) -> str:
-    return _member_email_html("Member Portal", f"Welcome, {first}!",
-                              "You've been added to the Caring Sisters Club member portal. Sign in with the Google account for this email address to see "
-                              "announcements, the member directory, our bylaws, your dues and upcoming gatherings.", "Open the member portal", "/members")
-
-
 @api_router.post("/admin/members/import/commit")
 async def admin_import_commit(payload: ImportCommitIn, background: BackgroundTasks, user=Depends(require_admin)):
     rows = await _validate_import(payload.rows[:1000])
@@ -7995,14 +7986,15 @@ async def admin_import_commit(payload: ImportCommitIn, background: BackgroundTas
         if cur:
             keep = cur.get("member_profile") or {}
             await db.users.update_one({"user_id": cur["user_id"]}, {"$set": {**fields, "member_profile": {**prof, **{k: v for k, v in keep.items() if v}}}})
+            uid = cur["user_id"]
             updated += 1
         else:
-            await db.users.insert_one({"user_id": f"user_{uuid.uuid4().hex[:12]}", "email": r["email"], "name": r["name"].strip()[:120], "picture": "",
+            uid = f"user_{uuid.uuid4().hex[:12]}"
+            await db.users.insert_one({"user_id": uid, "email": r["email"], "name": r["name"].strip()[:120], "picture": "",
                                        "role": "pending", "created_at": _now_iso(), "member_profile": prof, **fields})
             created += 1
         if payload.send_invites:
-            background.add_task(send_email, to=r["email"], subject="You're in! Your Caring Sisters Club member portal",
-                                html=_import_invite_html(r["name"].strip().split(" ")[0] or "Sister"))
+            background.add_task(_send_welcome, uid)
     by_email = {(u.get("email") or "").lower(): u["user_id"] for u in await db.users.find({"member_status": {"$exists": True}}, {"_id": 0, "email": 1, "user_id": 1}).to_list(5000)}
     linked = 0
     for r in good:
@@ -8312,6 +8304,280 @@ async def members_spotlight_submit(sid: str, payload: SpotlightEdit, user=Depend
                                                 {"$set": {"story": story, "photo_url": photo, "status": "submitted", "submitted_at": _now_iso()}})
     if not res.matched_count:
         raise HTTPException(status_code=400, detail="This invitation is no longer open.")
+    return {"ok": True}
+
+
+# ---------- Member Portal phase 6: welcome packet, door check-in, spotlight archive, prayer board ----------
+WELCOME_DEFAULT = {"subject": "Welcome to the Caring Sisters Club, {first}!",
+                   "message": "We are so happy to welcome you into our sisterhood. Caring Sisters Club unites women from diverse backgrounds to uplift, "
+                              "support and inspire one another through love, respect and empowerment.\n\nBelow you'll find a few essentials to get you started."}
+
+
+async def _welcome_settings() -> dict:
+    s = await db.member_settings.find_one({"key": "welcome"}, {"_id": 0})
+    return {**WELCOME_DEFAULT, **{k: v for k, v in (s or {}).items() if k in ("subject", "message") and v}}
+
+
+async def _welcome_html(u: dict, settings: dict) -> str:
+    first = (u.get("name") or "Sister").split(" ")[0]
+    st = await _member_standing(u, _today_et().year)
+    due = datetime.fromisoformat(st["due_date"]).strftime("%B %-d, %Y") if st.get("due_date") else "January 31"
+    gath = await db.member_meetings.find({"kind": "in-person", "date": {"$gte": _today_et().isoformat()}}, {"_id": 0, "title": 1, "date": 1, "location": 1}).sort("date", 1).to_list(3)
+    g_html = "".join(f'<li style="margin:0 0 6px">{_esc(g["title"])} — {datetime.fromisoformat(g["date"]).strftime("%A, %B %-d")}'
+                     + (f' · {_esc(g["location"])}' if g.get("location") else "") + "</li>" for g in gath) or "<li>Dates will be announced in the portal soon.</li>"
+    p = 'style="font-size:14.5px;line-height:1.7;color:#4a3340;margin:0 0 14px"'
+    h = 'style="font-family:Georgia,serif;color:#3B0A2E;font-size:17px;margin:22px 0 8px"'
+    body = (
+        f'<p {p}>{_esc(settings["message"]).replace(chr(10), "<br/>")}</p>'
+        f'<h2 {h}>Our bylaws in brief</h2><ul {p}>'
+        "<li>Open to women 18+ living in Delaware, referred by a member in good standing.</li>"
+        "<li>General meetings at least every two months; in-person gatherings in April, August and December.</li>"
+        "<li>Two missed meetings in a row bring a warning letter; three bring a $10 fine.</li>"
+        "<li>Members in good standing vote on Club decisions (one vote each) and receive birthday, bereavement and illness support.</li>"
+        "</ul><p " + p[:-1] + ';margin-top:-6px">The full bylaws are in the Bylaws tab of your member portal.</p>'
+        f'<h2 {h}>Your dues</h2><p {p}>Registration is a one-time $10 and dues are $10 a month, paid in full by {due}. '
+        f'Your current {st["year"]} balance is <b>${st["balance"]:.2f}</b>. You can pay by card in the portal, or by cash or Zelle through the Financial Secretary.</p>'
+        f'<h2 {h}>Upcoming gatherings</h2><ul {p}>{g_html}</ul>'
+    )
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Welcome, Sister") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 16px">Welcome, {_esc(first)}!</h1>{body}'
+        + _btn(f"{PUBLIC_APP_URL}/members", "Open the member portal", primary=True) +
+        '<p style="font-size:12px;color:#8a7380;margin:18px 0 0">Sign in with the Google account for this email address.</p>'
+        '</td></tr></table></td></tr></table>'
+    )
+
+
+async def _send_welcome(uid: str) -> bool:
+    u = await db.users.find_one({"user_id": uid, "member_status": "active"}, {"_id": 0})
+    if not u or not u.get("email"):
+        return False
+    s = await _welcome_settings()
+    first = (u.get("name") or "Sister").split(" ")[0]
+    try:
+        await send_email(to=u["email"], subject=s["subject"].replace("{first}", first)[:150], html=await _welcome_html(u, s))
+    except Exception as e:
+        logging.warning(f"Welcome email failed for {uid}: {e}")
+        return False
+    await db.users.update_one({"user_id": uid}, {"$set": {"member_welcome_sent_at": _now_iso()}})
+    return True
+
+
+class WelcomeIn(BaseModel):
+    subject: str
+    message: str
+
+
+@api_router.get("/admin/members/welcome")
+async def admin_welcome_get(user=Depends(require_admin)):
+    return await _welcome_settings()
+
+
+@api_router.put("/admin/members/welcome")
+async def admin_welcome_put(payload: WelcomeIn, user=Depends(require_admin)):
+    if not payload.subject.strip() or not payload.message.strip():
+        raise HTTPException(status_code=400, detail="Subject and message are required.")
+    await db.member_settings.update_one({"key": "welcome"}, {"$set": {"key": "welcome", "subject": payload.subject.strip()[:150], "message": payload.message.strip()[:4000]}}, upsert=True)
+    return {"ok": True}
+
+
+@api_router.post("/admin/members/welcome/preview")
+async def admin_welcome_preview(payload: WelcomeIn, user=Depends(require_admin)):
+    sample = {"user_id": "_preview", "name": user.get("name") or "Sister", "member_status": "active", "member_since": _now_iso()}
+    return {"html": await _welcome_html(sample, {"subject": payload.subject, "message": payload.message or WELCOME_DEFAULT["message"]})}
+
+
+@api_router.post("/admin/members/{uid}/welcome")
+async def admin_welcome_resend(uid: str, user=Depends(require_admin)):
+    if not await _send_welcome(uid):
+        raise HTTPException(status_code=400, detail="Could not send: she must be an active member with an email address.")
+    return {"ok": True}
+
+
+# --- Door check-in ---
+async def _checkin_token(uid: str) -> str:
+    u = await db.users.find_one({"user_id": uid}, {"_id": 0, "member_checkin_token": 1})
+    if u and u.get("member_checkin_token"):
+        return u["member_checkin_token"]
+    tok = secrets.token_urlsafe(12)
+    await db.users.update_one({"user_id": uid, "member_checkin_token": {"$exists": False}}, {"$set": {"member_checkin_token": tok}})
+    return (await db.users.find_one({"user_id": uid}, {"_id": 0, "member_checkin_token": 1}))["member_checkin_token"]
+
+
+@api_router.get("/members/checkin-code")
+async def members_checkin_code(user=Depends(require_member)):
+    return {"code": f"CSC:{await _checkin_token(user['user_id'])}"}
+
+
+@api_router.get("/admin/members/checkin")
+async def admin_checkin_meetings(user=Depends(require_admin)):
+    t = _today_et()
+    rows = await db.member_meetings.find({"date": {"$gte": (t - timedelta(days=3)).isoformat(), "$lte": (t + timedelta(days=30)).isoformat()}},
+                                         {"_id": 0, "id": 1, "title": 1, "date": 1, "kind": 1}).sort("date", 1).to_list(50)
+    return {"today": t.isoformat(), "meetings": rows}
+
+
+@api_router.get("/admin/members/checkin/{mid}")
+async def admin_checkin_sheet(mid: str, user=Depends(require_admin)):
+    m = await db.member_meetings.find_one({"id": mid}, {"_id": 0})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    att, ci, rs = m.get("attendance") or {}, m.get("checkins") or {}, m.get("rsvps") or {}
+    members = await db.users.find({"member_status": "active"}, {"_id": 0, "user_id": 1, "name": 1, "picture": 1}).sort("name", 1).to_list(2000)
+    rows = [{"user_id": u["user_id"], "name": u.get("name") or "", "picture": u.get("picture") or "", "status": att.get(u["user_id"]),
+             "guests": (ci.get(u["user_id"]) or {}).get("guests", 0), "checked_in_at": (ci.get(u["user_id"]) or {}).get("at"),
+             "rsvp": (rs.get(u["user_id"]) or {}).get("response"), "rsvp_guests": (rs.get(u["user_id"]) or {}).get("guests", 0)} for u in members]
+    present = [r for r in rows if r["status"] == "present"]
+    return {"meeting": {k: m.get(k) for k in ("id", "title", "date", "kind", "finished_at")}, "rows": rows,
+            "counts": {"present": len(present), "guests": sum(r["guests"] for r in present), "headcount": len(present) + sum(r["guests"] for r in present),
+                       "members": len(rows), "expected": sum(1 + (r["rsvp_guests"] or 0) for r in rows if r["rsvp"] == "yes")}}
+
+
+class CheckinIn(BaseModel):
+    user_id: str = ""
+    code: str = ""
+    guests: int = 0
+
+
+@api_router.post("/admin/members/checkin/{mid}")
+async def admin_checkin(mid: str, payload: CheckinIn, background: BackgroundTasks, user=Depends(require_admin)):
+    if not 0 <= payload.guests <= 20:
+        raise HTTPException(status_code=400, detail="Guests must be between 0 and 20.")
+    q = {"member_status": "active"}
+    if payload.code:
+        q["member_checkin_token"] = payload.code.strip().removeprefix("CSC:")
+    elif payload.user_id:
+        q["user_id"] = payload.user_id
+    else:
+        raise HTTPException(status_code=400, detail="Choose a sister or scan her code.")
+    u = await db.users.find_one(q, {"_id": 0, "user_id": 1, "name": 1})
+    if u is None:
+        raise HTTPException(status_code=404, detail="That code doesn't match an active member.")
+    m = await db.member_meetings.find_one({"id": mid}, {"_id": 0, "date": 1})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    await db.member_meetings.update_one({"id": mid}, {"$set": {f"attendance.{u['user_id']}": "present",
+                                        f"checkins.{u['user_id']}": {"at": _now_iso(), "guests": payload.guests, "by": user.get("email")}}})
+    await _apply_attendance_rules(mid, int(m["date"][:4]), background)
+    return {"user_id": u["user_id"], "name": u.get("name"), "guests": payload.guests}
+
+
+@api_router.delete("/admin/members/checkin/{mid}/{uid}")
+async def admin_checkin_undo(mid: str, uid: str, background: BackgroundTasks, user=Depends(require_admin)):
+    m = await db.member_meetings.find_one({"id": mid}, {"_id": 0, "date": 1})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    await db.member_meetings.update_one({"id": mid}, {"$unset": {f"attendance.{uid}": "", f"checkins.{uid}": ""}})
+    await _apply_attendance_rules(mid, int(m["date"][:4]), background)
+    return {"ok": True}
+
+
+@api_router.post("/admin/members/checkin/{mid}/finish")
+async def admin_checkin_finish(mid: str, background: BackgroundTasks, user=Depends(require_admin)):
+    m = await db.member_meetings.find_one({"id": mid}, {"_id": 0})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    att = m.get("attendance") or {}
+    missing = [u["user_id"] for u in await db.users.find({"member_status": "active"}, {"_id": 0, "user_id": 1}).to_list(2000) if u["user_id"] not in att]
+    if missing:
+        await db.member_meetings.update_one({"id": mid}, {"$set": {**{f"attendance.{uid}": "absent" for uid in missing}, "finished_at": _now_iso()}})
+    else:
+        await db.member_meetings.update_one({"id": mid}, {"$set": {"finished_at": _now_iso()}})
+    await _apply_attendance_rules(mid, int(m["date"][:4]), background)
+    return {"marked_absent": len(missing)}
+
+
+# --- Spotlight archive ---
+@api_router.get("/members/spotlights")
+async def members_spotlights(user=Depends(require_member)):
+    return await db.member_spotlights.find({"status": "published", "month": {"$lte": _cur_month()}}, {"_id": 0, "created_by": 0}).sort("month", -1).to_list(300)
+
+
+# --- Prayer & Support Board ---
+class PrayerIn(BaseModel):
+    kind: str = "request"
+    body: str
+    anonymous: bool = False
+
+
+def _prayer_view(p: dict, user: dict) -> dict:
+    is_admin, mine = user.get("role") == "admin", p["author_id"] == user["user_id"]
+    hide = p.get("anonymous") and not (is_admin or mine)
+    return {"id": p["id"], "kind": p["kind"], "body": p["body"], "anonymous": p.get("anonymous", False), "created_at": p["created_at"],
+            "author_name": "A sister" if hide else p["author_name"], "author_picture": "" if hide else p.get("author_picture", ""),
+            "mine": mine, "answered_at": p.get("answered_at"), "praying_count": len(p.get("praying") or []), "i_am_praying": user["user_id"] in (p.get("praying") or []),
+            "encouragements": [{"id": e["id"], "body": e["body"], "author_name": e["author_name"], "author_picture": e.get("author_picture", ""), "created_at": e["created_at"],
+                                "mine": e["author_id"] == user["user_id"]} for e in p.get("encouragements") or []]}
+
+
+@api_router.get("/members/prayers")
+async def members_prayers(user=Depends(require_member)):
+    rows = await db.member_prayers.find({}, {"_id": 0}).sort("created_at", -1).to_list(300)
+    return [_prayer_view(p, user) for p in rows]
+
+
+@api_router.post("/members/prayers")
+async def members_prayer_new(payload: PrayerIn, request: Request, user=Depends(require_member)):
+    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    body = payload.body.strip()[:2000]
+    if payload.kind not in ("request", "praise") or not body:
+        raise HTTPException(status_code=400, detail="Please write your prayer request or praise report.")
+    p = {"id": str(uuid.uuid4()), "kind": payload.kind, "body": body, "anonymous": payload.anonymous, **_author(user), "praying": [], "encouragements": [], "created_at": _now_iso()}
+    await db.member_prayers.insert_one(dict(p))
+    return _prayer_view(p, user)
+
+
+@api_router.post("/members/prayers/{pid}/pray")
+async def members_prayer_pray(pid: str, user=Depends(require_member)):
+    p = await db.member_prayers.find_one({"id": pid}, {"_id": 0, "praying": 1})
+    if p is None:
+        raise HTTPException(status_code=404, detail="Post not found")
+    op = "$pull" if user["user_id"] in (p.get("praying") or []) else "$addToSet"
+    await db.member_prayers.update_one({"id": pid}, {op: {"praying": user["user_id"]}})
+    return {"praying": op == "$addToSet"}
+
+
+class EncourageIn(BaseModel):
+    body: str
+
+
+@api_router.post("/members/prayers/{pid}/encourage")
+async def members_prayer_encourage(pid: str, payload: EncourageIn, request: Request, user=Depends(require_member)):
+    _rate_limit(request, "member-post", max_hits=10, window_s=300)
+    body = payload.body.strip()[:1000]
+    if not body:
+        raise HTTPException(status_code=400, detail="Please write a word of encouragement.")
+    e = {"id": str(uuid.uuid4()), "body": body, **_author(user), "created_at": _now_iso()}
+    if not (await db.member_prayers.update_one({"id": pid}, {"$push": {"encouragements": e}})).matched_count:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return {"ok": True}
+
+
+@api_router.post("/members/prayers/{pid}/answered")
+async def members_prayer_answered(pid: str, user=Depends(require_member)):
+    p = await db.member_prayers.find_one({"id": pid, "author_id": user["user_id"]}, {"_id": 0, "answered_at": 1})
+    if p is None:
+        raise HTTPException(status_code=403, detail="Only the sister who posted can mark it answered.")
+    await db.member_prayers.update_one({"id": pid}, {"$set": {"answered_at": None if p.get("answered_at") else _now_iso()}})
+    return {"ok": True}
+
+
+@api_router.delete("/members/prayers/{pid}")
+async def members_prayer_delete(pid: str, user=Depends(require_member)):
+    q = {"id": pid} if user.get("role") == "admin" else {"id": pid, "author_id": user["user_id"]}
+    if not (await db.member_prayers.delete_one(q)).deleted_count:
+        raise HTTPException(status_code=403, detail="You can only remove your own posts.")
+    return {"ok": True}
+
+
+@api_router.delete("/members/prayers/{pid}/encourage/{eid}")
+async def members_prayer_encourage_delete(pid: str, eid: str, user=Depends(require_member)):
+    match = {"id": eid} if user.get("role") == "admin" else {"id": eid, "author_id": user["user_id"]}
+    if not (await db.member_prayers.update_one({"id": pid, "encouragements": {"$elemMatch": match}}, {"$pull": {"encouragements": {"id": eid}}})).modified_count:
+        raise HTTPException(status_code=403, detail="You can only remove your own messages.")
     return {"ok": True}
 
 
