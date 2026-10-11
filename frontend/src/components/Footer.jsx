@@ -51,8 +51,8 @@ export default function Footer() {
             <h4 className="eyebrow text-[#CBA24B] mb-4">Contact</h4>
             <ul className="space-y-3 text-[13.5px] text-[#F7EFE9]/75">
               <li className="flex gap-2.5"><MapPin size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> {org.address}</li>
-              <li className="flex gap-2.5"><Phone size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> <a href={org.phoneHref} className="hover:text-[#CBA24B]" data-testid="footer-phone">{org.phone}</a></li>
-              <li className="flex gap-2.5"><Mail size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> <a href={`mailto:${org.email}`} className="hover:text-[#CBA24B]" data-testid="footer-email">{org.email}</a></li>
+              <li className="flex gap-2.5"><Phone size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> <a href={org.phoneHref} className="inline-block py-1.5 lg:py-0 hover:text-[#CBA24B]" data-testid="footer-phone">{org.phone}</a></li>
+              <li className="flex gap-2.5"><Mail size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> <a href={`mailto:${org.email}`} className="inline-block py-1.5 lg:py-0 break-all hover:text-[#CBA24B]" data-testid="footer-email">{org.email}</a></li>
               <li className="flex gap-2.5"><Clock size={16} className="text-[#CBA24B] shrink-0 mt-0.5" /> {org.hours}</li>
             </ul>
           </div>
@@ -71,7 +71,7 @@ export default function Footer() {
             </p>
             <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
               {legal.map((l) => (
-                <Link key={l.to} to={l.to} className="text-[12.5px] text-[#F7EFE9]/60 hover:text-[#CBA24B] transition-colors">{l.label}</Link>
+                <Link key={l.to} to={l.to} className="inline-block py-1.5 lg:py-0 text-[12.5px] text-[#F7EFE9]/60 hover:text-[#CBA24B] transition-colors">{l.label}</Link>
               ))}
             </div>
           </div>

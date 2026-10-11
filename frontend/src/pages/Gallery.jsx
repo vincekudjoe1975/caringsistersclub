@@ -18,7 +18,7 @@ export function Lightbox({ items, idx, setIdx }) {
   }, [go, setIdx]);
   return (
     <div data-testid="gallery-lightbox" onTouchStart={(e) => { touch.current = e.touches[0].clientX; }} onTouchEnd={(e) => { if (touch.current == null) return; const dx = e.changedTouches[0].clientX - touch.current; touch.current = null; if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1); }} className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-8 animate-[fadeIn_.25s_ease]" style={{ background: 'rgba(41,6,31,0.94)' }} onClick={() => setIdx(null)}>
-      <button data-testid="gallery-lightbox-close" className="absolute top-5 right-5 text-[#F7EFE9] hover:text-[#CBA24B] z-10" onClick={() => setIdx(null)}><X size={32} /></button>
+      <button data-testid="gallery-lightbox-close" className="absolute top-3 right-3 md:top-5 md:right-5 p-2 text-[#F7EFE9] hover:text-[#CBA24B] z-10" onClick={() => setIdx(null)}><X size={32} /></button>
       <button data-testid="gallery-lightbox-prev" className="absolute left-1 md:left-6 p-2 text-[#F7EFE9] hover:text-[#CBA24B] z-10 bg-black/20 md:bg-transparent rounded-full" onClick={(e) => { e.stopPropagation(); go(-1); }}><ChevronLeft size={40} /></button>
       <div key={idx} className="max-w-6xl w-full flex flex-col lg:flex-row gap-6 items-center animate-[zoomIn_.35s_ease]" onClick={(e) => e.stopPropagation()}>
         <img loading="lazy" decoding="async" src={g.src} alt={g.caption} className="w-full lg:w-[68%] max-h-[62vh] lg:max-h-[80vh] object-contain rounded-xl" />

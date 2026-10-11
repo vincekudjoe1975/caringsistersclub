@@ -366,3 +366,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Walk-ins: POST /admin/sessions/{sid}/walkin (attended, walk_in flag, thank-you email if email); "Add walk-in" on /session-checkin.
 - SessionInsights in AdminSessions: trend line chart, best weekday/time-of-day once >=3 marked sessions (recharts).
 - Backlog: spot_tokens TTL cleanup; split server.py into routers.
+
+## 2026-06 Mobile optimization (iteration 36 + self-verify)
+- index.css "Mobile polish": inputs/selects/textareas 16px on <=640px (no iOS zoom), min 12px for tiny text utilities and .eyebrow, hidden-scrollbar helper, tap highlight; viewport-fit=cover.
+- Member portal tab bar = single horizontally scrollable row on mobile (portal-tabbar), active tab scrolls into view; lighter content padding on phones.
+- Header menu button 44px; footer links/phone/email taller tap targets; gallery lightbox swipe + bigger controls; Sessions defaults to List on phones.
+- loading="lazy" decoding="async" on all non-header images (Home hero eager, fetchpriority=high); email inputs autoComplete/inputMode, number inputs inputMode=decimal (public).
+- Verified: no horizontal overflow on any public page or portal tab at 375/390px.
