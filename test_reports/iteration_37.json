@@ -1,0 +1,28 @@
+{
+  "summary": "Frontend-only mobile pass for Members Portal tab wrap fix + PWA install. Session cookie session_token=qa_tok_123 (QA admin). PORTAL TABBAR: at 390x844 displays as grid-template-columns '108px 108px 108px' (3 cols on phones), at 1440 flex-wrap (2 rows of pills). All 11 tabs (news/talk/prayer/votes/dues/people/spotlights/photos/minutes/bylaws/me) render; buttons 108x60 = tap target >= 44px; selected tab highlighted (bg-[#F7EFE9]). Clicked every tab at 390 and 360 -> window.scrollX=0, documentElement.scrollWidth==innerWidth (390==390 / 360==360), no element inside [data-testid=portal-panel] extends past viewport (panelMaxRight=354 at 390). Root-cause fix verified: scrollIntoView side-effect gone, no horizontal page shift. MY PROFILE (portal-tab-me) at 390: avatar/name/email stacked & centered, 'Add a photo' control present, City/Phone single-column (city.top=836, phone.top=928 — stacked), birthday month+day side-by-side within width (both top=1026, widths 206+104 fit in panel 318), bio textarea renders, 4 checkboxes (show_contact/prayer_weekly/bday_notices/bday_card) present, Save profile button full-width (w=318 == panel width) sized 48 tall. Filling City='TestCity' + click profile-save-btn => toast 'Profile saved' observed. checkin-code-card (QR) stacks below save (top=1576, w=318). DESKTOP 1440 profile: city/phone same row (both top=547). PWA: /manifest.json 200 (application/json) name='Caring Sisters Club' theme_color=#3B0A2E 3 icons; /icon-192.png /icon-512.png /icon-maskable-512.png /sw.js /apple-touch-icon.png all 200. index.html has link rel=manifest, apple-touch-icon, meta theme-color #3B0A2E. Service worker is active (scope=/, active=true), no console errors on load. INSTALL BANNER: with iPhone UA override on /members at 390 -> [data-testid=install-app-banner] visible, [data-testid=install-app-ios-tip] rendered (Share icon + Add to Home Screen text). Click [data-testid=install-app-dismiss] -> hides, localStorage csc_install_dismissed='1', remains hidden after reload. On /admin at 390 iPhone -> banner also shows (light variant on white). At desktop 1440 UA Chrome -> banner correctly NOT shown (>=768 guard). PUBLIC REGRESSION 390: /, /initiatives, /donate, /events, /sessions, /gallery, /leadership, /contact, /volunteer -> all scrollWidth==innerWidth==390, no horizontal overflow. Mobile hamburger opens slide-out menu with Home/About/Leadership/Initiatives/Sessions/Events/Gallery/Transparency/Contact/Member Login/Donate Now; X close button renders (uses lucide X, no aria-label 'Close menu' but visually/functionally present).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Mobile hamburger menu overlay (close affordance)", "issues": ["The X close icon in the open mobile menu has no aria-label (couldn't find aria-label='Close menu'); it is visible and clickable but add aria-label for a11y."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Minor a11y nit: add aria-label='Close menu' to the X button inside the mobile slide-out menu (open menu button already has aria-label='Open menu')."
+  ],
+  "critical_code_review_comments": [
+    "Portal tabbar fix is clean: replaced horizontal scroll strip (with scrollIntoView side-effect) with grid-cols-3 sm:grid-cols-4 md:flex md:flex-wrap md:w-fit — no horizontal page shift and all 11 tabs visible on phones.",
+    "InstallApp component correctly gates visibility (standalone / dismissed / >=768 early return) and supports iOS (shows Share tip) + Android beforeinstallprompt (Install button). localStorage persistence works.",
+    "MyProfile mobile layout: avatar/name/email stacked (flex-col sm:flex-row), City/Phone grid-cols-1 sm:grid-cols-2, birthday month+day stays side-by-side via grid-cols-[minmax(0,1fr)_6.5rem]; good responsive patterns.",
+    "manifest.json has start_url=/members, display=standalone, theme_color #3B0A2E matching meta — Install-as-App metadata is complete."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped)", "frontend": "~100% (all task checks pass; one minor a11y nit)"},
+  "test_credentials": "cookie session_token=qa_tok_123 on caring-sisters-clone.preview.emergentagent.com (QA admin via /app/backend/tests/qa_session.py up). Not torn down by this agent — leaving for main agent as the review-request stated 'already up'; main agent should run `python3 /app/backend/tests/qa_session.py down` after verification.",
+  "seed_data_creation": "None (used existing qa_tok_123 session).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Portal tabbar now a 3-col grid on phones and flex-wrap pill row at md+. All 11 portal tabs clickable w/o horizontal shift at 390 and 360. My Profile mobile layout matches spec. PWA /manifest.json + /sw.js + icons all 200; SW active; iOS install tip + beforeinstallprompt banner + dismiss+persist works; admin page also shows install banner on phones. Public pages 390 still overflow-free. The only remaining nit is missing aria-label on the mobile menu X close button."
+}

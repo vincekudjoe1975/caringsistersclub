@@ -77,7 +77,7 @@ export default function Header() {
             <SheetContent side="right" className="w-[300px] border-0 p-0" style={{ background: '#29061F' }}>
               <div className="p-6 flex items-center justify-between">
                 <Logo variant="light" compact />
-                <button onClick={() => setOpen(false)} className="text-[#F7EFE9]"><X size={24} /></button>
+                <button data-testid="mobile-menu-close" aria-label="Close menu" onClick={() => setOpen(false)} className="text-[#F7EFE9] w-11 h-11 -mr-2 flex items-center justify-center"><X size={24} /></button>
               </div>
               <div className="flex flex-col px-6 mt-4">
                 {nav.map((item) => (

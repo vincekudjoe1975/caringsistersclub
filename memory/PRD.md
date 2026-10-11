@@ -373,3 +373,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Header menu button 44px; footer links/phone/email taller tap targets; gallery lightbox swipe + bigger controls; Sessions defaults to List on phones.
 - loading="lazy" decoding="async" on all non-header images (Home hero eager, fetchpriority=high); email inputs autoComplete/inputMode, number inputs inputMode=decimal (public).
 - Verified: no horizontal overflow on any public page or portal tab at 375/390px.
+
+## 2026-06 — Member portal mobile + Install as App (iteration_37, frontend ~100%)
+- Portal tabs: 3-col grid on phones / 4 at sm / pill row at md+; removed scrollIntoView that shifted the whole page sideways (root cause of misaligned My Profile).
+- My Profile: single centered column on phones, full-width save, birthday selects grid, larger checkboxes/tap targets, QR card stacks.
+- PWA: manifest.json, icons (192/512/maskable/apple-touch), sw.js (pass-through), theme #3B0A2E; InstallApp banner (Android prompt / iOS tip, dismissible) on /members and /admin for phones.
+- Mobile menu close button aria-label. Redeploy queued (outcome pending notification).
+- Backlog: offline page/caching, push notifications for announcements.
