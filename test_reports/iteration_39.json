@@ -1,0 +1,42 @@
+{
+  "summary": "Iter 39 phone-alerts E2E — profile per-type toggles, admin history + filters, announcement/prayer/custom push_log, vote open+close dedup, event/birthday direct-call opt-outs. 11/11 pytest pass. Frontend verified on 390 (member profile persistence) and 1440 (admin history send + Custom filter).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter39_push_alerts.py",
+    "/app/test_reports/pytest/iter39.xml"
+  ],
+  "action_items": [
+    "None — all task features green.",
+    "Carryover: iter_38 cosmetic console warning in AdminPush.jsx (<option><span>…</span></option>) still present; purely dev-time instrumentation, not blocking."
+  ],
+  "critical_code_review_comments": [
+    "PUSH_KINDS maps kind -> MemberProfile pref ('announcement'→push_news, 'prayer'→push_prayer, 'event'→push_events, 'vote'→push_votes, 'birthday'→push_bday, 'custom'→'') and _push_users adds q[`member_profile.${pref}`]={$ne:False} only when pref is set — correct per-type opt-out enforcement.",
+    "db.push_marks has unique index on 'key' (startup) and _push_mark catches DuplicateKey → False, so vote-open:{id}/vote-close:{id}/event:{id}:{date}/session:{id}/bday:{uid}:{year} are all guaranteed single-fire. Confirmed via re-run of _push_votes() and _push_events() in-process after the first fire — no new log rows written.",
+    "_push_votes correctly scopes 'closes tomorrow' nudge to members minus those in db.member_voters.distinct('user_id', {ballot_id}) so already-voted sisters aren't nagged.",
+    "_push_events gates at ET hour>=9 and _push_birthdays at hour>=8 (spec said >=8 ET for bday — matches). Both skip early returns are tested implicitly by passing a 10am/9am ET now.",
+    "admin_push_history filters: if kind not in PUSH_KINDS, falls through to {} (all) — verified ?kind=bogus returns mixed kinds. If kind=='custom' it's in PUSH_KINDS so filter applies — verified only custom returned.",
+    "members_profile PUT persists push_news/push_prayer/push_events/push_votes/push_bday verbatim and the GET-after (via /members/me) reflects values — verified by reload-persistence UI test.",
+    "Fake FCM subscription endpoint (/fcm/send/fakeABC_iter39) returns a non-404/410 status from webpush so _push_one returns False (failed) — subscription is NOT auto-removed in that case. Only true 404/410 triggers deletion. Not a bug (matches implementation), but worth noting: in real-world Chrome FCM, 404/410 is the typical dead-sub signal."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter39_push_alerts.py"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all task UI assertions pass)"},
+  "test_credentials": "Used cookies session_token=qa_tok_123 (QA admin) and mem_tok_a (member). qa_mem_a had member_status set to 'active' during tests; both QA sessions torn down (qa_session.py down + qa_members.py down).",
+  "seed_data_creation": "Transient test rows (announcement, prayer, ballot, meeting, push_log/marks/subs, custom push) — all cleaned up by the module fixture teardown and a final db sweep. 1 stray 'ITER39FE custom alert' push_log row from the browser flow was also deleted.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite: /app/backend/tests/test_iter39_push_alerts.py (promotes qa_mem_a to member_status=active, exercises _push_votes/_push_events/_push_birthdays via asyncio in-process, cleans up on teardown and resets qa_mem_a). Admin page is single-view at /admin — click the Members nav button first, then [data-testid=members-sub-people] to reach the Phone alert box + Alert history. Member portal profile tab testid is portal-tab-me (not -profile).",
+  "evidence": {
+    "backend_pytest": "11 passed in 7.12s; junit at /app/test_reports/pytest/iter39.xml",
+    "profile_persistence": "After unticking push_events/push_votes/push_bday and Save profile, reload shows them False while push_news/push_prayer remain True (restored at end).",
+    "admin_history_flow": "People & content tab shows admin-push box with 7 filter chips (All/Announcements/Prayer/Events/Votes/Birthdays/Custom); sending 'ITER39FE custom alert' increased rows 8→9, newest row title+Custom badge+'0 phones reached' visible; Custom filter returns only the custom row.",
+    "vote_dedup": "Resolution opens_at=now-5s closes_at=now+20h → push_marks vote-open:{id} and vote-close:{id} both inserted, two push_log rows (A member vote is open / Voting closes tomorrow); second direct call to server._push_votes() produced 0 new rows.",
+    "future_vote": "Resolution opens_at=now+2d → no vote-open mark created after 2s wait.",
+    "event_dedup_optout": "Inserting member_meeting tomorrow + rsvp qa_mem_a:yes and calling server._push_events(now=10am ET) produced 1 'Tomorrow: ITER39 meeting' log; second call = still 1; after setting member_profile.push_events=False a fresh call wrote a log row with members=0 (user excluded).",
+    "birthday_optout": "Birthday today for qa_mem_a + bday_card=True → self 'Happy birthday' log written; second call = dedup; bday_card=False + mark reset → no self log row."
+  }
+}

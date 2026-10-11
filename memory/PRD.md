@@ -387,3 +387,8 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Offline check-in: QR cached in localStorage csc_checkin_code (cleared on logout); portal header "My check-in code" button + modal; offline /members shows saved code; sw.js caches app shell.
 - Web push (pywebpush, VAPID_* in backend/.env, db.push_subs): opt-in in My Profile (push_news/push_prayer prefs); auto alerts on new announcement & prayer (author excluded, anonymous respected); admin custom alert in Members > People & content. Dead subs (404/410) auto-removed.
 - Redeploy queued (outcome pending notification). iPhone push requires home-screen install (iOS 16.4+).
+
+## 2026-06 — Event/vote/birthday alerts + alert history (iteration_39: backend 11/11, frontend 100%)
+- _push_users logs every alert to db.push_log (kind, title, members, delivered, failed, expired); dedupe via db.push_marks (unique key).
+- _push_loop every 5 min: vote open + "closes tomorrow" (non-voters only); day-before reminders (>=9am ET) for meeting RSVPs yes/maybe and program sessions matched by member email; birthdays (>=8am ET) to others (bday_notices) + celebrant (bday_card), opens /birthday-wishes/{uid}.
+- Per-type prefs push_news/prayer/events/votes/bday in My Profile. Admin history GET /api/admin/members/push/history?kind= shown under Phone alert box.
