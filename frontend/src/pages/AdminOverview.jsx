@@ -48,7 +48,7 @@ export function SpamCard() {
 
 export default function AdminOverview() {
   return (
-    <div data-testid="admin-overview" className="grid lg:grid-cols-2 gap-6">
+    <div data-testid="admin-overview" className="max-w-3xl">
       <SpamCard />
     </div>
   );

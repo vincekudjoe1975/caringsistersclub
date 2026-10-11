@@ -9874,7 +9874,7 @@ async def _next_open_session(pid: str, after: str):
 
 async def _send_session_absent_followups(today=None) -> int:
     today = today or _today_et()
-    lo, hi = (today - timedelta(days=3)).isoformat(), (today - timedelta(days=1)).isoformat()
+    lo, hi = (today - timedelta(days=7)).isoformat(), (today - timedelta(days=1)).isoformat()
     sent = 0
     for sess in await db.program_sessions.find({"date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(500):
         p = await db.programs.find_one({"id": sess["program_id"], "published": True}, {"_id": 0})
@@ -9947,9 +9947,9 @@ async def save_spot(payload: SpotIn, request: Request, background: BackgroundTas
 
 
 class WalkInIn(BaseModel):
-    name: str
-    email: str = ""
-    phone: str = ""
+    name: str = Field(max_length=200)
+    email: str = Field(default="", max_length=254)
+    phone: str = Field(default="", max_length=40)
 
 
 def _walkin_thanks_html(name: str, p: dict, label: str) -> str:

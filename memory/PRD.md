@@ -358,3 +358,11 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Stripe fail-closed: no placeholder key; _require_stripe() -> 503 before checkout/dues/portal sessions (and before consuming manage-gift token).
 - Admin preview iframes (YIR, recap) sandboxed.
 - Session attendance: GET /admin/programs/{pid}/session-report, CSV /admin/programs/{pid}/session-attendance.csv; SessionReport in AdminSessions; printable /session-sheet/:sid (8 blank walk-in rows).
+
+## 2026-06 Spam card, absent follow-ups, save-my-spot, insights, walk-ins (iteration 35 — 14/14 backend, frontend 100%)
+- Admin › Overview (AdminOverview.jsx SpamCard): /admin/security/spam adds days[7], today, week_total, top_form.
+- _send_session_absent_followups (hourly hook >=10am ET): sessions dated today-7..today-1, no_show sign-ups once each (db.noshow_emails), next non-full session with /save-spot?token= (db.spot_tokens); program-level _noshow_for_program now excludes session sign-ups.
+- /save-spot page + GET/POST /api/sessions/save-spot creates sign-up for target session (single use, seat check).
+- Walk-ins: POST /admin/sessions/{sid}/walkin (attended, walk_in flag, thank-you email if email); "Add walk-in" on /session-checkin.
+- SessionInsights in AdminSessions: trend line chart, best weekday/time-of-day once >=3 marked sessions (recharts).
+- Backlog: spot_tokens TTL cleanup; split server.py into routers.
