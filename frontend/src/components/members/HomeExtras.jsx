@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../lib/api';
+import { Carpool } from './Carpool';
 import { PartyPopper, CalendarDays, MapPin, Loader2, Star, Upload } from 'lucide-react';
 
 const longDate = (d) => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
@@ -52,7 +53,8 @@ export function Gatherings() {
         {g.rsvp_deadline && <span>RSVP by {new Date(g.rsvp_deadline + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>}
       </div>
       {g.details && <p className="text-[14px] text-[#F7EFE9]/85 mt-3 whitespace-pre-line">{g.details}</p>}
-      <RsvpForm g={g} onSaved={load} />
+      <RsvpForm key={g.my_rsvp?.at || 'new'} g={g} onSaved={load} />
+      {g.open && g.my_rsvp?.response === 'yes' && <Carpool g={g} />}
     </div>
   ));
 }

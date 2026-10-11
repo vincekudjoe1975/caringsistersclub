@@ -63,6 +63,14 @@ export function MyProfile({ me, onChange }) {
         <span>Show my email and phone to other members in the directory</span>
       </label>
       <label className="flex items-start gap-3 text-[14px] text-[#241019]/80 mt-3 cursor-pointer">
+        <input data-testid="profile-show-on-map" type="checkbox" checked={!!p.show_on_map} onChange={(e) => set('show_on_map', e.target.checked)} className="mt-0.5 accent-[#B4247E] w-5 h-5 shrink-0" />
+        <span>Show my city on the sister map (members only, city only)</span>
+      </label>
+      <label className="flex items-start gap-3 text-[14px] text-[#241019]/80 mt-3 cursor-pointer">
+        <input data-testid="profile-weekly-email" type="checkbox" checked={p.weekly_email !== false} onChange={(e) => set('weekly_email', e.target.checked)} className="mt-0.5 accent-[#B4247E] w-5 h-5 shrink-0" />
+        <span>Email me the Sunday "This Week" summary</span>
+      </label>
+      <label className="flex items-start gap-3 text-[14px] text-[#241019]/80 mt-3 cursor-pointer">
         <input data-testid="profile-prayer-weekly" type="checkbox" checked={p.prayer_weekly !== false} onChange={(e) => set('prayer_weekly', e.target.checked)} className="mt-0.5 accent-[#B4247E] w-5 h-5 shrink-0" />
         <span>Email me a weekly digest of new prayer requests and praise reports</span>
       </label>

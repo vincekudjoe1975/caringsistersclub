@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
-import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText, Star, HandHeart, Camera, CalendarDays } from 'lucide-react';
+import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText, Star, HandHeart, Camera, CalendarDays, Clock3 } from 'lucide-react';
 import { MemberApply } from '../components/members/MemberApply';
 import { Announcements } from '../components/members/Announcements';
 import { Discussion } from '../components/members/Discussion';
@@ -16,6 +16,7 @@ import { SpotlightArchive, PrayerBoard } from '../components/members/Phase6';
 import { PhotoAlbums } from '../components/members/Phase7';
 import { InstallApp } from '../components/InstallApp';
 import { ThisWeek } from '../components/members/ThisWeek';
+import { MyHours } from '../components/members/MyHours';
 import { CheckinPassButton, OfflinePass } from '../components/members/CheckinPass';
 
 const BADGES = { news: 1, talk: 1, prayer: 1, votes: 1, photos: 1, spotlights: 1, minutes: 1 };
@@ -32,6 +33,7 @@ const TABS = [
   { k: 'minutes', l: 'Minutes', icon: FileText, C: Minutes },
   { k: 'bylaws', l: 'Bylaws', icon: ScrollText, C: Bylaws },
   { k: 'week', l: 'This Week', icon: CalendarDays, C: ThisWeek },
+  { k: 'hours', l: 'My Hours', icon: Clock3, C: MyHours },
   { k: 'me', l: 'My Profile', icon: UserCircle, C: MyProfile },
 ];
 
@@ -96,7 +98,7 @@ function Portal({ me, onChange }) {
       <div data-testid="portal-tabbar" className="grid grid-cols-3 sm:grid-cols-4 md:flex md:flex-wrap md:w-fit gap-1.5 md:gap-1 p-1.5 rounded-3xl md:rounded-full mb-8 bg-white/10 backdrop-blur-md border border-white/15">
         {TABS.map(({ k, l, icon: Icon }) => (
           <button key={k} data-testid={`portal-tab-${k}`} onClick={() => pick(k)}
-            className={`min-w-0 min-h-[60px] md:min-h-0 px-1.5 md:px-5 py-2 rounded-2xl md:rounded-full text-[12.5px] md:text-[14px] leading-tight font-semibold flex flex-col md:flex-row items-center justify-center gap-1 md:gap-2 text-center transition-colors ${tab === k ? 'bg-[#F7EFE9] text-[#3B0A2E]' : 'text-[#F7EFE9]/85 hover:text-white hover:bg-white/5'}`}>
+            className={`min-w-0 last:col-span-3 sm:last:col-span-4 md:last:col-span-1 min-h-[60px] md:min-h-0 px-1.5 md:px-5 py-2 rounded-2xl md:rounded-full text-[12.5px] md:text-[14px] leading-tight font-semibold flex flex-col md:flex-row items-center justify-center gap-1 md:gap-2 text-center transition-colors ${tab === k ? 'bg-[#F7EFE9] text-[#3B0A2E]' : 'text-[#F7EFE9]/85 hover:text-white hover:bg-white/5'}`}>
             <span className="relative"><Icon size={17} className="shrink-0" />{badges[k] && <span data-testid={`portal-badge-${k}`} aria-label="New" className="absolute -top-1 -right-1.5 w-2.5 h-2.5 rounded-full bg-[#E0358F] ring-2 ring-[#3B0A2E] animate-pulse" />}</span> <span className="truncate max-w-full">{l}</span>
           </button>
         ))}

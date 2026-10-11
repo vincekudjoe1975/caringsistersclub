@@ -156,6 +156,7 @@ function BylawsUpload({ toast }) {
 }
 
 import { AdminPush } from '../components/members/AdminPush';
+import { AdminMemberHours } from '../components/members/AdminMemberHours';
 
 export default function AdminMembers() {
   const { toast } = useToast();
@@ -178,6 +179,7 @@ export default function AdminMembers() {
       <Box title="Invite members" testid="admin-invites"><Invites invites={d.invites} reload={load} toast={toast} /></Box>
       <Box title="Announcements" testid="admin-announcements"><AnnouncementForm toast={toast} /></Box>
       <Box title="Phone alert" testid="admin-push"><AdminPush toast={toast} /></Box>
+      <Box title="Member volunteer hours" testid="admin-member-hours-box"><AdminMemberHours toast={toast} /></Box>
       <Box title={`Members (${d.members.filter((m) => m.status === 'active').length} active)`} testid="admin-roster"><Roster rows={d.members.filter((m) => m.status !== 'applied')} act={act} reload={load} /></Box>
       <Box title="Bylaws" testid="admin-bylaws"><BylawsUpload toast={toast} /></Box>
     </div>

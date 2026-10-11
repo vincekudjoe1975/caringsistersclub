@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { CalendarClock, Pencil, X, Loader2 } from 'lucide-react';
+import { CalendarClock, Pencil, X, Loader2, Pause, Play, Repeat } from 'lucide-react';
 import { api } from '../../lib/api';
 
-const when = (local) => new Date(local).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const repeatLabel = (r) => (r.repeat === 'daily' ? 'Daily' : r.repeat === 'weekly' ? `Weekly on ${r.days.map((d) => WD[d]).join(', ')}` : r.repeat === 'monthly' ? 'Monthly' : '');
 
 export const ScheduledAlerts = ({ toast, refresh, onEdit }) => {
   const [rows, setRows] = useState([]);
@@ -12,6 +13,10 @@ export const ScheduledAlerts = ({ toast, refresh, onEdit }) => {
     try { await api.delete(`/admin/members/push/scheduled/${id}`); toast({ title: 'Scheduled alert cancelled' }); load(); }
     catch (ex) { toast({ title: 'Could not cancel', description: ex?.response?.data?.detail, variant: 'destructive' }); }
   };
+  const pause = async (id, action) => {
+    try { await api.post(`/admin/members/push/scheduled/${id}/${action}`); toast({ title: action === 'pause' ? 'Alert paused' : 'Alert resumed' }); load(); }
+    catch (ex) { toast({ title: 'Could not update', description: ex?.response?.data?.detail, variant: 'destructive' }); }
+  };
   if (!rows.length) return null;
   return (
     <div data-testid="scheduled-alerts" className="mt-5 pt-4 border-t border-[#3B0A2E]/10">
@@ -20,8 +25,10 @@ export const ScheduledAlerts = ({ toast, refresh, onEdit }) => {
         <div key={r.id} data-testid={`scheduled-row-${r.id}`} className="py-2.5 border-t border-[#3B0A2E]/8 flex items-start gap-3 text-[13px]">
           <div className="min-w-0 flex-1">
             <p className="font-semibold text-[#3B0A2E] break-words">{r.title}</p>
-            <p className="text-[#241019]/55">{when(r.send_at_local)} Eastern</p>
+            <p className="text-[#241019]/55">{r.status === 'paused' ? <span data-testid={`scheduled-paused-${r.id}`} className="font-semibold text-amber-700">Paused · </span> : 'Next: '}{new Date(r.send_at).toLocaleString(undefined, { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} Eastern</p>
+            {r.repeat && r.repeat !== 'none' && <p data-testid={`scheduled-repeat-${r.id}`} className="text-[#B4247E] font-semibold flex items-center gap-1"><Repeat size={12} /> {repeatLabel(r)}{r.end_date ? ` until ${r.end_date}` : ''}{r.sent_count ? ` · sent ${r.sent_count}×` : ''}</p>}
           </div>
+          <button type="button" data-testid={`scheduled-${r.status === 'paused' ? 'resume' : 'pause'}-${r.id}`} onClick={() => pause(r.id, r.status === 'paused' ? 'resume' : 'pause')} aria-label={r.status === 'paused' ? 'Resume' : 'Pause'} className="w-9 h-9 flex items-center justify-center rounded-full text-[#3B0A2E]/70 hover:bg-[#F7EFE9]">{r.status === 'paused' ? <Play size={14} /> : <Pause size={14} />}</button>
           <button type="button" data-testid={`scheduled-edit-${r.id}`} onClick={() => onEdit(r)} aria-label="Edit" className="w-9 h-9 flex items-center justify-center rounded-full text-[#3B0A2E]/70 hover:bg-[#F7EFE9]"><Pencil size={14} /></button>
           <button type="button" data-testid={`scheduled-cancel-${r.id}`} onClick={() => cancel(r.id)} aria-label="Cancel" className="w-9 h-9 flex items-center justify-center rounded-full text-red-600/80 hover:bg-red-50"><X size={15} /></button>
         </div>

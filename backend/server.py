@@ -3824,6 +3824,8 @@ async def admin_review_hours(hid: str, action: str, background: BackgroundTasks,
         raise HTTPException(status_code=404, detail="Pending entry not found")
     if action == "approve":
         background.add_task(_send_volunteer_thanks)
+        h = await db.volunteer_hours.find_one({"id": hid}, {"_id": 0, "email": 1})
+        background.add_task(_member_badge_push, h["email"])
     return {"ok": True}
 
 
@@ -6402,6 +6404,8 @@ class MemberProfile(BaseModel):
     push_votes: bool = True
     push_bday: bool = True
     push_weekly: bool = True
+    weekly_email: bool = True
+    show_on_map: bool = False
     quiet_on: bool = False
     quiet_start: str = "21:00"
     quiet_end: str = "08:00"
@@ -6420,7 +6424,7 @@ async def members_profile(payload: MemberProfile, user=Depends(require_member)):
     prof = {"city": payload.city.strip()[:80], "phone": payload.phone.strip()[:30], "bio": payload.bio.strip()[:600], "show_contact": payload.show_contact,
             "birthday_month": int(bm) if bm else None, "birthday_day": int(bd) if bd else None, "prayer_weekly": payload.prayer_weekly,
             "bday_notices": payload.bday_notices, "bday_card": payload.bday_card, "push_news": payload.push_news, "push_prayer": payload.push_prayer,
-            "push_events": payload.push_events, "push_votes": payload.push_votes, "push_bday": payload.push_bday, "push_weekly": payload.push_weekly,
+            "push_events": payload.push_events, "push_votes": payload.push_votes, "push_bday": payload.push_bday, "push_weekly": payload.push_weekly, "weekly_email": payload.weekly_email, "show_on_map": payload.show_on_map,
             "quiet_on": payload.quiet_on, "quiet_start": payload.quiet_start, "quiet_end": payload.quiet_end}
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_profile": prof}})
     return prof
@@ -8147,6 +8151,8 @@ async def members_rsvp(mid: str, payload: GatheringRsvpIn, user=Depends(require_
     r = {"response": payload.response, "guests": payload.guests if payload.response != "no" else 0, "dietary": payload.dietary.strip()[:200], "at": _now_iso(),
          "name": user.get("name") or ""}
     await db.member_meetings.update_one({"id": mid}, {"$set": {f"rsvps.{user['user_id']}": r}})
+    if payload.response != "yes":
+        await _carpool_release(mid, user["user_id"], (await db.member_meetings.find_one({"id": mid}, {"_id": 0, "title": 1}))["title"])
     return r
 
 
@@ -10166,7 +10172,7 @@ def _push_one(sub: dict, data: str) -> bool:
         return False
 
 
-PUSH_KINDS = {"announcement": "push_news", "prayer": "push_prayer", "event": "push_events", "vote": "push_votes", "birthday": "push_bday", "wish": "push_bday", "weekly": "push_weekly", "custom": "", "test": ""}
+PUSH_KINDS = {"announcement": "push_news", "prayer": "push_prayer", "event": "push_events", "vote": "push_votes", "birthday": "push_bday", "wish": "push_bday", "weekly": "push_weekly", "carpool": "push_events", "hours": "", "custom": "", "test": ""}
 
 
 def _quiet_now(prof: dict, now=None) -> bool:
@@ -10334,6 +10340,8 @@ async def _start_push_loop():
     await db.push_log.create_index("sent_at")
     await db.push_taps.create_index([("log_id", 1), ("user_id", 1)], unique=True)
     await db.push_scheduled.create_index([("status", 1), ("send_at", 1)])
+    await db.member_carpool.create_index([("meeting_id", 1), ("user_id", 1)], unique=True)
+    await db.geo_cache.create_index("key", unique=True)
     asyncio.create_task(_push_loop())
 
 
@@ -10401,6 +10409,27 @@ class ScheduledPushIn(BaseModel):
     body: str
     url: str = "/members"
     send_at: str
+    repeat: str = "none"
+    days: List[int] = []
+    end_date: str = ""
+
+
+def _next_run(local: str, repeat: str, days: list, after: datetime) -> Optional[datetime]:
+    base = datetime.strptime(local, "%Y-%m-%dT%H:%M")
+    d = after.astimezone(EVENT_TZ).date()
+    for i in range(0, 400):
+        day = d + timedelta(days=i)
+        if day < base.date():
+            continue
+        if repeat == "weekly" and day.weekday() not in days:
+            continue
+        if repeat == "monthly":
+            if day.day != base.day:
+                continue
+        at = datetime.combine(day, base.time(), tzinfo=EVENT_TZ).astimezone(timezone.utc)
+        if at > after:
+            return at
+    return None
 
 
 def _clean_scheduled(p: ScheduledPushIn) -> dict:
@@ -10411,14 +10440,32 @@ def _clean_scheduled(p: ScheduledPushIn) -> dict:
         at = datetime.strptime(p.send_at, "%Y-%m-%dT%H:%M").replace(tzinfo=EVENT_TZ).astimezone(timezone.utc)
     except ValueError:
         raise HTTPException(status_code=400, detail="Please pick a valid date and time.")
-    if at <= datetime.now(timezone.utc) + timedelta(minutes=1):
+    if p.repeat not in ("none", "daily", "weekly", "monthly"):
+        raise HTTPException(status_code=400, detail="Invalid repeat option.")
+    days = sorted({d for d in p.days if 0 <= d <= 6})
+    if p.repeat == "weekly" and not days:
+        raise HTTPException(status_code=400, detail="Pick at least one day of the week.")
+    if p.end_date:
+        try:
+            datetime.strptime(p.end_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end date.")
+        if p.end_date < p.send_at[:10]:
+            raise HTTPException(status_code=400, detail="End date must be after the first send.")
+    now = datetime.now(timezone.utc)
+    if p.repeat != "none":
+        at = _next_run(p.send_at, p.repeat, days, max(now, at - timedelta(seconds=1)))
+        if at is None:
+            raise HTTPException(status_code=400, detail="No upcoming send time matches these repeat settings.")
+    if at <= now + timedelta(minutes=1):
         raise HTTPException(status_code=400, detail="Please pick a time in the future.")
-    return {"title": title, "body": body, "url": p.url.strip() if p.url.strip().startswith("/") else "/members", "send_at": at.isoformat(), "send_at_local": p.send_at}
+    return {"title": title, "body": body, "url": p.url.strip() if p.url.strip().startswith("/") else "/members", "send_at": at.isoformat(), "send_at_local": p.send_at,
+            "repeat": p.repeat, "days": days if p.repeat == "weekly" else [], "end_date": p.end_date}
 
 
 @api_router.get("/admin/members/push/scheduled")
 async def admin_push_scheduled(user=Depends(require_admin)):
-    return await db.push_scheduled.find({"status": "scheduled"}, {"_id": 0}).sort("send_at", 1).to_list(200)
+    return await db.push_scheduled.find({"status": {"$in": ["scheduled", "paused"]}}, {"_id": 0}).sort("send_at", 1).to_list(200)
 
 
 @api_router.post("/admin/members/push/scheduled")
@@ -10430,7 +10477,7 @@ async def admin_push_schedule(payload: ScheduledPushIn, user=Depends(require_adm
 
 @api_router.put("/admin/members/push/scheduled/{sid}")
 async def admin_push_schedule_edit(sid: str, payload: ScheduledPushIn, user=Depends(require_admin)):
-    res = await db.push_scheduled.update_one({"id": sid, "status": "scheduled"}, {"$set": _clean_scheduled(payload)})
+    res = await db.push_scheduled.update_one({"id": sid, "status": {"$in": ["scheduled", "paused"]}}, {"$set": _clean_scheduled(payload)})
     if not res.matched_count:
         raise HTTPException(status_code=404, detail="That alert was already sent or cancelled.")
     return await db.push_scheduled.find_one({"id": sid}, {"_id": 0})
@@ -10438,10 +10485,27 @@ async def admin_push_schedule_edit(sid: str, payload: ScheduledPushIn, user=Depe
 
 @api_router.delete("/admin/members/push/scheduled/{sid}")
 async def admin_push_schedule_cancel(sid: str, user=Depends(require_admin)):
-    res = await db.push_scheduled.update_one({"id": sid, "status": "scheduled"}, {"$set": {"status": "cancelled", "cancelled_at": _now_iso()}})
+    res = await db.push_scheduled.update_one({"id": sid, "status": {"$in": ["scheduled", "paused"]}}, {"$set": {"status": "cancelled", "cancelled_at": _now_iso()}})
     if not res.matched_count:
         raise HTTPException(status_code=404, detail="That alert was already sent or cancelled.")
     return {"ok": True}
+
+
+@api_router.post("/admin/members/push/scheduled/{sid}/{action}")
+async def admin_push_schedule_pause(sid: str, action: str, user=Depends(require_admin)):
+    if action not in ("pause", "resume"):
+        raise HTTPException(status_code=400, detail="Invalid action")
+    d = await db.push_scheduled.find_one({"id": sid, "status": "scheduled" if action == "pause" else "paused"}, {"_id": 0})
+    if not d:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    upd = {"status": "paused" if action == "pause" else "scheduled"}
+    if action == "resume" and d["send_at"] <= _now_iso():
+        nxt = _next_run(d["send_at_local"], d.get("repeat", "none"), d.get("days", []), datetime.now(timezone.utc)) if d.get("repeat", "none") != "none" else None
+        if not nxt or (d.get("end_date") and nxt.astimezone(EVENT_TZ).date().isoformat() > d["end_date"]):
+            raise HTTPException(status_code=400, detail="This alert's time has passed. Edit it to pick a new time.")
+        upd["send_at"] = nxt.isoformat()
+    await db.push_scheduled.update_one({"id": sid}, {"$set": upd})
+    return await db.push_scheduled.find_one({"id": sid}, {"_id": 0})
 
 
 async def _send_scheduled() -> int:
@@ -10451,7 +10515,11 @@ async def _send_scheduled() -> int:
         if not d:
             return n
         n += await _push_members(d["title"], d["body"], d["url"], kind="custom")
-        await db.push_scheduled.update_one({"id": d["id"]}, {"$set": {"status": "sent", "sent_at": _now_iso()}})
+        nxt = _next_run(d["send_at_local"], d["repeat"], d.get("days", []), datetime.now(timezone.utc)) if d.get("repeat", "none") != "none" else None
+        if nxt and not (d.get("end_date") and nxt.astimezone(EVENT_TZ).date().isoformat() > d["end_date"]):
+            await db.push_scheduled.update_one({"id": d["id"]}, {"$set": {"status": "scheduled", "send_at": nxt.isoformat(), "last_sent_at": _now_iso()}, "$inc": {"sent_count": 1}})
+        else:
+            await db.push_scheduled.update_one({"id": d["id"]}, {"$set": {"status": "sent", "sent_at": _now_iso()}, "$inc": {"sent_count": 1}})
 
 
 # --- Weekly "This Week" summary ---
@@ -10504,7 +10572,33 @@ async def _push_weekly(now=None) -> int:
     cfg = await db.settings.find_one({"key": "weekly_summary"}, {"_id": 0}) or {}
     if cfg.get("paused") or not await _push_mark(f"weekly:{et.date().isoformat()}"):
         return 0
-    return await _send_weekly()
+    n = await _send_weekly()
+    await _email_weekly()
+    return n
+
+
+def _week_text(w: dict) -> str:
+    out = []
+    def sec(title, lines):
+        if lines:
+            out.append(title + "\n" + "\n".join("• " + x for x in lines))
+    fmt = lambda d: datetime.strptime(d, "%Y-%m-%d").strftime("%a %b %-d")  # noqa: E731
+    sec("Gatherings & sessions", [f"{fmt(g['date'])}: {g['title']}" + (f" at {g['location']}" if g.get("location") else "") for g in w["gatherings"]]
+        + [f"{fmt(x['date'])}: {x['program']}" + (f" at {x['location']}" if x.get("location") else "") for x in w["sessions"]])
+    sec("Open votes", [v["title"] for v in w["votes"]])
+    sec("Birthdays", [f"{b['name']} ({fmt(b['date'])})" for b in w["birthdays"]])
+    sec("New this past week", [a["title"] for a in w["announcements"]] + [f"Sister spotlight: {x['name']}" for x in w["spotlights"]] + [f"Minutes approved: {m['title']}" for m in w["minutes"]])
+    return "\n\n".join(out) or "A quiet week ahead. Rest up, sister!"
+
+
+async def _email_weekly() -> int:
+    w = await _this_week()
+    html = _member_email_html("This Week", "Your week with the Club", _week_text(w), "See this week in the portal", "/members?tab=week")
+    n = 0
+    async for u in db.users.find({"member_status": "active", "email": {"$nin": [None, ""]}, "member_profile.weekly_email": {"$ne": False}}, {"_id": 0, "email": 1}):
+        await send_email(to=u["email"], subject="This week with the Caring Sisters Club", html=html)
+        n += 1
+    return n
 
 
 class WeeklyCfgIn(BaseModel):
@@ -10527,7 +10621,287 @@ async def admin_weekly_cfg_set(payload: WeeklyCfgIn, user=Depends(require_admin)
 @api_router.post("/admin/members/weekly-summary/send")
 async def admin_weekly_send(request: Request, user=Depends(require_admin)):
     await _rate_limit(request, f"admin-weekly:{user['user_id']}", max_hits=3, window_s=600)
-    return {"sent": await _send_weekly()}
+    return {"sent": await _send_weekly(), "emailed": await _email_weekly()}
+
+
+# --- Best send times ---
+@api_router.get("/admin/members/push/best-times")
+async def admin_push_best_times(user=Depends(require_admin)):
+    since = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    grid = [[0] * 24 for _ in range(7)]
+    async for t in db.push_taps.find({"at": {"$gte": since}}, {"_id": 0, "at": 1}):
+        et = datetime.fromisoformat(t["at"]).astimezone(EVENT_TZ)
+        grid[et.weekday()][et.hour] += 1
+    total = sum(map(sum, grid))
+    best = sorted(((grid[d][h], d, h) for d in range(7) for h in range(24)), reverse=True)[:3]
+    return {"grid": grid, "total": total, "best": [{"day": d, "hour": h, "taps": n} for n, d, h in best if n]}
+
+
+# --- Gathering carpool ---
+class CarpoolIn(BaseModel):
+    role: str
+    seats: int = 0
+
+
+def _city_key(c: str) -> str:
+    return re.sub(r"\s*,\s*", ", ", re.sub(r"\s+", " ", (c or "").replace(".", ""))).strip(" ,").lower()
+
+
+async def _carpool_match(mid: str, title: str, driver: dict, rider: dict) -> bool:
+    res = await db.member_carpool.update_one({"meeting_id": mid, "user_id": rider["user_id"], "role": "need", "driver_id": None}, {"$set": {"driver_id": driver["user_id"], "matched_at": _now_iso()}})
+    if not res.modified_count:
+        return False
+    await _push_users([rider["user_id"]], "You have a ride!", f"{driver['name'].split(' ')[0]} will drive you to {title}. Open the portal for her phone number.", "/members", "carpool")
+    await _push_users([driver["user_id"]], "Carpool match", f"You're driving {rider['name'].split(' ')[0]} to {title}. Open the portal for her phone number.", "/members", "carpool")
+    return True
+
+
+async def _seats_left(mid: str, d: dict) -> int:
+    return d["seats"] - await db.member_carpool.count_documents({"meeting_id": mid, "role": "need", "driver_id": d["user_id"]})
+
+
+async def _carpool_auto(mid: str, title: str, me: dict):
+    if me["role"] == "need":
+        for d in await db.member_carpool.find({"meeting_id": mid, "role": "drive", "city_key": me["city_key"]}, {"_id": 0}).to_list(50):
+            if me["city_key"] and await _seats_left(mid, d) > 0 and await _carpool_match(mid, title, d, me):
+                return
+    elif me["role"] == "drive" and me["city_key"]:
+        for r in await db.member_carpool.find({"meeting_id": mid, "role": "need", "driver_id": None, "city_key": me["city_key"]}, {"_id": 0}).sort("created_at", 1).to_list(50):
+            if await _seats_left(mid, me) <= 0:
+                return
+            await _carpool_match(mid, title, me, r)
+
+
+async def _carpool_release(mid: str, uid: str, title: str):
+    mine = await db.member_carpool.find_one({"meeting_id": mid, "user_id": uid}, {"_id": 0})
+    if not mine:
+        return
+    await db.member_carpool.delete_one({"meeting_id": mid, "user_id": uid})
+    if mine["role"] == "drive":
+        riders = await db.member_carpool.distinct("user_id", {"meeting_id": mid, "driver_id": uid})
+        await db.member_carpool.update_many({"meeting_id": mid, "driver_id": uid}, {"$set": {"driver_id": None}})
+        if riders:
+            await _push_users(riders, "Your ride changed", f"Your driver for {title} can no longer drive. We've put you back on the ride list.", "/members", "carpool")
+    elif mine.get("driver_id"):
+        await _push_users([mine["driver_id"]], "Carpool update", f"{mine['name'].split(' ')[0]} no longer needs a ride to {title}.", "/members", "carpool")
+
+
+async def _carpool_view(mid: str, uid: str, admin: bool = False) -> dict:
+    rows = await db.member_carpool.find({"meeting_id": mid}, {"_id": 0}).to_list(500)
+    phones = {u["user_id"]: (u.get("member_profile") or {}).get("phone", "") async for u in db.users.find({"user_id": {"$in": [r["user_id"] for r in rows]}}, {"_id": 0, "user_id": 1, "member_profile.phone": 1})}
+    me = next((r for r in rows if r["user_id"] == uid), None)
+    out = {"me": None, "riders_waiting": [], "drivers": sum(1 for r in rows if r["role"] == "drive"), "needs": sum(1 for r in rows if r["role"] == "need")}
+    if me:
+        v = {"role": me["role"], "seats": me.get("seats", 0), "city": me.get("city", "")}
+        if me["role"] == "need" and me.get("driver_id"):
+            d = next((r for r in rows if r["user_id"] == me["driver_id"]), None)
+            v["driver"] = {"user_id": me["driver_id"], "name": (d or {}).get("name", ""), "phone": phones.get(me["driver_id"], ""), "city": (d or {}).get("city", "")}
+        if me["role"] == "drive":
+            v["riders"] = [{"user_id": r["user_id"], "name": r["name"], "phone": phones.get(r["user_id"], ""), "city": r.get("city", "")} for r in rows if r.get("driver_id") == uid]
+            v["seats_left"] = me["seats"] - len(v["riders"])
+            out["riders_waiting"] = [{"user_id": r["user_id"], "name": r["name"], "city": r.get("city", "")} for r in rows if r["role"] == "need" and not r.get("driver_id")]
+        out["me"] = v
+    return out
+
+
+@api_router.get("/members/gatherings/{mid}/carpool")
+async def members_carpool(mid: str, user=Depends(require_member)):
+    return await _carpool_view(mid, user["user_id"])
+
+
+@api_router.put("/members/gatherings/{mid}/carpool")
+async def members_carpool_set(mid: str, payload: CarpoolIn, background: BackgroundTasks, user=Depends(require_member)):
+    if payload.role not in ("need", "drive", "none") or (payload.role == "drive" and not 1 <= payload.seats <= 8):
+        raise HTTPException(status_code=400, detail="Choose 'I need a ride' or 'I can drive' with 1 to 8 seats.")
+    m = await db.member_meetings.find_one({"id": mid, "kind": "in-person"}, {"_id": 0, "title": 1, "rsvps": 1})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Gathering not found")
+    if payload.role != "none" and ((m.get("rsvps") or {}).get(user["user_id"]) or {}).get("response") != "yes":
+        raise HTTPException(status_code=400, detail="RSVP 'Yes' first, then join the carpool.")
+    cur = await db.member_carpool.find_one({"meeting_id": mid, "user_id": user["user_id"]}, {"_id": 0})
+    if cur and cur["role"] == payload.role == "drive":
+        taken = cur["seats"] - await _seats_left(mid, cur)
+        if payload.seats < taken:
+            raise HTTPException(status_code=400, detail=f"You already have {taken} rider{'s' if taken != 1 else ''}.")
+        await db.member_carpool.update_one({"meeting_id": mid, "user_id": user["user_id"]}, {"$set": {"seats": payload.seats}})
+        background.add_task(_carpool_auto, mid, m["title"], {**cur, "seats": payload.seats})
+        return await _carpool_view(mid, user["user_id"])
+    if cur and cur["role"] == payload.role:
+        return await _carpool_view(mid, user["user_id"])
+    await _carpool_release(mid, user["user_id"], m["title"])
+    if payload.role != "none":
+        city = ((user.get("member_profile") or {}).get("city") or "").strip()[:80]
+        doc = {"meeting_id": mid, "user_id": user["user_id"], "name": user.get("name") or "", "role": payload.role, "seats": payload.seats if payload.role == "drive" else 0,
+               "city": city, "city_key": _city_key(city), "driver_id": None, "created_at": _now_iso()}
+        await db.member_carpool.insert_one(dict(doc))
+        await _carpool_auto(mid, m["title"], doc)
+    return await _carpool_view(mid, user["user_id"])
+
+
+@api_router.post("/members/gatherings/{mid}/carpool/offer/{rid}")
+async def members_carpool_offer(mid: str, rid: str, user=Depends(require_member)):
+    d = await db.member_carpool.find_one({"meeting_id": mid, "user_id": user["user_id"], "role": "drive"}, {"_id": 0})
+    if not d:
+        raise HTTPException(status_code=400, detail="Choose 'I can drive' first.")
+    if await _seats_left(mid, d) <= 0:
+        raise HTTPException(status_code=400, detail="Your car is full.")
+    r = await db.member_carpool.find_one({"meeting_id": mid, "user_id": rid, "role": "need"}, {"_id": 0})
+    m = await db.member_meetings.find_one({"id": mid}, {"_id": 0, "title": 1})
+    if not r or not m or not await _carpool_match(mid, m["title"], d, r):
+        raise HTTPException(status_code=400, detail="That sister already has a ride.")
+    return await _carpool_view(mid, user["user_id"])
+
+
+@api_router.get("/admin/members/meetings/{mid}/carpool")
+async def admin_carpool(mid: str, user=Depends(require_admin)):
+    rows = await db.member_carpool.find({"meeting_id": mid}, {"_id": 0}).to_list(500)
+    names = {r["user_id"]: r["name"] for r in rows}
+    return [{"name": r["name"], "role": r["role"], "seats": r.get("seats", 0), "city": r.get("city", ""), "driver": names.get(r.get("driver_id") or "", "")} for r in rows]
+
+
+# --- Sister map ---
+async def _geocode(city: str) -> Optional[dict]:
+    key = _city_key(city)
+    if not key:
+        return None
+    hit = await db.geo_cache.find_one({"key": key}, {"_id": 0})
+    if hit:
+        return hit if hit.get("lat") is not None else None
+    def look():
+        r = _requests.get("https://nominatim.openstreetmap.org/search", params={"q": city, "format": "json", "limit": 1, "countrycodes": "us"},
+                          headers={"User-Agent": f"CaringSistersClub/1.0 ({os.environ.get('VAPID_SUBJECT', '').replace('mailto:', '')})"}, timeout=8)
+        r.raise_for_status()
+        return r.json()
+    try:
+        res = await asyncio.to_thread(look)
+    except Exception as e:
+        logging.warning(f"Geocode failed for {city}: {e}")
+        return None
+    doc = {"key": key, "label": city.strip()[:80], "lat": float(res[0]["lat"]) if res else None, "lon": float(res[0]["lon"]) if res else None, "at": _now_iso()}
+    await db.geo_cache.update_one({"key": key}, {"$set": doc}, upsert=True)
+    await asyncio.sleep(1.1)
+    return doc if doc["lat"] is not None else None
+
+
+@api_router.get("/members/map")
+async def members_map(user=Depends(require_member)):
+    rows = await db.users.find({"member_status": "active", "member_profile.show_on_map": True, "member_profile.city": {"$nin": [None, ""]}}, {"_id": 0}).sort("name", 1).to_list(2000)
+    groups = {}
+    for u in rows:
+        k = _city_key(u["member_profile"]["city"])
+        groups.setdefault(k, {"city": u["member_profile"]["city"].strip(), "sisters": []})["sisters"].append(
+            {"user_id": u["user_id"], "name": u.get("name") or "", "picture": u.get("picture") or "", "office": u.get("member_office", "")})
+    out, pending = [], 0
+    for k, g in groups.items():
+        geo = await db.geo_cache.find_one({"key": k}, {"_id": 0})
+        if geo is None and pending < 5:
+            pending += 1
+            geo = await _geocode(g["city"])
+        if geo and geo.get("lat") is not None:
+            out.append({**g, "lat": geo["lat"], "lon": geo["lon"], "count": len(g["sisters"])})
+    me = (user.get("member_profile") or {})
+    return {"cities": out, "on_map": bool(me.get("show_on_map")), "my_city": me.get("city", ""), "unmapped": len(groups) - len(out)}
+
+
+# --- Member volunteer hours ---
+MEMBER_HOUR_BADGES = (10, 25, 50, 100, 250)
+
+
+class MemberHoursIn(BaseModel):
+    date: str
+    hours: float
+    activity: str
+    program_id: str = ""
+    note: str = ""
+
+
+@api_router.post("/members/hours")
+async def members_hours_add(payload: MemberHoursIn, request: Request, user=Depends(require_member)):
+    await _rate_limit(request, f"member-hours:{user['user_id']}", max_hits=20, window_s=600)
+    if not 0.25 <= payload.hours <= 24:
+        raise HTTPException(status_code=400, detail="Hours must be between 0.25 and 24 for a single day.")
+    try:
+        day = datetime.strptime(payload.date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Please choose a valid date.")
+    today = _today_et()
+    if day > today or day < today - timedelta(days=365):
+        raise HTTPException(status_code=400, detail="Date must be within the past year and not in the future.")
+    activity = payload.activity.strip()[:120]
+    if not activity:
+        raise HTTPException(status_code=400, detail="Please describe the activity.")
+    prog = await db.programs.find_one({"id": payload.program_id[:64], "published": True}, {"_id": 0, "id": 1, "title": 1}) if payload.program_id else None
+    doc = {"id": str(uuid.uuid4()), "name": (user.get("name") or "")[:80], "email": (user.get("email") or "").lower(), "user_id": user["user_id"], "source": "portal",
+           "program_id": (prog or {}).get("id", ""), "program": (prog or {}).get("title") or activity, "activity": activity, "date": payload.date,
+           "hours": round(payload.hours, 2), "note": payload.note.strip()[:500], "status": "pending", "leaderboard": False, "created_at": _now_iso()}
+    await db.volunteer_hours.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/members/hours")
+async def members_hours(user=Depends(require_member)):
+    email = (user.get("email") or "").lower()
+    rows = await db.volunteer_hours.find({"email": email}, {"_id": 0}).sort("date", -1).to_list(500)
+    total = round(sum(r["hours"] for r in rows if r["status"] == "approved"), 2)
+    pending = round(sum(r["hours"] for r in rows if r["status"] == "pending"), 2)
+    nxt = next((n for n in MEMBER_HOUR_BADGES if total < n), None)
+    return {"entries": rows, "total": total, "pending": pending, "badges": [{"hours": n, "earned": total >= n} for n in MEMBER_HOUR_BADGES], "next": nxt}
+
+
+@api_router.delete("/members/hours/{hid}")
+async def members_hours_delete(hid: str, user=Depends(require_member)):
+    res = await db.volunteer_hours.delete_one({"id": hid, "email": (user.get("email") or "").lower(), "status": "pending"})
+    if not res.deleted_count:
+        raise HTTPException(status_code=404, detail="Only pending entries can be removed.")
+    return {"ok": True}
+
+
+async def _member_hours_board() -> list:
+    emails = {(u.get("email") or "").lower(): u async for u in db.users.find({"$or": [{"member_status": "active"}, {"role": "admin"}]}, {"_id": 0, "user_id": 1, "name": 1, "email": 1})}
+    out = []
+    async for r in db.volunteer_hours.aggregate([{"$match": {"email": {"$in": list(emails)}}}, {"$group": {"_id": {"e": "$email", "s": "$status"}, "h": {"$sum": "$hours"}, "n": {"$sum": 1}}}]):
+        out.append(r)
+    board = {}
+    for r in out:
+        e = r["_id"]["e"]
+        b = board.setdefault(e, {"user_id": emails[e]["user_id"], "name": emails[e].get("name") or e, "email": e, "approved": 0, "pending": 0, "entries": 0})
+        if r["_id"]["s"] in ("approved", "pending"):
+            b[r["_id"]["s"]] = round(b[r["_id"]["s"]] + r["h"], 2)
+        b["entries"] += r["n"]
+    rows = sorted(board.values(), key=lambda b: -b["approved"])
+    for b in rows:
+        b["badge"] = max([n for n in MEMBER_HOUR_BADGES if b["approved"] >= n], default=0)
+    return rows
+
+
+@api_router.get("/admin/members/hours")
+async def admin_member_hours(user=Depends(require_admin)):
+    board = await _member_hours_board()
+    pending = await db.volunteer_hours.find({"status": "pending", "email": {"$in": [b["email"] for b in board]}}, {"_id": 0}).sort("created_at", 1).to_list(300)
+    return {"leaderboard": board, "pending": pending}
+
+
+@api_router.get("/admin/members/hours.csv")
+async def admin_member_hours_csv(user=Depends(require_admin)):
+    board = await _member_hours_board()
+    rows = await db.volunteer_hours.find({"email": {"$in": [b["email"] for b in board]}}, {"_id": 0}).sort("date", -1).to_list(20000)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Name", "Email", "Date", "Hours", "Activity / program", "Status", "Note", "Logged at"])
+    for r in rows:
+        w.writerow([_csv_safe(r.get("name", "")), r["email"], r["date"], r["hours"], _csv_safe(r.get("activity") or r.get("program", "")), r["status"], _csv_safe(r.get("note", "")), r.get("created_at", "")])
+    return Response(content=buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="member-volunteer-hours.csv"'})
+
+
+async def _member_badge_push(email: str):
+    u = await db.users.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0, "user_id": 1, "name": 1})
+    if not u:
+        return
+    total = await _hours_total(email)
+    for n in MEMBER_HOUR_BADGES:
+        if total >= n and await _push_mark(f"hours-badge:{u['user_id']}:{n}"):
+            await _push_users([u["user_id"]], f"You earned the {n}-hour badge!", f"Thank you for {total:g} hours of service, {(u.get('name') or 'sister').split(' ')[0]}. Tap to see your badges.", "/members?tab=hours", "hours")
 
 # Include the router in the main app
 app.include_router(api_router)
