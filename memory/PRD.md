@@ -405,3 +405,11 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Read rates: payload log_id; sw.js notificationclick POST /api/members/push/tapped; db.push_taps unique (log_id,user_id); history row shows "X tapped of Y reached (Z%)".
 - Weekly: _this_week + GET /api/members/this-week; new portal tab 'week' (ThisWeek.jsx, 12 tabs); _push_weekly Sun >=18:00 ET (mark weekly:{date}); settings key weekly_summary {paused}; admin GET/PUT /api/admin/members/weekly-summary, POST .../send; pref push_weekly.
 - MCP: user asked about `npx auto-doc-mcp init` — support says command-based (npx/stdio) MCP servers not yet supported on Emergent; only hosted HTTP MCP. Not installed.
+
+## 2026-06 — Repeating alerts, weekly email, carpool, sister map, member hours, best times (iteration_42: backend 26/26, frontend 100%)
+- push_scheduled: repeat none/daily/weekly(days 0=Mon..6)/monthly, end_date, status scheduled|paused; _next_run; pause/resume endpoint.
+- _email_weekly (all active, weekly_email != False) with Sunday push and admin Send now.
+- Carpool: db.member_carpool; PUT/GET /api/members/gatherings/{mid}/carpool, POST .../offer/{rid}; auto-match by _city_key (full normalized city); release on RSVP != yes; alerts kind carpool (pref push_events).
+- Map: profile show_on_map; GET /api/members/map; Nominatim geocode cached db.geo_cache; Directory List/Map (react-leaflet 5, leaflet 1.9.4).
+- Member hours: tab 'hours' (MyHours.jsx), /api/members/hours, admin /api/admin/members/hours (+.csv); badges MEMBER_HOUR_BADGES (10,25,50,100,250) separate from public VOL_MILESTONES; push on badge.
+- Best times: GET /api/admin/members/push/best-times heatmap + hint.

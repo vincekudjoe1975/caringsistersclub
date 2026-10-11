@@ -1,0 +1,35 @@
+{
+  "summary": "Iter 42 — 26/26 backend pytests PASS covering: (1) Repeating scheduled alerts: weekly needs days (400), invalid repeat (400), end_date<start (400); weekly schedules next matching Mon/Thu at correct ET hour; pause/resume flips status and GET lists both. (2) In-process _next_run (daily/weekly-Tue/monthly-15th) + _send_scheduled past-doc with repeat weekly advances to next future send_at and sent_count=1, with end_date passed → status=sent. (3) Weekly email: _email_weekly returns count ≥2 of active members with weekly_email !=False; POST /weekly-summary/send returns {sent,emailed}; PUT profile weekly_email:false persists. (4) Carpool: both members RSVP yes; third user without RSVP → 400; seats 0/9 → 400; auto-match on same city_key (Wilmington, DE ≈ wilmington,de) populates driver.phone for A and riders+seats_left=1 for B; third rider in Dover appears in riders_waiting; offer/{uid} matches; B switching to none releases A (driver cleared); A changing RSVP to 'no' deletes member_carpool row. (5) Map: GET /members/map includes A (opted in) excludes B (not opted in); unauthenticated 403. (6) Hours: valid POST → pending; future date / 0 hours / empty activity → 400; GET totals only approved; badges list [10,25,50,100,250]; DELETE pending works, approved → 404; admin approve crosses 10h threshold creating push_marks hours-badge:qa_mem_a:10; CSV returns text/csv header. (7) Best-times: 7×24 grid, inserted taps at ET Wed 14:00 landed in grid[2][14] ≥3.\nFrontend: 13 tabs (last 'My Profile' spans full row), no horizontal overflow on 390px. My Hours tab shows my-hours-total + 5 badges + hours-form. Directory List/Map toggle; sister-map leaflet renders; opt-in hint hidden when A is opted in. My Profile has profile-show-on-map + profile-weekly-email checkboxes. Gathering card shows carpool-need/drive/seats after RSVP yes. Admin: People & content shows admin-push-form; 'Send later' reveals admin-push-repeat-box + admin-push-best-hint (Eastern time text) + 7 day toggles + admin-push-end-date on repeat!=none. best-times + best-times-empty render; admin-member-hours box present with admin-hours-csv (leaderboard conditional on data, verified in test only when d.leaderboard.length>0). Creating a weekly repeating alert produced row with scheduled-repeat-* badge and scheduled-pause-* button; pause flipped to scheduled-resume-*.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter42_repeat_carpool_map_hours.py",
+    "/app/test_reports/pytest/iter42.xml"
+  ],
+  "action_items": ["None — all task features green."],
+  "critical_code_review_comments": [
+    "_next_run iterates up to 400 days; weekly without matching day skips, monthly matches date-of-month, correctly guards against time-of-day already passed on day 0 by requiring at > after.",
+    "_send_scheduled uses find_one_and_update atomic status='sending' to prevent concurrent double-fire, then advances or marks sent (including end_date check in ET).",
+    "_clean_scheduled validates end_date vs send_at[:10] (date-only lexicographic compare — relies on YYYY-MM-DD both from datetime-local and date inputs, which is correct).",
+    "Pause 'resume' re-computes next_run when stored send_at is in the past; non-repeating alert whose time passed cannot resume (400 'edit it to pick a new time') — good UX.",
+    "_email_weekly uses $ne:False so weekly_email missing/true both include; opt-out explicit false. Correct.",
+    "Carpool _city_key strips punctuation, collapses whitespace, lowercases — successfully matches 'Wilmington, DE' and 'wilmington,de'. Normalisation covers the common variants.",
+    "members_rsvp calls _carpool_release on response != 'yes' — verified: carpool entry removed when A switches to 'no'.",
+    "members_carpool_set rejects seats outside 1..8 (0 or 9 fail). Good.",
+    "members_map caps new Nominatim lookups at 5 per request; also writes negative cache (lat None) to avoid refetch loops. Sleep 1.1s after each live lookup respects Nominatim rate limit.",
+    "admin_member_hours leaderboard only aggregates emails present in users {member_status:'active' | role:'admin'} — correctly ignores stale non-member hour rows.",
+    "_member_badge_push is idempotent via push_marks key 'hours-badge:{uid}:{n}' — crossing threshold alerts only once per badge.",
+    "admin_push_best_times window is last 90 days; grid 7×24 built in ET — matches 'Sisters tap most on …' hint in AdminPush frontend.",
+    "ScheduledAlerts.jsx only renders container when rows.length>0 (data-testid=scheduled-alerts hidden when empty). Intentional but testing agents should seed before asserting the container.",
+    "AdminMemberHours.jsx hides leaderboard container when leaderboard is empty — same intentional pattern as above.",
+    "Minor: Carpool.jsx seats input default '3' but server rejects >8 as 400 — UI allows typing 9+ then errors. Non-blocking.",
+    "server.py now at 10,946 lines — well over the 700-line guideline; splitting admin/members/push modules is overdue but a refactor task, not a test blocker."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter42_repeat_carpool_map_hours.py"],
+  "success_rate": {"backend": "100% (26/26)", "frontend": "100% (all assertions pass)"},
+  "test_credentials": "QA admin cookie session_token=qa_tok_123 + member cookies mem_tok_a/mem_tok_b were brought up and torn down (qa_session.py down + qa_members.py down). qa_mem_c + mem_tok_c created inline, cleaned in teardown.",
+  "seed_data_creation": "Transient rows in push_scheduled, push_log, push_taps, push_marks, member_meetings (QA Carpool / QA FE Gathering), member_carpool, volunteer_hours (qa.sister.a/b@example.com), users qa_mem_c — all cleaned at end (verified 0 QA rows remain).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Pattern for in-process async coroutines: rebind server.client / server.db to AsyncIOMotorClient on a fresh loop (motor binds to its creation loop). ScheduledAlerts + admin-hours-leaderboard containers only mount when their list is non-empty, so you must seed rows before asserting those test-ids directly; parent box testids (admin-push / admin-member-hours) always render. Admin UI path is /admin → click admin-view-members → defaults to 'people' sub-tab where Phone-alert + Member-volunteer-hours boxes live."
+}
