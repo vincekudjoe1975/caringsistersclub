@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 32 testing (Gallery albums + dated session ICS + reminders + Leader strip + Session detail modal). Backend: 12/12 pytest cases passed covering (a) dated session ICS: UTC conversion for timed sessions (18:30-20:00 ET on 2026-12-05 -> 20261205T233000Z/20261206T010000Z with LOCATION), all-day DATE values, main /api/sessions.ics with psession- UID, program-level /api/sessions/caring-sisters-clone/calendar.ics (tested against business-elevation-lab), and /api/sessions/calendar entries carrying gcal_url/ics_url/program_feed; (b) albums: public /gallery/albums auto-album from event tag with correct count, public /gallery/albums/{slug} returns album+photos, PUT /admin/gallery-albums upserts auto album story/date/cover (key t:event:<label lower>), POST creates custom m:<id> album, PUT /admin/gallery/{mid} rejects unknown album_key with 400 and moves photo from auto to custom album, DELETE custom album unassigns photos (returns to auto), admin endpoints require auth (401/403); (c) reminders: _send_dated_session_reminders at 10am ET sends 2 emails (day-before for tomorrow timed session + 2h for session 90 min away), skips waitlisted (waitlist=True) and released (released=True) submissions, and is idempotent (second call sends 0 emails via db.session_reminders upsert). Frontend: Home shows leader-strip below hero, leader-strip-item-0 click opens LeaderModal with name+bio, Escape closes, leader-strip-all link points to /leadership. Gallery page shows albums view toggle (gallery-view-albums/photos), gallery-albums grid shows QA Album Night card linking to /gallery/album/<slug>; album page renders album-title, album-item-0 opens gallery-lightbox, album-back-link present. /sessions detail modal (session-detail-modal) shows session-detail-gcal (calendar.google.com), session-detail-ics (/api/sessions/s/{id}/calendar.ics), session-detail-feed (webcal:// program feed). Admin: admin-view-gallery renders admin-albums section, auto album row for existing tag appears, album-new-btn opens album-form with title/date/story inputs, album-save-btn creates the album (toast 'Album saved') and gallery-album-select becomes visible in upload form. All QA seed data cleaned up afterwards.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter32_albums_ics_reminders.py",
+    "/app/backend/tests/_seed_iter32_fe.py",
+    "/app/test_reports/pytest/iter32.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 9770 lines — splitting into routers (sessions, gallery/albums, leaders, reminders) is strongly recommended before further additions.",
+    "_send_dated_session_reminders queries db.program_sessions.find({'date': tomorrow}) without filtering by program.published; if a session's parent program is unpublished, it is correctly skipped later, but doing the join first (or using an aggregation) would be cheaper on larger datasets.",
+    "/api/gallery/albums builds the album list from all gallery media each call (up to 2000 docs + 500 metas + 1000 events). Fine for current size but worth caching once dataset grows.",
+    "_album_slug uses md5(key) which is deterministic — good; but if an admin renames an auto album, slug changes (because title changes). Existing shared links to /gallery/album/<slug> would 404. Consider stable slugs keyed by hash(key) only.",
+    "AdminAlbums.jsx: delete uses window.confirm; preferable to use an in-app confirmation dialog for testability and better UX (also made automated testing of delete flow brittle).",
+    "DEFAULT_LEADERS fallback is imported from /pages/Leadership into LeaderStrip — a circular-ish coupling. Consider moving the constant to a shared /data file.",
+    "Reminder emails use PUBLIC_APP_URL for release token link and ICS link — ensure PUBLIC_APP_URL is set to the production URL in prod .env (currently resolves to preview URL)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter32_albums_ics_reminders.py (new)",
+    "/app/backend/tests/_seed_iter32_fe.py (new)"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (4/4 flows)"},
+  "test_credentials": "Admin via python3 /app/backend/tests/qa_session.py up (cookie session_token=qa_tok_123); state-changing requests require X-Requested-With: XMLHttpRequest.",
+  "seed_data_creation": "During test runs: 3 QA leaders, 2 QA gallery photos (tag event QA Album Night), 1-3 dated program_sessions in location 'QA Hall' on business-elevation-lab, 4 QA submissions, session_reminders. ALL CLEANED UP (verified counts: 0 across the board; qa_session.py down executed).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Pytest file test_iter32_albums_ics_reminders.py runs without xdist (use -o addopts=\"-p no:cacheprovider\" to avoid default xdist parallel workers in pytest.ini, otherwise fixtures double-execute and leave residual QA photos). Preview DB does NOT contain the 'caring-sisters-clone' program slug; tests were run against business-elevation-lab per iter31 note. Reminder test shells out to a python3 subprocess that imports server.py and monkeypatches server.send_email directly — this is required because reminders use motor and must run in a fresh event loop. Seed helper at _seed_iter32_fe.py has up/down for leaders+photos+session for frontend runs."
+}

@@ -9673,7 +9673,7 @@ async def public_albums():
 
 @api_router.get("/gallery/albums/{slug}")
 async def public_album(slug: str):
-    a = next((x for x in await _albums() if x["slug"] == slug[:120]), None)
+    a = next((x for x in await _albums() if x["slug"].rsplit("-", 1)[-1] == slug[:120].rsplit("-", 1)[-1]), None)
     if a is None:
         raise HTTPException(status_code=404, detail="Album not found")
     docs = {d["id"]: d for d in await db.media.find({"id": {"$in": a["photo_ids"]}}, {"_id": 0}).to_list(2000)}
