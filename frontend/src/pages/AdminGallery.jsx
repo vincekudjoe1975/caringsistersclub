@@ -1,11 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api, mediaSrc } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
+import { AdminAlbums, useAlbums } from './AdminAlbums';
 import { Loader2, UploadCloud, GripVertical, Pencil, Trash2, Eye, EyeOff, X, Images } from 'lucide-react';
 
 const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
 
-function TagFields({ f, setF, programs, events }) {
+function TagFields({ f, setF, programs, events, albums = [] }) {
+  const manual = albums.filter((a) => a.manual);
   const opts = f.tag_type === 'program' ? programs.map((p) => [p.slug, p.title]) : f.tag_type === 'event' ? events.map((e) => [e.id, e.title]) : [];
   return (
     <div className="grid sm:grid-cols-2 gap-4">
@@ -21,12 +23,18 @@ function TagFields({ f, setF, programs, events }) {
           {(!f.tag_ref) && <input data-testid="gallery-tag-label" value={f.tag_label} onChange={(e) => setF({ ...f, tag_label: e.target.value })} placeholder={f.tag_type === 'event' ? 'e.g. 2025 Gala' : 'e.g. Mentorship Circles'} className={input} />}
         </label>
       )}
+      {manual.length > 0 && (
+        <label className="text-[13px] font-semibold text-[#3B0A2E] sm:col-span-2">Album
+          <select data-testid="gallery-album-select" value={f.album_key || ''} onChange={(e) => setF({ ...f, album_key: e.target.value })} className={input}>
+            <option value="">Automatic (by tag)</option>{manual.map((a) => <option key={a.key} value={a.key}>{a.title}</option>)}
+          </select></label>
+      )}
     </div>
   );
 }
 
-function EditDialog({ item, programs, events, onClose, onSaved }) {
-  const [f, setF] = useState({ title: item.title || '', description: item.description || '', tag_type: item.tag_type || '', tag_label: item.tag_label || '', tag_ref: item.tag_ref || '', hidden: !!item.hidden });
+function EditDialog({ item, programs, events, albums, onClose, onSaved }) {
+  const [f, setF] = useState({ title: item.title || '', description: item.description || '', tag_type: item.tag_type || '', tag_label: item.tag_label || '', tag_ref: item.tag_ref || '', hidden: !!item.hidden, album_key: item.album_key || '' });
   const save = async (e) => { e.preventDefault(); await api.put(`/admin/gallery/${item.id}`, f); onSaved(); };
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -35,7 +43,7 @@ function EditDialog({ item, programs, events, onClose, onSaved }) {
         <img src={mediaSrc(item.url)} alt="" className="w-full max-h-64 object-contain rounded-xl bg-[#F7EFE9]" />
         <label className="block text-[13px] font-semibold text-[#3B0A2E]">Title<input data-testid="gallery-edit-title" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} maxLength={150} className={input} /></label>
         <label className="block text-[13px] font-semibold text-[#3B0A2E]">Description<textarea data-testid="gallery-edit-desc" rows={4} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} maxLength={2000} className={`${input} resize-y`} /></label>
-        <TagFields f={f} setF={setF} programs={programs} events={events} />
+        <TagFields f={f} setF={setF} programs={programs} events={events} albums={albums} />
         <label className="flex items-center gap-2 text-[13.5px] text-[#3B0A2E]"><input type="checkbox" checked={f.hidden} onChange={(e) => setF({ ...f, hidden: e.target.checked })} data-testid="gallery-edit-hidden" className="accent-[#B4247E] w-4 h-4" /> Hide from the public gallery</label>
         <button data-testid="gallery-edit-save" className="btn-magenta rounded-full px-8 py-3 font-semibold text-[14px]">Save</button>
       </form>
@@ -49,7 +57,8 @@ export default function AdminGallery() {
   const [programs, setPrograms] = useState([]);
   const [events, setEvents] = useState([]);
   const [files, setFiles] = useState([]);
-  const [meta, setMeta] = useState({ title: '', description: '', tag_type: '', tag_label: '', tag_ref: '' });
+  const [meta, setMeta] = useState({ title: '', description: '', tag_type: '', tag_label: '', tag_ref: '', album_key: '' });
+  const [albums, reloadAlbums] = useAlbums();
   const [busy, setBusy] = useState('');
   const [edit, setEdit] = useState(null);
   const [dragId, setDragId] = useState(null);
@@ -68,11 +77,11 @@ export default function AdminGallery() {
       const fd = new FormData(); fd.append('file', files[i]); fd.append('category', 'gallery'); if (meta.title) fd.append('title', meta.title);
       try {
         const { data } = await api.post('/media', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-        if (meta.description || meta.tag_type) await api.put(`/admin/gallery/${data.id}`, { ...meta, hidden: false });
+        if (meta.description || meta.tag_type || meta.album_key) await api.put(`/admin/gallery/${data.id}`, { ...meta, hidden: false });
         ok += 1;
       } catch (ex) { toast({ title: `${files[i].name} failed`, description: ex?.response?.data?.detail, variant: 'destructive' }); }
     }
-    setBusy(''); setFiles([]); e.target.reset?.();
+    setBusy(''); setFiles([]); e.target.reset?.(); reloadAlbums();
     if (ok) toast({ title: `${ok} photo${ok === 1 ? '' : 's'} added` });
     load();
   };
@@ -82,8 +91,8 @@ export default function AdminGallery() {
     setRows(ids.map((id) => rows.find((r) => r.id === id))); setDragId(null);
     await api.post('/admin/gallery/reorder', { ids });
   };
-  const toggle = async (r) => { await api.put(`/admin/gallery/${r.id}`, { title: r.title || '', description: r.description || '', tag_type: r.tag_type || '', tag_label: r.tag_label || '', tag_ref: r.tag_ref || '', hidden: !r.hidden }); load(); };
-  const del = async (r) => { if (window.confirm('Delete this photo?')) { await api.delete(`/media/${r.id}`); load(); } };
+  const toggle = async (r) => { await api.put(`/admin/gallery/${r.id}`, { title: r.title || '', description: r.description || '', tag_type: r.tag_type || '', tag_label: r.tag_label || '', tag_ref: r.tag_ref || '', album_key: r.album_key || '', hidden: !r.hidden }); load(); reloadAlbums(); };
+  const del = async (r) => { if (window.confirm('Delete this photo?')) { await api.delete(`/media/${r.id}`); load(); reloadAlbums(); } };
   return (
     <div data-testid="admin-gallery" className="grid lg:grid-cols-[360px_1fr] gap-8 items-start">
       <form onSubmit={upload} className="bg-white rounded-2xl p-7 border border-[#3B0A2E]/8 space-y-4 lg:sticky lg:top-6">
@@ -96,10 +105,11 @@ export default function AdminGallery() {
         <p className="text-[12px] text-[#241019]/55">These details apply to every photo in this upload. You can edit each photo afterwards.</p>
         <label className="block text-[13px] font-semibold text-[#3B0A2E]">Title<input data-testid="gallery-upload-title" value={meta.title} onChange={(e) => setMeta({ ...meta, title: e.target.value })} maxLength={150} className={input} /></label>
         <label className="block text-[13px] font-semibold text-[#3B0A2E]">Description<textarea data-testid="gallery-upload-desc" rows={3} value={meta.description} onChange={(e) => setMeta({ ...meta, description: e.target.value })} maxLength={2000} className={`${input} resize-y`} /></label>
-        <TagFields f={meta} setF={setMeta} programs={programs} events={events} />
+        <TagFields f={meta} setF={setMeta} programs={programs} events={events} albums={albums} />
         <button type="submit" disabled={!!busy} data-testid="gallery-upload-btn" className="btn-magenta rounded-full w-full py-3 font-semibold flex items-center justify-center gap-2 disabled:opacity-60">{busy ? <><Loader2 className="animate-spin" size={16} /> {busy}</> : <><UploadCloud size={16} /> Upload</>}</button>
       </form>
       <div>
+        <AdminAlbums albums={albums} photos={rows || []} reload={reloadAlbums} />
         {rows === null ? <Loader2 className="animate-spin text-[#B4247E]" /> : !rows.length ? (
           <div data-testid="gallery-admin-empty" className="bg-white rounded-2xl p-12 text-center border border-[#3B0A2E]/8 text-[#241019]/55">No photos yet. The public gallery shows the built-in sample photos until you upload your own.</div>
         ) : (
@@ -128,7 +138,7 @@ export default function AdminGallery() {
           </>
         )}
       </div>
-      {edit && <EditDialog item={edit} programs={programs} events={events} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); }} />}
+      {edit && <EditDialog item={edit} programs={programs} events={events} albums={albums} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); reloadAlbums(); }} />}
     </div>
   );
 }

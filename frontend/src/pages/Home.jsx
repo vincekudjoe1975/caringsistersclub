@@ -8,6 +8,7 @@ import { useTransparency } from '../lib/useTransparency';
 import { CtaLink } from './Initiatives';
 import Reveal from '../components/Reveal';
 import Marquee from '../components/Marquee';
+import { LeaderStrip } from '../components/LeaderStrip';
 import * as Icons from 'lucide-react';
 import { ArrowRight, Quote, Heart } from 'lucide-react';
 
@@ -115,6 +116,8 @@ export default function Home() {
           ))}
         </div>
       </section>
+
+      <LeaderStrip />
 
       {/* TESTIMONIALS */}
       <section className="py-20 lg:py-28">

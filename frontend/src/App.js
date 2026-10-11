@@ -41,6 +41,7 @@ import AnnualReport from './pages/AnnualReport';
 import CheckIn from './pages/CheckIn';
 import SelfCheckIn from './pages/SelfCheckIn';
 import BirthdayWall from './pages/BirthdayWall';
+import GalleryAlbum from './pages/GalleryAlbum';
 import { Loader2 } from 'lucide-react';
 
 function ScrollToTop() {
@@ -107,6 +108,7 @@ function Shell() {
           <Route path="/birthday-wishes/:uid" element={<BirthdayWall />} />
           <Route path="/events" element={<Events />} />
           <Route path="/gallery" element={<Gallery />} />
+          <Route path="/gallery/album/:slug" element={<GalleryAlbum />} />
           <Route path="/transparency" element={<Transparency />} />
           <Route path="/donate" element={<Donate />} />
           <Route path="/payment/success" element={<PaymentSuccess />} />

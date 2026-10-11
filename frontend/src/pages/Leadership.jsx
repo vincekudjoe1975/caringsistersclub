@@ -6,7 +6,7 @@ import Reveal from '../components/Reveal';
 import { LeaderCard, LeaderModal } from '../components/LeaderModal';
 import { ShieldCheck, FileCheck2 } from 'lucide-react';
 
-const DEFAULTS = mockBoard.map((m, i) => ({ id: `default-${i}`, name: m.name, role: m.role, group: 'board', intro: m.bio, bio: m.bio, photo_url: m.photo }));
+export const DEFAULT_LEADERS = mockBoard.map((m, i) => ({ id: `default-${i}`, name: m.name, role: m.role, group: 'board', intro: m.bio, bio: m.bio, photo_url: m.photo }));
 
 function Group({ kicker, title, list, all, onOpen, start }) {
   if (!list.length) return null;
@@ -31,7 +31,7 @@ export default function Leadership() {
   const [team, setTeam] = useState(null);
   const [open, setOpen] = useState(null);
   useEffect(() => {
-    api.get('/leaders').then(({ data }) => setTeam(data.items.length ? data.items : DEFAULTS)).catch(() => setTeam(DEFAULTS));
+    api.get('/leaders').then(({ data }) => setTeam(data.items.length ? data.items : DEFAULT_LEADERS)).catch(() => setTeam(DEFAULT_LEADERS));
   }, []);
   const list = team || [];
   const boardList = list.filter((m) => m.group !== 'executive');

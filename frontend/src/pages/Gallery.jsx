@@ -4,11 +4,11 @@ import { gallery as mockGallery } from '../mock/mock';
 import { api, mediaSrc } from '../lib/api';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
-import { X, ChevronLeft, ChevronRight, CalendarHeart, Layers } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, CalendarHeart, Layers, Images, LayoutGrid } from 'lucide-react';
 
 const CHIPS = [['all', 'All'], ['event', 'Events'], ['program', 'Programs']];
 
-function Lightbox({ items, idx, setIdx }) {
+export function Lightbox({ items, idx, setIdx }) {
   const g = items[idx];
   const go = useCallback((d) => setIdx((p) => (p + d + items.length) % items.length), [items.length, setIdx]);
   useEffect(() => {
@@ -41,6 +41,9 @@ export default function Gallery() {
   const [all, setAll] = useState(mockGallery);
   const [chip, setChip] = useState('all');
   const [label, setLabel] = useState('');
+  const [albums, setAlbums] = useState([]);
+  const [view, setView] = useState('photos');
+  useEffect(() => { api.get('/gallery/albums').then(({ data }) => { setAlbums(data.items); if (data.items.length) setView('albums'); }).catch(() => {}); }, []);
 
   useEffect(() => {
     api.get('/media?category=gallery').then(({ data }) => {
@@ -57,6 +60,33 @@ export default function Gallery() {
       <PageHero kicker="Impact Media Gallery" title="Moments from our sisterhood" subtitle="A look at the summits, service drives, and celebrations that show our impact in action." />
       <section className="py-16 lg:py-24">
         <div className="max-w-7xl mx-auto px-5 lg:px-8">
+          {albums.length > 0 && (
+            <div className="flex gap-2 mb-8">
+              {[['albums', 'Albums', Images], ['photos', 'All photos', LayoutGrid]].map(([v, l, Icon]) => (
+                <button key={v} data-testid={`gallery-view-${v}`} onClick={() => setView(v)} className={`px-5 py-2.5 rounded-full text-[13.5px] font-semibold flex items-center gap-2 transition-colors ${view === v ? 'bg-[#B4247E] text-white' : 'bg-white text-[#3B0A2E] border border-[#3B0A2E]/12 hover:border-[#B4247E]'}`}><Icon size={15} /> {l}</button>
+              ))}
+            </div>
+          )}
+          {view === 'albums' && albums.length > 0 ? (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-7" data-testid="gallery-albums">
+              {albums.map((a, i) => (
+                <Reveal key={a.slug} delay={(i % 3) * 90}>
+                  <Link to={`/gallery/album/${a.slug}`} data-testid={`gallery-album-${a.slug}`} className="group block bg-white rounded-2xl overflow-hidden border border-[#3B0A2E]/8 transition-[transform,box-shadow] duration-500 hover:-translate-y-1.5 hover:shadow-[0_30px_60px_-30px_rgba(59,10,46,0.45)]">
+                    <div className="h-64 relative overflow-hidden">
+                      {a.cover_url ? <img src={mediaSrc(a.cover_url)} alt={a.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]" /> : <div className="w-full h-full" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }} />}
+                      <span className="absolute top-3 right-3 bg-white/90 text-[#3B0A2E] text-[11.5px] font-semibold rounded-full px-3 py-1">{a.count} photo{a.count === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="p-6">
+                      <p className="eyebrow text-[#CBA24B] mb-1.5">{a.tag_type === 'program' ? 'Program' : a.tag_type === 'event' ? 'Event' : 'Album'}{a.date ? ` · ${new Date(`${a.date}T12:00:00`).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}` : ''}</p>
+                      <h3 className="font-serif text-[22px] text-[#3B0A2E] font-semibold leading-tight">{a.title}</h3>
+                      {a.story && <p className="text-[14px] text-[#241019]/65 mt-2 line-clamp-2">{a.story}</p>}
+                      <span className="inline-block mt-4 text-[13px] font-semibold text-[#B4247E]">View album →</span>
+                    </div>
+                  </Link>
+                </Reveal>
+              ))}
+            </div>
+          ) : (<>
           {hasTags && (
             <div className="mb-10">
               <div className="flex flex-wrap gap-2">
@@ -86,6 +116,7 @@ export default function Gallery() {
               </Reveal>
             ))}
           </div>
+          </>)}
         </div>
       </section>
       {idx !== null && items[idx] && <Lightbox items={items} idx={idx} setIdx={setIdx} />}

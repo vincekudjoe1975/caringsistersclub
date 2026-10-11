@@ -1232,6 +1232,7 @@ async def admin_donations(frequency: Optional[str] = None, user=Depends(require_
 import csv
 import io
 import zipfile
+import hashlib
 from fastapi.responses import StreamingResponse, RedirectResponse, HTMLResponse
 
 
@@ -5113,18 +5114,21 @@ def _session_gcal(p: dict) -> str:
 
 @api_router.get("/sessions.ics")
 async def sessions_feed():
-    items = [p for p in await db.programs.find({"published": True, "start_date": {"$nin": [None, ""]}}, {"_id": 0}).sort("start_date", 1).to_list(300)
-             if _session_end(p) >= (datetime.now(timezone.utc).date() - timedelta(days=30)).isoformat()]
-    return Response(content=_ics_doc(items, "Caring Sisters Club Sessions"), media_type="text/calendar; charset=utf-8",
+    cut = (datetime.now(timezone.utc).date() - timedelta(days=30)).isoformat()
+    progs = await db.programs.find({"published": True}, {"_id": 0}).sort("start_date", 1).to_list(300)
+    items = [p for p in progs if not p.get("start_date") or _session_end(p) >= cut]
+    sess = await db.program_sessions.find({"date": {"$gte": cut}, "program_id": {"$in": [p["id"] for p in progs]}}, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(2000)
+    return Response(content=_ics_mixed(items, sess, "Caring Sisters Club Sessions"), media_type="text/calendar; charset=utf-8",
                     headers={"Content-Disposition": 'inline; filename="caring-sisters-sessions.ics"', "Cache-Control": "public, max-age=900", "X-Content-Type-Options": "nosniff"})
 
 
 @api_router.get("/sessions/{slug}/calendar.ics")
 async def session_calendar_file(slug: str):
-    p = await db.programs.find_one({"slug": slug[:100], "published": True, "start_date": {"$nin": [None, ""]}}, {"_id": 0})
-    if not p:
+    p = await db.programs.find_one({"slug": slug[:100], "published": True}, {"_id": 0})
+    sess = await db.program_sessions.find({"program_id": p["id"]}, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(500) if p else []
+    if not p or not (sess or p.get("start_date")):
         raise HTTPException(status_code=404, detail="Session not found")
-    return Response(content=_ics_doc([p], p["title"]), media_type="text/calendar; charset=utf-8",
+    return Response(content=_ics_mixed([p], sess, p["title"]), media_type="text/calendar; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{p["slug"][:60]}.ics"', "X-Content-Type-Options": "nosniff"})
 
 
@@ -6065,6 +6069,7 @@ async def _hourly_scheduler():
             await _send_volunteer_thanks()
             await _celebrate_badge_wall()
             await _send_session_reminders()
+            await _send_dated_session_reminders()
             await _send_session_feedback()
             await _send_noshow_followups()
             await _member_scheduled()
@@ -9345,6 +9350,7 @@ async def admin_leaders_reorder(payload: ReorderIn, user=Depends(require_admin))
 
 # ---------- Gallery manager ----------
 class GalleryEditIn(BaseModel):
+    album_key: str = ""
     title: str = ""
     description: str = ""
     tag_type: str = ""
@@ -9367,6 +9373,9 @@ async def admin_gallery_edit(mid: str, payload: GalleryEditIn, user=Depends(requ
         raise HTTPException(status_code=400, detail="Invalid tag")
     upd = {"title": payload.title.strip()[:150], "description": payload.description.strip()[:2000], "tag_type": payload.tag_type,
            "tag_label": payload.tag_label.strip()[:150] if payload.tag_type else "", "tag_ref": payload.tag_ref.strip()[:120] if payload.tag_type else "", "hidden": payload.hidden}
+    if payload.album_key and not await db.gallery_albums.find_one({"key": payload.album_key[:200], "manual": True}, {"_id": 1}):
+        raise HTTPException(status_code=400, detail="Album not found")
+    upd["album_key"] = payload.album_key[:200]
     if not (await db.media.update_one({"id": mid, "category": "gallery", "is_deleted": {"$ne": True}}, {"$set": upd})).matched_count:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True, **upd}
@@ -9479,7 +9488,8 @@ async def public_sessions_calendar():
         v = await _session_view(s)
         entries.append({"kind": "session", "id": s["id"], "title": p["title"], "category": p.get("category", ""), "slug": p["slug"], "summary": p.get("summary", ""),
                         "image_url": p.get("image_url", ""), "date": s["date"], "end_date": s["date"], "start_time": s["start_time"], "end_time": s["end_time"],
-                        "location": s["location"], "notes": s["notes"], "seats_left": v.get("seats_left"), "full": v.get("full", False), "link": f"/initiatives/{p['slug']}?session={s['id']}#join"})
+                        "location": s["location"], "notes": s["notes"], "seats_left": v.get("seats_left"), "full": v.get("full", False), "link": f"/initiatives/{p['slug']}?session={s['id']}#join",
+                        "gcal_url": _session_gcal_dated(s, p), "ics_url": f"/api/sessions/s/{s['id']}/calendar.ics", "program_feed": f"/api/sessions/{p['slug']}/calendar.ics"})
     for p in progs.values():
         if p["id"] in with_sessions or not p.get("start_date") or (p.get("end_date") or p["start_date"]) < today:
             continue
@@ -9492,6 +9502,229 @@ async def public_sessions_calendar():
                         "date": e["date"], "end_date": e["date"], "start_time": e.get("time", ""), "location": e.get("location", ""), "link": "/events", "gcal_url": e.get("gcal_url", "")})
     entries.sort(key=lambda x: (x["date"], x.get("start_time") or ""))
     return {"entries": entries, "categories": sorted({x["category"] for x in entries if x["category"]})}
+
+
+# ---------- Dated session calendar entries & reminders ----------
+def _session_utc(s: dict):
+    if not s.get("start_time"):
+        return None, None
+    st = datetime.strptime(f"{s['date']} {s['start_time']}", "%Y-%m-%d %H:%M").replace(tzinfo=EVENT_TZ)
+    en = datetime.strptime(f"{s['date']} {s['end_time']}", "%Y-%m-%d %H:%M").replace(tzinfo=EVENT_TZ) if s.get("end_time") else st + timedelta(hours=2)
+    return st.astimezone(timezone.utc), en.astimezone(timezone.utc)
+
+
+def _dated_vevent(s: dict, p: dict) -> list:
+    st, en = _session_utc(s)
+    if st:
+        when = [f"DTSTART:{st.strftime('%Y%m%dT%H%M%SZ')}", f"DTEND:{en.strftime('%Y%m%dT%H%M%SZ')}"]
+    else:
+        d = datetime.strptime(s["date"], "%Y-%m-%d")
+        when = [f"DTSTART;VALUE=DATE:{d.strftime('%Y%m%d')}", f"DTEND;VALUE=DATE:{(d + timedelta(days=1)).strftime('%Y%m%d')}"]
+    link = f"{PUBLIC_APP_URL}/initiatives/{p['slug']}?session={s['id']}#join"
+    desc = " · ".join(x for x in (s.get("notes"), (p.get("summary") or "")[:400]) if x) + f"\n\nDetails & sign-up: {link}"
+    return (["BEGIN:VEVENT", f"UID:psession-{s['id']}@caringsistersclub", f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}", *when,
+             f"SUMMARY:{_ics_escape(p['title'])}", f"DESCRIPTION:{_ics_escape(desc)}"]
+            + ([f"LOCATION:{_ics_escape(s['location'])}"] if s.get("location") else []) + [f"URL:{link}", "END:VEVENT"])
+
+
+def _ics_mixed(programs: list, sessions: list, name: str) -> str:
+    progs = {p["id"]: p for p in programs}
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Caring Sisters Club//Sessions//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+             f"X-WR-CALNAME:{_ics_escape(name)}", "REFRESH-INTERVAL;VALUE=DURATION:PT6H", "X-PUBLISHED-TTL:PT6H"]
+    with_sessions = {s["program_id"] for s in sessions}
+    for p in programs:
+        if p["id"] not in with_sessions and p.get("start_date"):
+            lines += _session_vevent(p)
+    for s in sessions:
+        if s["program_id"] in progs:
+            lines += _dated_vevent(s, progs[s["program_id"]])
+    return "\r\n".join(lines + ["END:VCALENDAR"]) + "\r\n"
+
+
+def _session_gcal_dated(s: dict, p: dict) -> str:
+    st, en = _session_utc(s)
+    if st:
+        dates = f"{st.strftime('%Y%m%dT%H%M%SZ')}/{en.strftime('%Y%m%dT%H%M%SZ')}"
+    else:
+        d = datetime.strptime(s["date"], "%Y-%m-%d")
+        dates = f"{d.strftime('%Y%m%d')}/{(d + timedelta(days=1)).strftime('%Y%m%d')}"
+    details = (s.get("notes") or "") + f"\n\nDetails: {PUBLIC_APP_URL}/initiatives/{p['slug']}"
+    return ("https://calendar.google.com/calendar/render?action=TEMPLATE"
+            f"&text={_urlquote(p['title'])}&dates={dates}&details={_urlquote(details)}&location={_urlquote(s.get('location') or '')}")
+
+
+@api_router.get("/sessions/s/{sid}/calendar.ics")
+async def dated_session_ics(sid: str):
+    s = await db.program_sessions.find_one({"id": sid[:60]}, {"_id": 0})
+    p = await db.programs.find_one({"id": (s or {}).get("program_id"), "published": True}, {"_id": 0}) if s else None
+    if not p:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return Response(content=_ics_mixed([p], [s], p["title"]), media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{p["slug"][:50]}-{s["date"]}.ics"', "X-Content-Type-Options": "nosniff"})
+
+
+def _dated_reminder_html(name: str, s: dict, p: dict, kind: str, release: str) -> str:
+    head = f"{p['title']} is tomorrow!" if kind == "daybefore" else f"{p['title']} starts in about 2 hours"
+    rows = [("Date", datetime.strptime(s["date"], "%Y-%m-%d").strftime("%A, %B %-d, %Y"))]
+    if s.get("start_time"):
+        rows.append(("Time", _fmt_time(s["start_time"]) + (f" – {_fmt_time(s['end_time'])}" if s.get("end_time") else "") + " ET"))
+    if s.get("location"):
+        rows.append(("Location", s["location"]))
+    if s.get("notes"):
+        rows.append(("Notes", s["notes"]))
+    table = "".join(f'<tr><td style="padding:6px 14px 6px 0;font-size:13px;color:#8a7380;vertical-align:top">{k}</td><td style="padding:6px 0;font-size:14px;color:#3B0A2E;font-weight:bold">{_esc(v)}</td></tr>' for k, v in rows)
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Session Reminder") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 12px">{_esc(head)}</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 14px">Hi {_esc(name)}, here are the details for your session:</p>'
+        f'<table role="presentation" style="margin:0 0 20px">{table}</table>'
+        + _btn(_session_gcal_dated(s, p), "Add to Google Calendar", primary=True) + "&nbsp; "
+        + _btn(f"{PUBLIC_APP_URL}/api/sessions/s/{s['id']}/calendar.ics", "Apple / Outlook")
+        + '<p style="font-size:13px;color:#6b5560;margin:22px 0 8px">Can\'t make it? Let someone else have your seat:</p>'
+        + _btn(f"{PUBLIC_APP_URL}/release?token={release}", "I Can't Make It") +
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:18px 0 0">We can\'t wait to see you!<br/>The Caring Sisters Club</p></td></tr>'
+        '</table></td></tr></table>'
+    )
+
+
+async def _send_dated_session_reminders(now=None) -> int:
+    now = now or datetime.now(timezone.utc)
+    et = now.astimezone(EVENT_TZ)
+    today, tomorrow = et.date().isoformat(), (et.date() + timedelta(days=1)).isoformat()
+    targets = []
+    if et.hour >= 9:
+        targets += [(s, "daybefore") for s in await db.program_sessions.find({"date": tomorrow}, {"_id": 0}).to_list(500)]
+    for s in await db.program_sessions.find({"date": today, "start_time": {"$nin": ["", None]}}, {"_id": 0}).to_list(500):
+        st, _ = _session_utc(s)
+        if 0 < (st - now).total_seconds() <= 150 * 60:
+            targets.append((s, "2h"))
+    sent = 0
+    for s, kind in targets:
+        p = await db.programs.find_one({"id": s["program_id"], "published": True}, {"_id": 0})
+        if not p:
+            continue
+        for sub in await db.submissions.find({**_session_taken_q(s["id"]), "released": {"$ne": True}}, {"_id": 0, "id": 1, "data": 1, "release_token": 1}).to_list(2000):
+            r = await db.session_reminders.update_one({"submission_id": sub["id"], "kind": kind, "session_id": s["id"]}, {"$setOnInsert": {"program_id": p["id"], "at": _now_iso()}}, upsert=True)
+            if r.upserted_id is None:
+                continue
+            rel = sub.get("release_token") or secrets.token_urlsafe(24)
+            if not sub.get("release_token"):
+                await db.submissions.update_one({"id": sub["id"]}, {"$set": {"release_token": rel}})
+            try:
+                await send_email(to=sub["data"].get("email"), subject=(f"Tomorrow: {p['title']}" if kind == "daybefore" else f"Starting soon: {p['title']}")[:150],
+                                 html=_dated_reminder_html((sub["data"].get("name") or "friend").split(" ")[0], s, p, kind, rel))
+                sent += 1
+            except Exception as ex:
+                logging.error(f"Dated session reminder failed: {ex}")
+    return sent
+
+
+# ---------- Gallery albums ----------
+class AlbumIn(BaseModel):
+    key: str = ""
+    title: str = ""
+    story: str = ""
+    date: str = ""
+    cover_id: str = ""
+
+
+def _auto_key(m: dict) -> str:
+    return f"t:{m['tag_type']}:{m['tag_label'].strip().lower()}" if m.get("tag_type") and (m.get("tag_label") or "").strip() else ""
+
+
+def _album_slug(title: str, key: str) -> str:
+    return f"{_slugify(title)[:60]}-{hashlib.md5(key.encode()).hexdigest()[:6]}"
+
+
+async def _albums(admin: bool = False) -> list:
+    q = {"category": "gallery", "is_deleted": {"$ne": True}}
+    if not admin:
+        q["hidden"] = {"$ne": True}
+    photos = await db.media.find(q, {"_id": 0}).sort([("order", 1), ("uploaded_at", -1)]).to_list(2000)
+    metas = {m["key"]: m for m in await db.gallery_albums.find({}, {"_id": 0}).to_list(500)}
+    groups, first = defaultdict(list), {}
+    for ph in photos:
+        k = ph.get("album_key") if ph.get("album_key") in metas else _auto_key(ph)
+        if k:
+            groups[k].append(ph)
+            first.setdefault(k, ph)
+    keys = list(groups) + ([k for k, m in metas.items() if m.get("manual") and k not in groups] if admin else [])
+    ev_dates = {e["id"]: e["date"] for e in await db.events.find({}, {"_id": 0, "id": 1, "date": 1}).to_list(1000)}
+    out = []
+    for k in keys:
+        meta, ph = metas.get(k, {}), groups.get(k, [])
+        title = meta.get("title") or (first[k].get("tag_label") if k in first else "Album")
+        cover = next((p for p in ph if p["id"] == meta.get("cover_id")), ph[0] if ph else None)
+        date = meta.get("date") or (ev_dates.get(first[k].get("tag_ref")) if k in first and first[k].get("tag_type") == "event" else "") or (max(p.get("uploaded_at", "") for p in ph)[:10] if ph else "")
+        out.append({"key": k, "id": meta.get("id", ""), "slug": _album_slug(title, k), "title": title, "story": meta.get("story", ""), "date": date, "manual": bool(meta.get("manual")),
+                    "tag_type": k.split(":")[1] if k.startswith("t:") else "", "count": len(ph), "cover_url": _media_url(cover["id"]) if cover else "",
+                    "cover_id": cover["id"] if cover else "", "photo_ids": [p["id"] for p in ph]})
+    out.sort(key=lambda a: a["date"] or "", reverse=True)
+    return out
+
+
+@api_router.get("/gallery/albums")
+async def public_albums():
+    return {"items": [{k: v for k, v in a.items() if k not in ("photo_ids", "key", "id")} for a in await _albums()]}
+
+
+@api_router.get("/gallery/albums/{slug}")
+async def public_album(slug: str):
+    a = next((x for x in await _albums() if x["slug"] == slug[:120]), None)
+    if a is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+    docs = {d["id"]: d for d in await db.media.find({"id": {"$in": a["photo_ids"]}}, {"_id": 0}).to_list(2000)}
+    photos = [{"id": i, "url": _media_url(i), "title": docs[i].get("title") or "", "description": docs[i].get("description") or ""} for i in a["photo_ids"] if i in docs]
+    return {"album": {k: v for k, v in a.items() if k not in ("photo_ids", "key", "id")}, "photos": photos}
+
+
+@api_router.get("/admin/gallery-albums")
+async def admin_albums(user=Depends(require_admin)):
+    return {"items": [{k: v for k, v in a.items() if k != "photo_ids"} for a in await _albums(admin=True)]}
+
+
+def _album_fields(p: AlbumIn) -> dict:
+    if p.date:
+        try:
+            datetime.strptime(p.date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
+    return {"title": p.title.strip()[:150], "story": p.story.strip()[:4000], "date": p.date, "cover_id": p.cover_id.strip()[:60]}
+
+
+@api_router.post("/admin/gallery-albums")
+async def admin_album_create(payload: AlbumIn, user=Depends(require_admin)):
+    if not payload.title.strip():
+        raise HTTPException(status_code=400, detail="Album title is required")
+    aid = str(uuid.uuid4())
+    doc = {"id": aid, "key": f"m:{aid}", "manual": True, **_album_fields(payload), "created_at": _now_iso()}
+    await db.gallery_albums.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/admin/gallery-albums")
+async def admin_album_update(payload: AlbumIn, user=Depends(require_admin)):
+    k = payload.key.strip()[:200]
+    if not (k.startswith("t:") or await db.gallery_albums.find_one({"key": k}, {"_id": 1})):
+        raise HTTPException(status_code=404, detail="Album not found")
+    f = _album_fields(payload)
+    if k.startswith("m:") and not f["title"]:
+        raise HTTPException(status_code=400, detail="Album title is required")
+    await db.gallery_albums.update_one({"key": k}, {"$set": f, "$setOnInsert": {"id": str(uuid.uuid4()), "key": k, "manual": False, "created_at": _now_iso()}}, upsert=True)
+    return {"ok": True}
+
+
+@api_router.delete("/admin/gallery-albums/{aid}")
+async def admin_album_delete(aid: str, user=Depends(require_admin)):
+    a = await db.gallery_albums.find_one_and_delete({"id": aid, "manual": True}, {"_id": 0})
+    if a is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+    await db.media.update_many({"album_key": a["key"]}, {"$unset": {"album_key": ""}})
+    return {"ok": True}
 
 
 # Include the router in the main app

@@ -63,7 +63,9 @@ function DetailModal({ e, onClose }) {
             <Cta e={e} />
             <Seats e={e} />
             {e.kind !== 'event' && <Link to={`/initiatives/${e.slug}`} className="text-[13px] font-semibold text-[#3B0A2E] hover:text-[#B4247E]">About this program</Link>}
-            {e.gcal_url && <a href={e.gcal_url} target="_blank" rel="noopener noreferrer" className="text-[13px] font-semibold text-[#3B0A2E] hover:text-[#B4247E] flex items-center gap-1"><CalendarPlus size={14} /> Add to calendar</a>}
+            {e.gcal_url && <a href={e.gcal_url} target="_blank" rel="noopener noreferrer" data-testid="session-detail-gcal" className="text-[13px] font-semibold text-[#3B0A2E] hover:text-[#B4247E] flex items-center gap-1"><CalendarPlus size={14} /> Google Calendar</a>}
+            {e.ics_url && <a href={`${BACKEND_URL}${e.ics_url}`} data-testid="session-detail-ics" className="text-[13px] font-semibold text-[#3B0A2E] hover:text-[#B4247E] flex items-center gap-1"><CalendarPlus size={14} /> Apple / Outlook</a>}
+            {e.program_feed && <a href={`${BACKEND_URL}${e.program_feed}`.replace(/^https?:\/\//, 'webcal://')} data-testid="session-detail-feed" className="text-[13px] font-semibold text-[#3B0A2E] hover:text-[#B4247E] flex items-center gap-1"><Link2 size={14} /> Subscribe to all dates</a>}
           </div>
         </div>
       </div>
