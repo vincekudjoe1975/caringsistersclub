@@ -55,7 +55,7 @@ export function LeaderModal({ list, index, setIndex, onClose }) {
         style={{ transform: shown ? `translateY(${drag}px)` : undefined }}
         className={`relative bg-white w-full md:max-w-4xl max-h-[92vh] md:max-h-[82vh] rounded-t-[28px] md:rounded-[28px] overflow-hidden flex flex-col md:flex-row shadow-[0_50px_100px_-30px_rgba(0,0,0,0.6)] transition-[transform,opacity] duration-300 ease-out ${shown ? 'opacity-100 md:scale-100' : 'opacity-0 translate-y-full md:translate-y-0 md:scale-90'}`}>
         <div className="md:hidden flex justify-center pt-3 pb-1 absolute inset-x-0 top-0 z-10"><span className="w-12 h-1.5 rounded-full bg-white/80" /></div>
-        <div key={m.id || m.name} className="md:w-[42%] h-64 md:h-auto shrink-0 relative animate-[fadeIn_.4s_ease]">
+        <div key={m.id || m.name} className="md:w-[42%] h-64 md:h-auto md:min-h-[440px] shrink-0 relative overflow-hidden animate-[fadeIn_.4s_ease]">
           <LeaderPhoto m={m} />
           <div className="absolute inset-x-0 bottom-0 h-28 md:hidden" style={{ background: 'linear-gradient(transparent, rgba(41,6,31,0.75))' }} />
           <div className="absolute bottom-4 left-5 md:hidden"><p className="font-serif text-white text-[24px] font-semibold leading-tight">{m.name}</p><p className="text-[#CBA24B] text-[13px] font-semibold">{m.role}</p></div>

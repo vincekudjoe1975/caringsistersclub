@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 31 testing (Leadership/Gallery/Sessions). Backend: 29/29 pytest cases passed covering leader CRUD + validations (name/group/email/photo/linkedin normalization), public visibility+order, CSRF enforcement, reorder, gallery edit/hide/reorder/invalid-tag, session date/time/end-after-start validation, create session, program embed, calendar entries (kind=session), signup required-when-sessions-exist, success with session, fills-up->full rejection, delete-blocked-with-signups. Frontend: Public /leadership shows cards, modal opens with name/role/full bio, next/prev navigation works, Escape closes, mobile viewport (390x844) renders modal as bottom sheet (y=759/h=444). Admin leaders UI (add -> row -> delete) works. Admin gallery UI has all expected inputs. Admin sessions UI creates and deletes sessions. Public /sessions calendar+list render, click opens session-detail-modal with correct title and session-cta linking to /initiatives/<slug>?session=<id>#join, and signup-session-select is correctly preselected on the program page.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter31_leaders_gallery_sessions.py",
+    "/app/test_reports/pytest/iter31.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is >9500 lines — strongly recommend splitting (/leaders, /gallery, /sessions could be routers) for maintainability.",
+    "leader photo_url regex only enforces https for external URLs but admin_leader_update uses the same _clean_leader (OK). Consider also allowing data: URIs if admins paste base64 avatars (currently rejected).",
+    "_fmt_time uses strftime('%-I:%M %p') which is Linux-only (works here, but non-portable).",
+    "No pagination on /api/admin/leaders or /api/admin/gallery (currently capped at 200/1000) — fine for MVP."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter31_leaders_gallery_sessions.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin via /app/backend/tests/qa_session.py up (cookie session_token=qa_tok_123). State-changing requests require X-Requested-With: XMLHttpRequest header.",
+  "seed_data_creation": "Seeded 2 QA leaders and 1 QA session during tests; all were deleted. qa_session.py down executed. DB counts of residual QA data: 0 leaders / 0 sessions / 0 submissions / 0 QA gallery media.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter31 covered leadership, gallery, sessions. Pytest file reusable at test_iter31_leaders_gallery_sessions.py. Use business-elevation-lab as a quick program with real id for session attach. caring-sisters-clone slug (as referenced in the PRD) does not exist in preview DB; tests work against business-elevation-lab instead."
+}
