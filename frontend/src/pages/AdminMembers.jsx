@@ -10,6 +10,8 @@ import { AdminCollections } from '../components/members/admin/AdminCollections';
 import { AdminDecember } from '../components/members/admin/AdminDecember';
 import { AdminTreasurer } from '../components/members/admin/AdminTreasurer';
 import { AdminReferrers } from '../components/members/admin/AdminReferrers';
+import { AdminImport } from '../components/members/admin/AdminImport';
+import { AdminAnnual, AdminSpotlight } from '../components/members/admin/AdminAnnualSpotlight';
 
 const inputCls = 'w-full rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
 const Box = ({ title, children, testid }) => (
@@ -157,11 +159,11 @@ export default function AdminMembers() {
   };
   const [sub, setSub] = useState('people');
   const apps = d.members.filter((m) => m.status === 'applied');
-  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['treasurer', 'Treasurer report'], ['referrers', 'Referrers'], ['december', 'December renewal']];
+  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['treasurer', 'Treasurer report'], ['referrers', 'Referrers'], ['import', 'Import'], ['annual', 'Annual summary'], ['spotlight', 'Spotlight'], ['december', 'December renewal']];
   return (
     <div>
     <div className="flex flex-wrap gap-1 mb-6">{tabs.map(([k, l]) => <button key={k} data-testid={`members-sub-${k}`} onClick={() => setSub(k)} className={`rounded-full px-4 py-2 text-[13px] font-semibold transition-colors ${sub === k ? 'bg-[#3B0A2E] text-white' : 'bg-white border border-[#3B0A2E]/15 text-[#3B0A2E]'}`}>{l}</button>)}</div>
-    {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : sub === 'treasurer' ? <AdminTreasurer /> : sub === 'referrers' ? <AdminReferrers /> : (
+    {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : sub === 'treasurer' ? <AdminTreasurer /> : sub === 'referrers' ? <AdminReferrers /> : sub === 'import' ? <AdminImport /> : sub === 'annual' ? <AdminAnnual /> : sub === 'spotlight' ? <AdminSpotlight /> : (
     <div className="grid lg:grid-cols-2 gap-6" data-testid="admin-members">
       <Box title={`Applications (${apps.length})`} testid="admin-applications"><Applications rows={apps} act={act} /></Box>
       <Box title="Invite members" testid="admin-invites"><Invites invites={d.invites} reload={load} toast={toast} /></Box>

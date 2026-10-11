@@ -315,8 +315,8 @@ async def _store_upload(file: UploadFile, category: str, title, subtitle, upload
 
 @api_router.get("/media")
 async def list_media(category: Optional[str] = None):
-    query = {"is_deleted": {"$ne": True}, "category": {"$ne": "story"}}
-    if category and category != "story":
+    query = {"is_deleted": {"$ne": True}, "category": {"$nin": ["story", "spotlight"]}}
+    if category and category not in ("story", "spotlight"):
         query["category"] = category
     items = await db.media.find(query, {"_id": 0}).sort("uploaded_at", -1).to_list(500)
     for it in items:
@@ -7447,6 +7447,7 @@ async def _member_scheduled():
     if today.month == 1 and today.day >= 2:
         await _send_referrer_notices(today.year - 1, "jan2")
     await _send_agenda_reminders(today)
+    await _send_gathering_reminders(today)
     await _send_member_anniversaries(today)
 
 
@@ -7802,6 +7803,516 @@ class ReferrerNotifyIn(BaseModel):
 async def admin_referrers_notify(payload: ReferrerNotifyIn, user=Depends(require_admin)):
     y = _year_param(payload.year or _today_et().year - 1)
     return {"sent": await _send_referrer_notices(y, f"manual-{_today_et().isoformat()}")}
+
+
+# ---------- Member Portal phase 5: import, gatherings, annual summary, spotlight ----------
+_IMPORT_COLS = {"name": "name", "full name": "name", "email": "email", "email address": "email", "phone": "phone", "phone number": "phone",
+                "city": "city", "town": "city", "birthday": "birthday", "date of birth": "birthday", "join date": "joined", "joined": "joined",
+                "date joined": "joined", "member since": "joined", "office": "office", "position": "office", "referrer": "referrer",
+                "referred by": "referrer", "sponsor": "referrer"}
+_MONTHS = {m.lower(): i for i, m in enumerate(["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], 1)}
+
+
+def _parse_any_date(v):
+    if isinstance(v, datetime):
+        return v.date()
+    if hasattr(v, "year") and hasattr(v, "month"):
+        return v
+    s = str(v or "").strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%B %Y", "%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_birthday(v):
+    if not str(v or "").strip():
+        return None, None
+    d = _parse_any_date(v)
+    if d and str(v).strip() not in ("",) and not re.match(r"^\d{4}$", str(v).strip()):
+        return d.month, d.day
+    s = str(v).strip()
+    m = re.match(r"^(\d{1,2})[/-](\d{1,2})$", s)
+    if m:
+        mo, dy = int(m.group(1)), int(m.group(2))
+    else:
+        m = re.match(r"^([A-Za-z]+)\.?\s+(\d{1,2})$", s)
+        if not m:
+            return False, False
+        mo = next((i for k, i in _MONTHS.items() if k.startswith(m.group(1).lower()[:3])), 0)
+        dy = int(m.group(2))
+    try:
+        datetime(2000, mo, dy)
+    except ValueError:
+        return False, False
+    return mo, dy
+
+
+def _read_import_file(name: str, data: bytes) -> list:
+    rows = []
+    if name.lower().endswith(".xlsx"):
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        ws = wb.worksheets[0]
+        it = ws.iter_rows(values_only=True)
+        header = [str(h or "").strip().lower() for h in next(it, [])]
+        for r in it:
+            if any(c not in (None, "") for c in r):
+                rows.append({header[i]: c for i, c in enumerate(r) if i < len(header)})
+    elif name.lower().endswith(".csv"):
+        import csv
+        text = data.decode("utf-8-sig", errors="replace")
+        for r in csv.DictReader(io.StringIO(text)):
+            if any((v or "").strip() for v in r.values()):
+                rows.append({(k or "").strip().lower(): v for k, v in r.items()})
+    else:
+        raise HTTPException(status_code=400, detail="Please upload a .csv or .xlsx file.")
+    out = []
+    for r in rows[:1000]:
+        rec = {"name": "", "email": "", "phone": "", "city": "", "birthday": "", "joined": "", "office": "", "referrer": ""}
+        for k, v in r.items():
+            key = _IMPORT_COLS.get(k)
+            if key and v not in (None, ""):
+                rec[key] = v.date().isoformat() if isinstance(v, datetime) and key == "joined" else (f"{v.month}/{v.day}" if isinstance(v, datetime) else str(v).strip())
+        out.append(rec)
+    return out
+
+
+class ImportRow(BaseModel):
+    name: str = ""
+    email: str = ""
+    phone: str = ""
+    city: str = ""
+    birthday: str = ""
+    joined: str = ""
+    office: str = ""
+    referrer: str = ""
+
+
+async def _validate_import(rows: List[ImportRow]) -> list:
+    import difflib
+    existing = {(u.get("email") or "").lower(): u for u in await db.users.find({}, {"_id": 0}).to_list(5000)}
+    members = [u for u in existing.values() if u.get("member_status")]
+    file_names = {r.name.strip().lower(): r.email.strip().lower() for r in rows if r.name.strip()}
+    seen, out = set(), []
+    for i, r in enumerate(rows):
+        email = r.email.strip().lower()
+        errors, warnings = [], []
+        if not r.name.strip():
+            errors.append("Name is required")
+        if not _EMAIL_RE.match(email):
+            errors.append("Valid email is required")
+        elif email in seen:
+            errors.append("Duplicate email in file")
+        seen.add(email)
+        joined = None
+        if r.joined.strip():
+            joined = _parse_any_date(r.joined)
+            if not joined or joined > _today_et():
+                errors.append("Join date not recognised (use YYYY-MM-DD or MM/DD/YYYY)")
+                joined = None
+        else:
+            warnings.append("No join date: today will be used")
+        bm, bd = _parse_birthday(r.birthday)
+        if bm is False:
+            errors.append("Birthday not recognised (use MM/DD or 'March 5')")
+        ref_email, ref_label = "", ""
+        if r.referrer.strip():
+            q = r.referrer.strip().lower()
+            if _EMAIL_RE.match(q):
+                if q in existing or q in seen or q in file_names.values():
+                    ref_email = q
+            elif q in file_names:
+                ref_email = file_names[q]
+            else:
+                pool = {(u.get("name") or "").lower(): (u.get("email") or "").lower() for u in members}
+                best = difflib.get_close_matches(q, list(pool) + list(file_names), n=1, cutoff=0.75)
+                if best:
+                    ref_email = pool.get(best[0]) or file_names.get(best[0], "")
+            if ref_email == email:
+                ref_email = ""
+            ref_label = ref_email or ""
+            if not ref_email:
+                warnings.append("Referrer not found: kept as a note")
+        cur = existing.get(email)
+        out.append({**r.model_dump(), "row": i + 1, "email": email, "errors": errors, "warnings": warnings,
+                    "action": "update" if cur else "create", "joined_iso": joined.isoformat() if joined else "", "birthday_month": bm or None,
+                    "birthday_day": bd or None, "referrer_email": ref_label, "existing_status": (cur or {}).get("member_status", "")})
+    return out
+
+
+@api_router.post("/admin/members/import/preview")
+async def admin_import_preview(file: UploadFile = File(...), user=Depends(require_admin)):
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 10 MB.")
+    try:
+        rows = _read_import_file(file.filename or "", data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Import parse failed: {e}")
+        raise HTTPException(status_code=400, detail="We couldn't read that file. Please check it's a valid CSV or Excel file.")
+    if not rows:
+        raise HTTPException(status_code=400, detail="No rows found. Make sure the first row has column headings like Name, Email, Join date.")
+    return {"rows": await _validate_import([ImportRow(**r) for r in rows])}
+
+
+class ImportValidateIn(BaseModel):
+    rows: List[ImportRow]
+
+
+@api_router.post("/admin/members/import/validate")
+async def admin_import_validate(payload: ImportValidateIn, user=Depends(require_admin)):
+    return {"rows": await _validate_import(payload.rows[:1000])}
+
+
+class ImportCommitIn(BaseModel):
+    rows: List[ImportRow]
+    send_invites: bool = False
+
+
+def _import_invite_html(first: str) -> str:
+    return _member_email_html("Member Portal", f"Welcome, {first}!",
+                              "You've been added to the Caring Sisters Club member portal. Sign in with the Google account for this email address to see "
+                              "announcements, the member directory, our bylaws, your dues and upcoming gatherings.", "Open the member portal", "/members")
+
+
+@api_router.post("/admin/members/import/commit")
+async def admin_import_commit(payload: ImportCommitIn, background: BackgroundTasks, user=Depends(require_admin)):
+    rows = await _validate_import(payload.rows[:1000])
+    good = [r for r in rows if not r["errors"]]
+    created = updated = 0
+    for r in good:
+        since = (datetime.combine(datetime.fromisoformat(r["joined_iso"]).date(), datetime.min.time()).replace(hour=12, tzinfo=EVENT_TZ)
+                 if r["joined_iso"] else datetime.now(EVENT_TZ)).astimezone(timezone.utc).isoformat()
+        prof = {"city": r["city"][:80], "phone": r["phone"][:30], "bio": "", "show_contact": False, "birthday_month": r["birthday_month"], "birthday_day": r["birthday_day"]}
+        cur = await db.users.find_one({"email": {"$regex": f"^{re.escape(r['email'])}$", "$options": "i"}}, {"_id": 0})
+        fields = {"member_status": "active", "member_since": since, "member_office": r["office"][:60], "member_imported_at": _now_iso(),
+                  "member_application": {**((cur or {}).get("member_application") or {}), "referred_by": r["referrer"][:120]}}
+        if cur:
+            keep = cur.get("member_profile") or {}
+            await db.users.update_one({"user_id": cur["user_id"]}, {"$set": {**fields, "member_profile": {**prof, **{k: v for k, v in keep.items() if v}}}})
+            updated += 1
+        else:
+            await db.users.insert_one({"user_id": f"user_{uuid.uuid4().hex[:12]}", "email": r["email"], "name": r["name"].strip()[:120], "picture": "",
+                                       "role": "pending", "created_at": _now_iso(), "member_profile": prof, **fields})
+            created += 1
+        if payload.send_invites:
+            background.add_task(send_email, to=r["email"], subject="You're in! Your Caring Sisters Club member portal",
+                                html=_import_invite_html(r["name"].strip().split(" ")[0] or "Sister"))
+    by_email = {(u.get("email") or "").lower(): u["user_id"] for u in await db.users.find({"member_status": {"$exists": True}}, {"_id": 0, "email": 1, "user_id": 1}).to_list(5000)}
+    linked = 0
+    for r in good:
+        if r["referrer_email"] and r["referrer_email"] in by_email and by_email.get(r["email"]):
+            await db.users.update_one({"user_id": by_email[r["email"]]}, {"$set": {"member_referrer_id": by_email[r["referrer_email"]]}})
+            linked += 1
+    await db.member_runs.insert_one({"kind": "member_import", "created": created, "updated": updated, "skipped": len(rows) - len(good), "by": user.get("email"), "at": _now_iso()})
+    return {"created": created, "updated": updated, "skipped": len(rows) - len(good), "referrers_linked": linked}
+
+
+# --- Gatherings (in-person meetings: RSVPs) ---
+class GatheringIn(BaseModel):
+    rsvp_deadline: str = ""
+    details: str = ""
+
+
+@api_router.put("/admin/members/meetings/{mid}/gathering")
+async def admin_gathering(mid: str, payload: GatheringIn, user=Depends(require_admin)):
+    if payload.rsvp_deadline and not re.match(r"^\d{4}-\d{2}-\d{2}$", payload.rsvp_deadline):
+        raise HTTPException(status_code=400, detail="Invalid deadline")
+    res = await db.member_meetings.update_one({"id": mid, "kind": "in-person"}, {"$set": {"rsvp_deadline": payload.rsvp_deadline, "details": payload.details.strip()[:2000]}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="In-person gathering not found")
+    return {"ok": True}
+
+
+def _rsvp_open(m: dict) -> bool:
+    t = _today_et().isoformat()
+    return m["date"] >= t and (not m.get("rsvp_deadline") or m["rsvp_deadline"] >= t)
+
+
+@api_router.get("/members/gatherings")
+async def members_gatherings(user=Depends(require_member)):
+    rows = await db.member_meetings.find({"kind": "in-person", "date": {"$gte": _today_et().isoformat()}}, {"_id": 0, "attendance": 0, "suggestions": 0, "minutes": 0}).sort("date", 1).to_list(10)
+    out = []
+    for m in rows:
+        rs = m.get("rsvps") or {}
+        out.append({"id": m["id"], "title": m["title"], "date": m["date"], "time": m.get("time", ""), "location": m.get("location", ""), "details": m.get("details", ""),
+                    "rsvp_deadline": m.get("rsvp_deadline", ""), "open": _rsvp_open(m), "my_rsvp": rs.get(user["user_id"]),
+                    "going": sum(1 + int(r.get("guests") or 0) for r in rs.values() if r["response"] == "yes")})
+    return out
+
+
+class RsvpIn(BaseModel):
+    response: str
+    guests: int = 0
+    dietary: str = ""
+
+
+@api_router.post("/members/gatherings/{mid}/rsvp")
+async def members_rsvp(mid: str, payload: RsvpIn, user=Depends(require_member)):
+    if payload.response not in ("yes", "no", "maybe") or not (0 <= payload.guests <= 10):
+        raise HTTPException(status_code=400, detail="Choose Yes, No or Maybe (up to 10 guests).")
+    m = await db.member_meetings.find_one({"id": mid, "kind": "in-person"}, {"_id": 0, "date": 1, "rsvp_deadline": 1})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Gathering not found")
+    if not _rsvp_open(m):
+        raise HTTPException(status_code=400, detail="RSVPs for this gathering are closed.")
+    r = {"response": payload.response, "guests": payload.guests if payload.response != "no" else 0, "dietary": payload.dietary.strip()[:200], "at": _now_iso(),
+         "name": user.get("name") or ""}
+    await db.member_meetings.update_one({"id": mid}, {"$set": {f"rsvps.{user['user_id']}": r}})
+    return r
+
+
+@api_router.get("/admin/members/meetings/{mid}/rsvps")
+async def admin_rsvps(mid: str, user=Depends(require_admin)):
+    m = await db.member_meetings.find_one({"id": mid}, {"_id": 0})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    rs = m.get("rsvps") or {}
+    active = await db.users.find({"member_status": "active"}, {"_id": 0, "user_id": 1, "name": 1}).to_list(2000)
+    rows = [{"user_id": uid, **r} for uid, r in rs.items()]
+    yes = [r for r in rows if r["response"] == "yes"]
+    maybe = [r for r in rows if r["response"] == "maybe"]
+    return {"rows": sorted(rows, key=lambda r: (r["response"], r["name"])),
+            "headcount": {"yes": len(yes), "guests": sum(r["guests"] for r in yes), "total": len(yes) + sum(r["guests"] for r in yes),
+                          "maybe": len(maybe), "maybe_total": len(maybe) + sum(r["guests"] for r in maybe), "no": sum(1 for r in rows if r["response"] == "no")},
+            "dietary": [{"name": r["name"], "note": r["dietary"]} for r in rows if r.get("dietary") and r["response"] != "no"],
+            "no_reply": sorted([u.get("name") or "" for u in active if u["user_id"] not in rs]),
+            "rsvp_deadline": m.get("rsvp_deadline", ""), "details": m.get("details", ""), "reminder_sent_at": m.get("rsvp_reminder_sent_at")}
+
+
+async def _send_gathering_reminders(today) -> int:
+    target = (today + timedelta(days=7)).isoformat()
+    sent = 0
+    for m in await db.member_meetings.find({"kind": "in-person", "date": target, "rsvp_reminder_sent_at": {"$exists": False}}, {"_id": 0}).to_list(10):
+        if (await db.member_meetings.update_one({"id": m["id"], "rsvp_reminder_sent_at": {"$exists": False}}, {"$set": {"rsvp_reminder_sent_at": _now_iso()}})).modified_count == 0:
+            continue
+        if not _rsvp_open(m):
+            continue
+        rs = m.get("rsvps") or {}
+        when = datetime.fromisoformat(m["date"]).strftime("%A, %B %-d")
+        for u in await db.users.find({"member_status": "active", "email": {"$nin": [None, ""]}}, {"_id": 0, "user_id": 1, "email": 1, "name": 1}).to_list(2000):
+            if u["user_id"] in rs:
+                continue
+            first = (u.get("name") or "Sister").split(" ")[0]
+            html = _member_email_html("Please RSVP", f"Dear {first},", f"Our {m['title']} is one week away, on {when}"
+                                      + (f" at {m['location']}" if m.get("location") else "") + ". Will you be joining us? Please let us know so we can plan food and seating.",
+                                      "RSVP in the member portal", "/members")
+            try:
+                await send_email(to=u["email"], subject=f"RSVP: {m['title']} on {when}"[:150], html=html)
+                sent += 1
+            except Exception as e:
+                logging.warning(f"Gathering reminder failed: {e}")
+    return sent
+
+
+# --- Annual summary ---
+async def _annual_data(year: int) -> dict:
+    users = await db.users.find({"member_status": {"$in": ["active", "suspended", "ended"]}}, {"_id": 0}).to_list(5000)
+    meetings = [m for m in await _year_meetings(year) if m.get("attendance")]
+    active = [u for u in users if u["member_status"] == "active"]
+    joined = sum(1 for u in users if (_since_date(u) or datetime(1900, 1, 1).date()).year == year)
+    ended = sum(1 for u in users if u["member_status"] == "ended" and (u.get("member_ended_at") or "")[:4] in (str(year), str(year + 1)))
+    per_meeting = []
+    for m in meetings:
+        vals = list(m["attendance"].values())
+        present = sum(1 for v in vals if v == "present")
+        per_meeting.append({"title": m["title"], "date": m["date"], "kind": m.get("kind"), "present": present, "absent": sum(1 for v in vals if v == "absent"),
+                            "excused": sum(1 for v in vals if v == "excused"), "rate": round(present / len(vals) * 100) if vals else 0})
+    standing = await _standing_all(year)
+    flags = defaultdict(int)
+    for _, s in standing.values():
+        for f in s["attendance"]["flags"]:
+            flags[f] += 1
+    pays = await db.member_ledger.find({"year": year, "direction": "payment"}, {"_id": 0}).to_list(50000)
+    by_kind, by_method = defaultdict(float), defaultdict(float)
+    for p in pays:
+        by_kind[p["kind"]] += p["amount"]
+        by_method[p.get("method") or "other"] += p["amount"]
+    st_vals = [s for _, s in standing.values()]
+    colls = [await _collection_view(c, standing) for c in await db.member_collections.find({"year": year}, {"_id": 0}).to_list(500)]
+    ballots = []
+    for b in await db.member_ballots.find({"closes_at": {"$gte": f"{year}-01-01", "$lt": f"{year + 1}-01-01"}}, {"_id": 0}).sort("closes_at", 1).to_list(200):
+        if _ballot_state(b) == "closed":
+            ballots.append({"title": b["title"], "kind": b["kind"], "position": b.get("position", ""), "candidates": b.get("candidates", []), "closes_at": b.get("closed_at") or b["closes_at"],
+                            "results": await _ballot_results(b)})
+    return {
+        "year": year, "generated_at": _now_iso(),
+        "membership": {"active": len(active), "joined": joined, "ended": ended, "officers": [{"name": u.get("name"), "office": u["member_office"]} for u in active if u.get("member_office")]},
+        "attendance": {"meetings": per_meeting, "average_rate": round(sum(m["rate"] for m in per_meeting) / len(per_meeting)) if per_meeting else 0,
+                       "warnings": flags["warning"], "fines": flags["fine"], "terminations": flags["termination"], "officer_removals": flags["officer_removal"]},
+        "dues": {"expected": round(sum(s["dues_expected"] for s in st_vals), 2), "collected": round(sum(by_kind.values()), 2),
+                 "by_kind": {k: round(v, 2) for k, v in by_kind.items()}, "by_method": {k: round(v, 2) for k, v in by_method.items()},
+                 "outstanding": round(sum(s["balance"] for s in st_vals), 2), "paid_in_full": sum(1 for s in st_vals if s["dues_status"] == "paid"), "members": len(st_vals)},
+        "support": [{"kind": c["kind"], "beneficiary": c["beneficiary_name"], "relationship": c.get("relationship", ""), "expected": c["expected"], "collected": c["collected"],
+                     "paid_out": c["paid_out"]} for c in colls],
+        "votes": ballots,
+    }
+
+
+@api_router.get("/admin/members/annual")
+async def admin_annual(year: Optional[int] = None, user=Depends(require_admin)):
+    y = _year_param(year)
+    shared = await db.member_annual_reports.find_one({"year": y}, {"_id": 0, "id": 1, "shared_at": 1})
+    return {**await _annual_data(y), "shared": shared}
+
+
+class AnnualShareIn(BaseModel):
+    year: int
+
+
+@api_router.post("/admin/members/annual/share")
+async def admin_annual_share(payload: AnnualShareIn, user=Depends(require_admin)):
+    y = _year_param(payload.year)
+    await db.member_annual_reports.update_one({"year": y}, {"$set": {"data": await _annual_data(y), "shared_at": _now_iso(), "shared_by": user.get("name") or user.get("email")},
+                                              "$setOnInsert": {"id": str(uuid.uuid4()), "year": y}}, upsert=True)
+    return await db.member_annual_reports.find_one({"year": y}, {"_id": 0, "id": 1, "shared_at": 1})
+
+
+@api_router.delete("/admin/members/annual/share")
+async def admin_annual_unshare(year: int, user=Depends(require_admin)):
+    await db.member_annual_reports.delete_one({"year": year})
+    return {"ok": True}
+
+
+@api_router.get("/members/annual-reports")
+async def members_annual_reports(user=Depends(require_member)):
+    return await db.member_annual_reports.find({}, {"_id": 0, "data": 0}).sort("year", -1).to_list(50)
+
+
+@api_router.get("/members/annual-reports/{rid}")
+async def members_annual_report(rid: str, user=Depends(require_member)):
+    r = await db.member_annual_reports.find_one({"id": rid}, {"_id": 0})
+    if r is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return {**r["data"], "shared_at": r["shared_at"]}
+
+
+# --- Sisterhood Spotlight ---
+def _cur_month() -> str:
+    t = _today_et()
+    return f"{t.year}-{t.month:02d}"
+
+
+class SpotlightIn(BaseModel):
+    user_id: str
+    month: str
+    mode: str = "staff"
+    story: str = ""
+    photo_url: str = ""
+    use_profile_photo: bool = False
+
+
+def _valid_photo(url: str) -> bool:
+    return not url or bool(re.match(r"^/api/media/file/[A-Za-z0-9-]+$", url))
+
+
+@api_router.get("/admin/members/spotlights")
+async def admin_spotlights(user=Depends(require_admin)):
+    return await db.member_spotlights.find({}, {"_id": 0}).sort("month", -1).to_list(200)
+
+
+@api_router.post("/admin/members/spotlights")
+async def admin_spotlight_create(payload: SpotlightIn, background: BackgroundTasks, user=Depends(require_admin)):
+    if not re.match(r"^\d{4}-(0[1-9]|1[0-2])$", payload.month) or payload.mode not in ("staff", "invite") or not _valid_photo(payload.photo_url):
+        raise HTTPException(status_code=400, detail="Choose a sister and a month.")
+    u = await db.users.find_one({"user_id": payload.user_id, "member_status": "active"}, {"_id": 0})
+    if u is None:
+        raise HTTPException(status_code=400, detail="Choose an active sister.")
+    if await db.member_spotlights.find_one({"month": payload.month, "status": "published"}, {"_id": 1}):
+        raise HTTPException(status_code=400, detail="That month already has a published spotlight.")
+    photo = (u.get("picture") or "") if payload.use_profile_photo else payload.photo_url
+    s = {"id": str(uuid.uuid4()), "user_id": u["user_id"], "name": u.get("name") or "", "month": payload.month, "story": payload.story.strip()[:4000],
+         "photo_url": photo, "status": "invited" if payload.mode == "invite" else "draft", "created_at": _now_iso(), "created_by": user.get("email")}
+    await db.member_spotlights.insert_one(dict(s))
+    if payload.mode == "invite" and u.get("email"):
+        first = (u.get("name") or "Sister").split(" ")[0]
+        background.add_task(send_email, to=u["email"], subject="You've been chosen for the Sisterhood Spotlight!",
+                            html=_member_email_html("Sisterhood Spotlight", f"Dear {first},",
+                                                    f"We'd love to feature you in our Sisterhood Spotlight for {datetime.strptime(payload.month, '%Y-%m').strftime('%B %Y')}. "
+                                                    "Please share a photo and a few words about yourself (your story, what the Club means to you, a favourite memory) in the member portal.",
+                                                    "Share my story", "/members"))
+    return s
+
+
+class SpotlightEdit(BaseModel):
+    story: str
+    photo_url: str = ""
+
+
+@api_router.put("/admin/members/spotlights/{sid}")
+async def admin_spotlight_edit(sid: str, payload: SpotlightEdit, user=Depends(require_admin)):
+    if not _valid_photo(payload.photo_url) and not payload.photo_url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="Invalid photo")
+    await db.member_spotlights.update_one({"id": sid}, {"$set": {"story": payload.story.strip()[:4000], "photo_url": payload.photo_url}})
+    return {"ok": True}
+
+
+@api_router.post("/admin/members/spotlights/{sid}/publish")
+async def admin_spotlight_publish(sid: str, background: BackgroundTasks, user=Depends(require_admin)):
+    s = await db.member_spotlights.find_one({"id": sid}, {"_id": 0})
+    if s is None or not s.get("story"):
+        raise HTTPException(status_code=400, detail="Add her story before publishing.")
+    if await db.member_spotlights.find_one({"month": s["month"], "status": "published", "id": {"$ne": sid}}, {"_id": 1}):
+        raise HTTPException(status_code=400, detail="That month already has a published spotlight.")
+    await db.member_spotlights.update_one({"id": sid}, {"$set": {"status": "published", "published_at": _now_iso()}})
+    u = await db.users.find_one({"user_id": s["user_id"]}, {"_id": 0, "email": 1, "name": 1})
+    if u and u.get("email"):
+        first = (u.get("name") or "Sister").split(" ")[0]
+        background.add_task(send_email, to=u["email"], subject="You're our Sisterhood Spotlight!",
+                            html=_member_email_html("Sisterhood Spotlight", f"Congratulations, {first}!",
+                                                    f"You are featured as our Sisterhood Spotlight for {datetime.strptime(s['month'], '%Y-%m').strftime('%B %Y')}. "
+                                                    "Thank you for everything you bring to our circle. Your sisters can now read your story on the portal home.",
+                                                    "See my spotlight", "/members"))
+    return {"ok": True}
+
+
+@api_router.delete("/admin/members/spotlights/{sid}")
+async def admin_spotlight_delete(sid: str, user=Depends(require_admin)):
+    await db.member_spotlights.delete_one({"id": sid})
+    return {"ok": True}
+
+
+@api_router.post("/admin/members/spotlights/photo")
+async def admin_spotlight_photo(file: UploadFile = File(...), user=Depends(require_admin)):
+    doc = await _store_upload(file, "spotlight", "Spotlight photo", None, user.get("email"))
+    return {"url": doc["url"]}
+
+
+@api_router.get("/members/spotlight")
+async def members_spotlight(user=Depends(require_member)):
+    s = await db.member_spotlights.find_one({"month": _cur_month(), "status": "published"}, {"_id": 0, "created_by": 0})
+    invite = await db.member_spotlights.find_one({"user_id": user["user_id"], "status": {"$in": ["invited", "submitted"]}}, {"_id": 0, "created_by": 0})
+    return {"spotlight": s, "my_invite": invite}
+
+
+@api_router.post("/members/spotlight/photo")
+async def members_spotlight_photo(request: Request, file: UploadFile = File(...), user=Depends(require_member)):
+    _rate_limit(request, "spotlight-photo", max_hits=5, window_s=600)
+    if not await db.member_spotlights.find_one({"user_id": user["user_id"], "status": "invited"}, {"_id": 1}):
+        raise HTTPException(status_code=403, detail="No spotlight invitation found.")
+    doc = await _store_upload(file, "spotlight", "Spotlight photo", None, user["user_id"])
+    return {"url": doc["url"]}
+
+
+@api_router.post("/members/spotlight/{sid}/submit")
+async def members_spotlight_submit(sid: str, payload: SpotlightEdit, user=Depends(require_member)):
+    story = payload.story.strip()[:4000]
+    if not story:
+        raise HTTPException(status_code=400, detail="Please share a few words about yourself.")
+    photo = payload.photo_url
+    if photo and not (photo == (user.get("picture") or "") or (_valid_photo(photo) and await db.media.find_one(
+            {"id": photo.rsplit("/", 1)[-1], "category": "spotlight", "uploaded_by": user["user_id"]}, {"_id": 1}))):
+        raise HTTPException(status_code=400, detail="Please upload your photo again.")
+    res = await db.member_spotlights.update_one({"id": sid, "user_id": user["user_id"], "status": "invited"},
+                                                {"$set": {"story": story, "photo_url": photo, "status": "submitted", "submitted_at": _now_iso()}})
+    if not res.matched_count:
+        raise HTTPException(status_code=400, detail="This invitation is no longer open.")
+    return {"ok": True}
 
 
 # Include the router in the main app

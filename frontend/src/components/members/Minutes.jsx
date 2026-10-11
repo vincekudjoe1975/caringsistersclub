@@ -8,9 +8,11 @@ export function Minutes() {
   const [rows, setRows] = useState(null);
   const [votes, setVotes] = useState([]);
   const [reports, setReports] = useState([]);
+  const [annual, setAnnual] = useState([]);
   const [open, setOpen] = useState(null);
   useEffect(() => {
     api.get('/members/minutes').then(({ data }) => setRows(data)).catch(() => setRows([]));
+    api.get('/members/annual-reports').then(({ data }) => setAnnual(data)).catch(() => {});
     api.get('/members/treasurer-reports').then(({ data }) => setReports(data)).catch(() => {});
     api.get('/members/ballots').then(({ data }) => setVotes(data.ballots.filter((b) => b.state === 'closed'))).catch(() => {});
   }, []);
@@ -33,6 +35,16 @@ export function Minutes() {
         </div>
       </div>
       <div className="space-y-5 self-start">
+      {annual.length > 0 && (
+        <div data-testid="annual-reports" className="bg-white rounded-2xl p-5 border border-[#3B0A2E]/8">
+          <h3 className="font-serif text-[19px] text-[#3B0A2E] font-semibold mb-3">Annual summaries</h3>
+          {annual.map((r) => (
+            <Link key={r.id} to={`/annual-report/${r.id}`} target="_blank" data-testid={`annual-link-${r.id}`} className="flex items-center justify-between py-2 text-[13.5px] border-b border-[#3B0A2E]/8 last:border-0 hover:text-[#B4247E] transition-colors">
+              <span>{r.year} annual summary</span><Printer size={14} />
+            </Link>
+          ))}
+        </div>
+      )}
       {reports.length > 0 && (
         <div data-testid="treasurer-reports" className="bg-white rounded-2xl p-5 border border-[#3B0A2E]/8">
           <h3 className="font-serif text-[19px] text-[#3B0A2E] font-semibold mb-3">Treasurer's reports</h3>

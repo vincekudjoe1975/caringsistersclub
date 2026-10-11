@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../../lib/api';
 import { useToast } from '../../../hooks/use-toast';
-import { Plus, Trash2, AlertTriangle, Save, FileText, ListChecks } from 'lucide-react';
+import { Plus, Trash2, AlertTriangle, Save, FileText, ListChecks, PartyPopper } from 'lucide-react';
 import { fmtDate } from '../fmt';
 
 const FLAG = { warning: 'Warning letter (2 in a row)', fine: '$10 fine (3 in a row)', officer_removal: 'Officer: 3 missed, remove from office', termination: '4+ missed: ends in December' };
@@ -90,12 +90,43 @@ function AgendaEditor({ m, onSaved }) {
   );
 }
 
+function GatheringPanel({ m, onSaved }) {
+  const [d, setD] = useState(null);
+  const [f, setF] = useState({ rsvp_deadline: m.rsvp_deadline || '', details: m.details || '' });
+  const load = useCallback(() => api.get(`/admin/members/meetings/${m.id}/rsvps`).then(({ data }) => setD(data)), [m.id]);
+  useEffect(() => { load(); }, [load]);
+  const save = async () => { await api.put(`/admin/members/meetings/${m.id}/gathering`, f); onSaved(); load(); };
+  if (!d) return null;
+  const h = d.headcount;
+  return (
+    <div data-testid={`gathering-panel-${m.id}`} className="bg-[#faf2f7] rounded-xl p-4 mt-3 space-y-3">
+      <div className="grid grid-cols-4 gap-2 text-center">
+        {[['Coming', h.total, 'hc-total'], ['Members yes', h.yes, 'hc-yes'], ['Maybe', h.maybe_total, 'hc-maybe'], ['No', h.no, 'hc-no']].map(([l, v, t]) => (
+          <div key={l} className="bg-white rounded-lg py-2"><p className="text-[11px] text-[#241019]/55">{l}</p><p data-testid={`${t}-${m.id}`} className="font-semibold text-[#3B0A2E] text-[18px]">{v}</p></div>
+        ))}
+      </div>
+      <p className="text-[12px] text-[#241019]/60">Includes {h.guests} guest{h.guests === 1 ? '' : 's'}. A reminder goes to sisters without an RSVP 7 days before{d.reminder_sent_at ? ` (sent ${fmtDate(d.reminder_sent_at)})` : ''}.</p>
+      <div className="flex flex-wrap gap-2">
+        <label className="text-[12px] text-[#241019]/60">RSVP deadline<input data-testid={`gathering-deadline-${m.id}`} type="date" value={f.rsvp_deadline} onChange={(e) => setF({ ...f, rsvp_deadline: e.target.value })} className={`${inputCls} block`} /></label>
+        <textarea data-testid={`gathering-details-${m.id}`} rows={2} value={f.details} onChange={(e) => setF({ ...f, details: e.target.value })} placeholder="Details for sisters (menu, dress code, what to bring…)" className={`${inputCls} flex-1 min-w-[200px]`} />
+        <button data-testid={`gathering-save-${m.id}`} onClick={save} className="btn-magenta rounded-full px-4 py-2 text-[12.5px] font-semibold self-end">Save</button>
+      </div>
+      {d.dietary.length > 0 && <div><p className="text-[12px] font-semibold text-[#3B0A2E]">Dietary notes</p>{d.dietary.map((x, i) => <p key={i} className="text-[12.5px] text-[#241019]/75">{x.name}: {x.note}</p>)}</div>}
+      <div className="grid md:grid-cols-2 gap-3 text-[12.5px]">
+        <div><p className="font-semibold text-[#3B0A2E] mb-1">Replies</p>{d.rows.map((r) => <p key={r.user_id}>{r.name}: <b className={r.response === 'yes' ? 'text-green-700' : r.response === 'no' ? 'text-red-600' : 'text-amber-700'}>{r.response}</b>{r.guests ? ` +${r.guests}` : ''}</p>)}{!d.rows.length && <p className="text-[#241019]/50">No replies yet.</p>}</div>
+        <div><p className="font-semibold text-[#3B0A2E] mb-1">No reply yet ({d.no_reply.length})</p><p data-testid={`no-reply-${m.id}`} className="text-[#241019]/65">{d.no_reply.join(', ') || 'Everyone has replied'}</p></div>
+      </div>
+    </div>
+  );
+}
+
 export function AdminMeetings() {
   const [d, setD] = useState(null);
   const [f, setF] = useState({ title: 'General meeting', date: '', kind: 'general' });
   const [open, setOpen] = useState(null);
   const [mins, setMins] = useState(null);
   const [agenda, setAgenda] = useState(null);
+  const [rsvp, setRsvp] = useState(null);
   const load = useCallback(() => api.get('/admin/members/meetings').then(({ data }) => setD(data)), []);
   useEffect(() => { load(); }, [load]);
   const create = async (e) => { e.preventDefault(); const { data } = await api.post('/admin/members/meetings', f); setOpen(data.id); load(); };
@@ -117,6 +148,7 @@ export function AdminMeetings() {
                 <span className="flex gap-3 items-center">
                   {m.minutes && <span data-testid={`minutes-status-${m.id}`} className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${m.minutes.status === 'approved' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>Minutes {m.minutes.status}</span>}
                   {m.agenda && <span data-testid={`agenda-status-${m.id}`} className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${m.agenda.status === 'published' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>Agenda {m.agenda.status}</span>}
+                  {m.kind === 'in-person' && <button data-testid={`meeting-rsvps-${m.id}`} onClick={() => setRsvp(rsvp === m.id ? null : m.id)} className="text-[12.5px] font-semibold text-[#B4247E] flex items-center gap-1"><PartyPopper size={13} /> RSVPs</button>}
                   <button data-testid={`meeting-agenda-${m.id}`} onClick={() => setAgenda(agenda === m.id ? null : m.id)} className="text-[12.5px] font-semibold text-[#B4247E] flex items-center gap-1"><ListChecks size={13} /> Agenda</button>
                   <button data-testid={`meeting-minutes-${m.id}`} onClick={() => setMins(mins === m.id ? null : m.id)} className="text-[12.5px] font-semibold text-[#B4247E] flex items-center gap-1"><FileText size={13} /> Minutes</button>
                   <button data-testid={`meeting-open-${m.id}`} onClick={() => setOpen(open === m.id ? null : m.id)} className="text-[12.5px] font-semibold text-[#B4247E]">{open === m.id ? 'Close' : 'Take attendance'}</button>
@@ -126,6 +158,7 @@ export function AdminMeetings() {
               {open === m.id && <AttendanceSheet m={m} members={d.members} onSaved={load} />}
               {mins === m.id && <MinutesEditor m={m} onSaved={load} />}
               {agenda === m.id && <AgendaEditor m={m} onSaved={load} />}
+              {rsvp === m.id && <GatheringPanel m={m} onSaved={load} />}
             </div>
           ))}
           {!d.meetings.length && <p className="text-[13.5px] text-[#241019]/50">No meetings recorded this year.</p>}
