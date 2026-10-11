@@ -1,0 +1,61 @@
+{
+  "summary": "Iteration 33 end-to-end regression + three new features (session check-in / album share+latest / leader personal quotes). Backend pytest file test_iter33_checkin_leaders_albums.py ran 40 tests: 38 PASS, 2 FAIL — both failures caused by one critical bug (session check-in attendance endpoint rejects valid payloads with 422). Frontend regression: all 18 public routes loaded with 200 on desktop 1920x1080, and the mobile 390x844 spot-checks (/, /leadership, /initiatives, /sessions, /gallery, /donate, /contact) had no horizontal overflow and non-empty content; mobile menu opens and shows 9 nav links. Home page shows leader-strip, leader-strip-quote-* and home-latest-album with a working home-latest-album-link. Album detail page /gallery/album/<slug> renders album-share with share-facebook, share-whatsapp, share-x and share-copy. Admin › Sessions renders session-checkin-<sid> links that navigate to /session-checkin/<sid>; the mobile check-in page shows sci-title, sci-count, sci-search, 3 sci-row-* and sci-mark-rest. Admin › Leadership edit form shows leader-quote-input with current value and placeholder. /leadership LeaderModal shows leader-modal-quote with the stored personal quote. Clicking sci-present-<id> optimistically marks the row but after reload sci-count is still '0 / 3 checked in' and the POST silently 422s — reproduces the critical bug below.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/admin/sessions/{sid}/attendance",
+        "issue": "Endpoint uses the WRONG AttendanceIn Pydantic model (the one defined at server.py line 6990 for member meetings — `{attendance: dict}`), not the per-session model at line 5364 (`{updates: dict, all: Optional[str]}`). The second `class AttendanceIn(BaseModel)` at line 6990 shadows the first by name at module import time, and the dated-session route at line 9743 then binds to the shadowed class. Result: every FE call POSTs `{updates: {...}}` or `{all: 'no_show'}` and the API returns 422 missing-field 'attendance'. Attendance cannot be saved — Feature B is completely non-functional despite the UI appearing to work.",
+        "priority": "CRITICAL",
+        "repro": "curl -b 'session_token=qa_tok_123' -H 'X-Requested-With: XMLHttpRequest' -H 'Content-Type: application/json' -X POST $URL/api/admin/sessions/<sid>/attendance -d '{\"updates\":{\"x\":null}}' -> 422 {'detail':[{'loc':['body','attendance'],'msg':'Field required'}]}",
+        "fix": "Rename one of the two AttendanceIn classes. Simplest: rename the per-session attendance model near line 9743 to e.g. `SessionAttendanceIn` and change the route signature `admin_session_attendance(..., payload: SessionAttendanceIn, ...)`. Alternatively rename the meeting one (line 6990) to `MeetingAttendanceIn`. (The duplicate at line 5364 vs 6990 is the same shadowing problem — the member-meetings endpoint at line 7028 only works because `attendance` matches its earlier model's shape; the dated-session endpoint does not."
+      }
+    ],
+    "minor": [
+      {"endpoint": "n/a", "issue": "server.py is now 9808 lines with three classes named AttendanceIn and three classes named GalleryEditIn-ish patterns elsewhere; moving routers into modules would prevent future name-shadowing bugs like the one above."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "SessionCheckIn (frontend/src/pages/SessionCheckIn.jsx)",
+        "issue": "mark() optimistically updates local state and then calls `api.post` with no try/catch — when the backend 422s the user sees the toggle appear to work but there is no error toast and no rollback. After reload sci-count returns to 0. Minimum fix even after the backend bug is resolved: wrap the POST in try/catch, toast on failure, and revert the row state.",
+        "selector": "sci-present-<id> / sci-absent-<id>",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Admin Sessions → Check-in → mark present → reload",
+        "issue": "Attendance never persists because POST /api/admin/sessions/{sid}/attendance is 422ing (see critical backend bug). sci-count stays at 0 / 3 after reload.",
+        "affected_selectors": ["sci-present-<id>", "sci-absent-<id>", "sci-mark-rest", "sci-count"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter33_checkin_leaders_albums.py",
+    "/app/test_reports/pytest/iter33.xml"
+  ],
+  "action_items": [
+    "FIX CRITICAL: Rename the duplicate AttendanceIn class so /api/admin/sessions/{sid}/attendance binds to the model with `updates` and `all` fields (see backend_issues.critical for exact repro and fix).",
+    "Harden SessionCheckIn.mark() with try/catch + error toast + state rollback so attendance failures surface to the user.",
+    "Consider splitting server.py (9808 lines) into routers — the AttendanceIn bug is a direct consequence of a single-file module with repeating class names."
+  ],
+  "critical_code_review_comments": [
+    "server.py defines `class AttendanceIn` three times (lines 5364, 6990, and uses it again at 9743). Python keeps only the last binding of the name; FastAPI resolves `payload: AttendanceIn` at decorator time, so each route silently binds to whichever version is current at that line. The dated-session route gets the wrong one. Please rename or namespace these.",
+    "Similarly the duplication risk exists for other reused model names across 9k+ lines — recommend splitting into routers (sessions, gallery, leaders, members, admin) soon.",
+    "SessionCheckIn.jsx mark() has no error handling. Any 4xx/5xx on attendance disappears silently because the state was already updated optimistically.",
+    "LeaderStrip imports DEFAULT_LEADERS from pages/Leadership — circular-looking dependency; move the constant to /data/.",
+    "`_album_slug` depends on title so renaming an auto-album from Admin still breaks previously shared /gallery/album/<slug> links (noted previously, still true).",
+    "Public /api/gallery/albums rebuilds the album list from up to 2000 media + 500 metas every call — add a short TTL cache before gallery grows."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter33_checkin_leaders_albums.py (new)"
+  ],
+  "success_rate": {"backend": "95% (38/40 — both failures are symptoms of the one AttendanceIn shadowing bug)", "frontend": "95% (all public pages + 3 new features render; only the attendance POST silently fails)"},
+  "test_credentials": "Admin: python3 /app/backend/tests/qa_session.py up -> cookie session_token=qa_tok_123; state-changing API calls require header X-Requested-With: XMLHttpRequest. Members: python3 /app/backend/tests/qa_members.py up (mem_tok_a/mem_tok_b, set member_status active for portal access).",
+  "seed_data_creation": "During testing: 1 QA leader ('QA Quote Leader'), 1 program_session (location 'QA Hall') under business-elevation-lab, 3 submissions (qa.person0..2@example.com), 1 gallery media (tag_label 'QA Album Night'). ALL CLEANED UP after test run (verified counts return to 0). qa_session.py down and qa_members.py down executed.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -o addopts='' because backend/pytest.ini forces xdist which double-executes module-scoped fixtures and leaves stale QA seed. The AttendanceIn shadowing bug makes test_attendance_per_row_toggle and test_attendance_mark_rest_noshow fail with 422; those two tests will pass automatically once the main agent renames the class. Public page HTML regression intentionally only asserts the SPA index.html loads (status 200 + <div id=\"root\">); for route 404s you have to click through them in Playwright and watch for empty text — all 18 listed public routes rendered with text > 1000 chars and no horizontal overflow at 1920 and at 390 in this run."
+}

@@ -6987,7 +6987,7 @@ async def admin_meeting_create(payload: MeetingIn, user=Depends(require_admin)):
     return m
 
 
-class AttendanceIn(BaseModel):
+class MeetingAttendanceIn(BaseModel):
     attendance: dict
 
 
@@ -7025,7 +7025,7 @@ async def _apply_attendance_rules(meeting_id: str, year: int, background: Backgr
 
 
 @api_router.put("/admin/members/meetings/{mid}/attendance")
-async def admin_meeting_attendance(mid: str, payload: AttendanceIn, background: BackgroundTasks, user=Depends(require_admin)):
+async def admin_meeting_attendance(mid: str, payload: MeetingAttendanceIn, background: BackgroundTasks, user=Depends(require_admin)):
     m = await db.member_meetings.find_one({"id": mid}, {"_id": 0})
     if m is None:
         raise HTTPException(status_code=404, detail="Meeting not found")
@@ -8069,14 +8069,14 @@ async def members_gatherings(user=Depends(require_member)):
     return out
 
 
-class RsvpIn(BaseModel):
+class GatheringRsvpIn(BaseModel):
     response: str
     guests: int = 0
     dietary: str = ""
 
 
 @api_router.post("/members/gatherings/{mid}/rsvp")
-async def members_rsvp(mid: str, payload: RsvpIn, user=Depends(require_member)):
+async def members_rsvp(mid: str, payload: GatheringRsvpIn, user=Depends(require_member)):
     if payload.response not in ("yes", "no", "maybe") or not (0 <= payload.guests <= 10):
         raise HTTPException(status_code=400, detail="Choose Yes, No or Maybe (up to 10 guests).")
     m = await db.member_meetings.find_one({"id": mid, "kind": "in-person"}, {"_id": 0, "date": 1, "rsvp_deadline": 1})
@@ -9740,8 +9740,13 @@ async def admin_session_roster(sid: str, user=Depends(require_admin)):
             "items": [{"id": r["id"], "name": r["data"].get("name"), "email": r["data"].get("email"), "phone": r["data"].get("phone", ""), "attendance": r.get("attendance")} for r in rows]}
 
 
+class SessionAttendanceIn(BaseModel):
+    updates: dict = {}
+    all: Optional[str] = None
+
+
 @api_router.post("/admin/sessions/{sid}/attendance")
-async def admin_session_attendance(sid: str, payload: AttendanceIn, background: BackgroundTasks, user=Depends(require_admin)):
+async def admin_session_attendance(sid: str, payload: SessionAttendanceIn, background: BackgroundTasks, user=Depends(require_admin)):
     if not await db.program_sessions.find_one({"id": sid}, {"_id": 1}):
         raise HTTPException(status_code=404, detail="Session not found")
     q, ok = _session_taken_q(sid), ("attended", "no_show", None)

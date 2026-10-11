@@ -342,3 +342,11 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - ICS: _ics_mixed adds timed (UTC) VEVENTs per session to /sessions.ics and /sessions/{slug}/calendar.ics (per-program feed); single session /sessions/s/{sid}/calendar.ics; calendar entries carry gcal_url/ics_url/program_feed.
 - Home LeaderStrip (below stats): marquee of round photos, pause on hover/touch, opens LeaderModal, link to /leadership.
 - Gallery albums: auto by tag (key t:<type>:<label>) + custom (gallery_albums manual, key m:<id>, media.album_key); meta story/date/cover/title via /admin/gallery-albums; public /gallery/albums, /gallery/albums/{slug} (lookup by stable hash suffix); Gallery page Albums/All photos views; /gallery/album/:slug page.
+
+## 2026-06 Session check-in, album sharing, latest album, leader quotes, regression (iteration 33)
+- /session-checkin/:sid (from Admin › Sessions "Check-in"): roster GET /admin/sessions/{sid}/roster, POST /admin/sessions/{sid}/attendance (SessionAttendanceIn {updates, all}; all:no_show marks only unmarked); reuses submission.attendance so no-show follow-ups/streaks work.
+- Fixed model-name shadowing: AttendanceIn duplicates renamed (MeetingAttendanceIn, GatheringRsvpIn, SessionAttendanceIn). Rule: never reuse Pydantic class names in server.py.
+- AlbumExtras.jsx: ShareButtons on album page; LatestAlbum on Home. Leaders get optional quote (strip + modal).
+- Regression iteration 33: all public pages/admin views/member tabs rendered; only issue was the attendance model bug (fixed, curl-verified).
+- CORS_ORIGINS now includes https://caring-sisters-club.emergent.host (allowlist; '*' is ignored by code). Add any custom domain here too.
+- Zeffy evaluated and declined by user (no card-charging API; embed+webhook only). Merchandise not needed now.

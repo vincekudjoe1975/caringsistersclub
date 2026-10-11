@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../lib/api';
+import { useToast } from '../hooks/use-toast';
 import { Loader2, Search, Check, X, ArrowLeft, UserX } from 'lucide-react';
 
 export default function SessionCheckIn() {
@@ -8,15 +9,22 @@ export default function SessionCheckIn() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
+  const { toast } = useToast();
   const load = useCallback(() => api.get(`/admin/sessions/${sid}/roster`).then(({ data }) => setD(data))
     .catch((e) => setErr([401, 403].includes(e?.response?.status) ? 'auth' : e?.response?.data?.detail || 'Could not load this session.')), [sid]);
   useEffect(() => { load(); }, [load]);
   const mark = async (r, v) => {
     const next = r.attendance === v ? null : v;
-    setD((x) => ({ ...x, items: x.items.map((i) => (i.id === r.id ? { ...i, attendance: next } : i)) }));
-    await api.post(`/admin/sessions/${sid}/attendance`, { updates: { [r.id]: next } });
+    const setRow = (val) => setD((x) => ({ ...x, items: x.items.map((i) => (i.id === r.id ? { ...i, attendance: val } : i)) }));
+    setRow(next);
+    try { await api.post(`/admin/sessions/${sid}/attendance`, { updates: { [r.id]: next } }); }
+    catch (ex) { setRow(r.attendance); toast({ title: 'Not saved', description: ex?.response?.data?.detail || 'Please try again.', variant: 'destructive' }); }
   };
-  const rest = async () => { if (window.confirm('Mark everyone not checked in as absent?')) { await api.post(`/admin/sessions/${sid}/attendance`, { all: 'no_show' }); load(); } };
+  const rest = async () => {
+    if (!window.confirm('Mark everyone not checked in as absent?')) return;
+    try { await api.post(`/admin/sessions/${sid}/attendance`, { all: 'no_show' }); load(); }
+    catch (ex) { toast({ title: 'Not saved', description: ex?.response?.data?.detail || 'Please try again.', variant: 'destructive' }); }
+  };
   if (err === 'auth') return <div className="min-h-screen flex items-center justify-center p-6 text-center"><p data-testid="sci-auth">Staff sign-in required. <Link to="/login" className="text-[#B4247E] font-semibold">Sign in</Link></p></div>;
   if (err) return <div className="min-h-screen flex items-center justify-center p-6"><p data-testid="sci-error">{err}</p></div>;
   if (!d) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#B4247E]" /></div>;
