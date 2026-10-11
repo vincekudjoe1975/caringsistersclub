@@ -8834,17 +8834,20 @@ async def members_album_download(mid: str, user=Depends(require_member)):
     rows = await db.member_gathering_photos.find({"meeting_id": mid, "status": "approved"}, {"_id": 0}).sort("created_at", 1).to_list(300)
     if not rows:
         raise HTTPException(status_code=404, detail="This album has no photos yet.")
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
-        for i, p in enumerate(rows, 1):
-            try:
-                data, _ = get_object(p["storage_path"])
-            except Exception as e:
-                logging.warning(f"Album zip skip {p['id']}: {e}")
-                continue
-            z.writestr(f"{i:03d}{'.' + p['storage_path'].rsplit('.', 1)[-1]}", data)
+    def build() -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+            for i, p in enumerate(rows, 1):
+                try:
+                    data, _ = get_object(p["storage_path"])
+                except Exception as e:
+                    logging.warning(f"Album zip skip {p['id']}: {e}")
+                    continue
+                z.writestr(f"{i:03d}_{_dl_name(p.get('uploader_name', ''))}.{p['storage_path'].rsplit('.', 1)[-1]}", data)
+        return buf.getvalue()
+    content = await asyncio.to_thread(build)
     name = f"{_dl_name(m['title'])}_{m['date']}.zip"
-    return Response(content=buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "private, no-store"})
+    return Response(content=content, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "private, no-store"})
 
 
 # --- Birthday wishes wall ---

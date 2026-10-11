@@ -318,3 +318,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Birthdays: >=7am ET card to celebrant + notice to all other active members + birthday thread (member_bday_sent_year idempotency; Feb 29 -> Feb 28 non-leap); /members/birthdays/today -> home banner; staff monthly list on the 1st to settings.staff_notify_email.
 - Member write rate limits now per user (member-post:<uid>).
 - Backlog: per-sister opt-out for birthday notices; photo captions/download; staff alert email when photos await review; notify sister when her photo is approved.
+
+## 2026-06 Member Portal phase 8 (iteration 29 — 22/22 backend + phase 7 regression 35/35; all frontend flows pass)
+- Photo alerts: member_settings key 'photos' {staff_alert: both|instant|daily|off, approve_notice: gathering|each|off} (Admin > Members > Gathering photos selects). Instant: frontend calls POST /members/albums/{mid}/photos/done after an upload batch (staff_alerted flag). Daily summary >=9am ET (_once photo-pending:<date>). Approval: 'each' sends on approve; 'gathering' grouped hourly via _send_photo_approved (notified flag). Staff mail -> settings.staff_notify_email.
+- Album download: GET /members/albums/{mid}/download (ZIP of approved, built in thread, entries NNN_<uploader>.ext); single photo ?download=1.
+- Birthday opt-outs: member_profile.bday_notices / bday_card (My Profile checkboxes) respected by _send_birthday_emails.
+- Wishes wall: GET /members/birthdays/{uid}/wall; printable /birthday-wishes/:uid page; "View wishes" in birthdays card; MyWishes home card during her birthday month.
