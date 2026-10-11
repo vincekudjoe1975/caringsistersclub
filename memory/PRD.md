@@ -399,3 +399,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - _push_gathering_soon: ~2h before meetings with time set, RSVP yes/maybe, opens Google Maps directions.
 - _push_wish (kind=wish) on wall wish or birthday-thread reply; not for own posts.
 - Quiet hours: quiet_on/start/end (ET, default 21:00–08:00); held in db.push_held, released by _push_loop; push_log.held.
+
+## 2026-06 — Alert scheduling, read rates, weekly summary (iteration_41: backend 11/11, frontend 100%)
+- db.push_scheduled; admin CRUD /api/admin/members/push/scheduled (send_at Eastern local -> UTC); _send_scheduled in _push_loop.
+- Read rates: payload log_id; sw.js notificationclick POST /api/members/push/tapped; db.push_taps unique (log_id,user_id); history row shows "X tapped of Y reached (Z%)".
+- Weekly: _this_week + GET /api/members/this-week; new portal tab 'week' (ThisWeek.jsx, 12 tabs); _push_weekly Sun >=18:00 ET (mark weekly:{date}); settings key weekly_summary {paused}; admin GET/PUT /api/admin/members/weekly-summary, POST .../send; pref push_weekly.
+- MCP: user asked about `npx auto-doc-mcp init` — support says command-based (npx/stdio) MCP servers not yet supported on Emergent; only hosted HTTP MCP. Not installed.
