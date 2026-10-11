@@ -1,0 +1,40 @@
+{
+  "summary": "Iter 40 — Install banner (iPhone + Android + Desktop + /admin light), quiet hours (profile 400 validations, _quiet_now overnight/same-day, _push_users held + _release_held clears), wish alert (POST wish, reply on birthday thread, self-wish skipped), gathering 2h (push + maps url + dedup + skip when >150min or no time), app-installed POST + /members/me, admin push test (no-device 400, with-sub 200 + [Test] log, scope to self, non-admin 403), history filters wish/test. 16/16 backend pytest, all frontend UI assertions pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter40_install_quiet_wish_gathering.py",
+    "/app/test_reports/pytest/iter40.xml"
+  ],
+  "action_items": [
+    "None — all task features green.",
+    "Carryover from iter_38/39: cosmetic console warning (<option><span>) in AdminPush.jsx still present (purely dev instrumentation, non-blocking)."
+  ],
+  "critical_code_review_comments": [
+    "_quiet_now correctly handles overnight windows (st >= en -> t>=st or t<en) and same-day (st<=t<en) in Eastern. Verified in-process with ET conversions.",
+    "_push_users holds alerts during quiet hours ONLY when the user has a subscription; otherwise the alert is simply dropped for that user — reasonable, but held count on push_log reflects only users-with-subs, so admins reading the log see 'held' = real deferrals.",
+    "_release_held decrements held in push_log via $inc (delivered++, held--). Verified in-process. If _release_held fires while the window hasn't passed, it correctly keeps the row (no mutation).",
+    "admin_push_test ignores other users' subscriptions via `_push_users([user_id],...,'test')` — verified: inserting a sub for qa_mem_a does not affect `devices` count (stays 1 for admin).",
+    "wish push uses kind='wish' which maps to pref 'push_bday' in PUSH_KINDS, so respects birthday opt-out. Self-wish early-returns before _push_users so no log row at all. Reply handler on birthday:{uid}:{year} thread also fires _push_wish — correct behavior per spec.",
+    "_push_gathering_soon dedup key is `event2h:{id}:{date}` — verified single-fire across repeated calls. Window 0 < Δ ≤ 150 min matches '~2h before' spec.",
+    "Maps url builds correctly: https://www.google.com/maps/dir/?api=1&destination=<urlquoted-location>; without a location falls back to /members (no map).",
+    "members_app_installed uses update_one with filter `{app_installed_at: {$exists: False}}` so first-install timestamp is preserved. Idempotent repeated POSTs don't rewrite the install date.",
+    "profile validation: regex `^([01]\\d|2[0-3]):[0-5]\\d$` plus equal-check is tight; `25:00` and `21:00==21:00` both correctly 400.",
+    "PushHistory kinds now includes 'wish' and 'test' chips with testids `push-history-filter-wish` and `push-history-filter-test` matching spec. Row text includes 'N held for quiet hours' only when held>0.",
+    "InstallApp.jsx: isStandalone() check marks installed via POST /members/app-installed on load, SessionStorage HIDE flag hides for current tab-session only, new context shows banner again, api `/members/me` app_installed flag suppresses forever. All verified in 4 browser contexts.",
+    "CSRF middleware requires X-Requested-With for cookie-bearing writes — all test POSTs include it. members-app-installed is called by frontend via axios instance which must set this header (verified live POST returned 200)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter40_install_quiet_wish_gathering.py"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% (all assertions pass)"},
+  "test_credentials": "session_token=qa_tok_123 (QA admin), mem_tok_a/mem_tok_b (members, activated in-test). Both QA sessions torn down at end.",
+  "seed_data_creation": "Transient rows (push_sub, push_log, push_marks, push_held, member_meetings, birthday thread for qa_mem_a) all cleaned at module teardown + final db sweep (0-5 rows per collection). qa_user app_installed_at and qa_mem_* member_profile unset.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite: /app/backend/tests/test_iter40_install_quiet_wish_gathering.py. Pattern: uses function-scope autouse `ensure_active` fixture to re-activate qa_mem_a/b per test (xdist loadscope can tear down from other workers mid-run). pytz is NOT installed — use `from zoneinfo import ZoneInfo`. Admin UI reached via /admin → click 'Members' button → `[data-testid=members-sub-people]`. Profile tab testid is `portal-tab-me`."
+}

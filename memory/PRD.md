@@ -392,3 +392,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - _push_users logs every alert to db.push_log (kind, title, members, delivered, failed, expired); dedupe via db.push_marks (unique key).
 - _push_loop every 5 min: vote open + "closes tomorrow" (non-voters only); day-before reminders (>=9am ET) for meeting RSVPs yes/maybe and program sessions matched by member email; birthdays (>=8am ET) to others (bday_notices) + celebrant (bday_card), opens /birthday-wishes/{uid}.
 - Per-type prefs push_news/prayer/events/votes/bday in My Profile. Admin history GET /api/admin/members/push/history?kind= shown under Phone alert box.
+
+## 2026-06 — Install-until-installed, alert preview, gathering 2h alert, wish alert, quiet hours (iteration_40: backend 16/16, frontend 100%)
+- InstallApp: shows each visit on phones until installed; X hides for session; installed tracked via users.app_installed_at (POST /api/members/app-installed on standalone open/appinstalled/accepted prompt) + /members/me app_installed.
+- POST /api/admin/members/push/test (own devices, kind=test, "[Test]" prefix, bypasses quiet hours).
+- _push_gathering_soon: ~2h before meetings with time set, RSVP yes/maybe, opens Google Maps directions.
+- _push_wish (kind=wish) on wall wish or birthday-thread reply; not for own posts.
+- Quiet hours: quiet_on/start/end (ET, default 21:00–08:00); held in db.push_held, released by _push_loop; push_log.held.
