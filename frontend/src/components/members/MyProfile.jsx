@@ -65,6 +65,14 @@ export function MyProfile({ me, onChange }) {
         <input data-testid="profile-prayer-weekly" type="checkbox" checked={p.prayer_weekly !== false} onChange={(e) => set('prayer_weekly', e.target.checked)} className="mt-1 accent-[#B4247E] w-4 h-4" />
         <span>Email me a weekly digest of new prayer requests and praise reports</span>
       </label>
+      <label className="flex items-start gap-3 text-[14px] text-[#241019]/80 mt-3 cursor-pointer">
+        <input data-testid="profile-bday-notices" type="checkbox" checked={p.bday_notices !== false} onChange={(e) => set('bday_notices', e.target.checked)} className="mt-1 accent-[#B4247E] w-4 h-4" />
+        <span>Email me when it's a sister's birthday so I can send wishes</span>
+      </label>
+      <label className="flex items-start gap-3 text-[14px] text-[#241019]/80 mt-3 cursor-pointer">
+        <input data-testid="profile-bday-card" type="checkbox" checked={p.bday_card !== false} onChange={(e) => set('bday_card', e.target.checked)} className="mt-1 accent-[#B4247E] w-4 h-4" />
+        <span>Send me a birthday card email from the Club on my birthday</span>
+      </label>
       <button data-testid="profile-save-btn" disabled={busy} className="btn-magenta rounded-full px-7 py-3 font-semibold mt-7 flex items-center gap-2 disabled:opacity-60">
         {busy ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save profile
       </button>

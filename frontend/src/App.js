@@ -40,6 +40,7 @@ import TreasurerReport from './pages/TreasurerReport';
 import AnnualReport from './pages/AnnualReport';
 import CheckIn from './pages/CheckIn';
 import SelfCheckIn from './pages/SelfCheckIn';
+import BirthdayWall from './pages/BirthdayWall';
 import { Loader2 } from 'lucide-react';
 
 function ScrollToTop() {
@@ -71,7 +72,7 @@ function Shell() {
     return <AuthCallback />;
   }
 
-  const bare = location.pathname.startsWith('/admin') || location.pathname.startsWith('/vote-record') || location.pathname.startsWith('/treasurer-report') || location.pathname.startsWith('/annual-report') || location.pathname === '/checkin' || location.pathname === '/login';
+  const bare = location.pathname.startsWith('/admin') || location.pathname.startsWith('/vote-record') || location.pathname.startsWith('/treasurer-report') || location.pathname.startsWith('/annual-report') || location.pathname === '/checkin' || location.pathname.startsWith('/birthday-wishes') || location.pathname === '/login';
 
   return (
     <>
@@ -103,6 +104,7 @@ function Shell() {
           <Route path="/annual-report/:id" element={<AnnualReport />} />
           <Route path="/checkin" element={<CheckIn />} />
           <Route path="/self-checkin" element={<SelfCheckIn />} />
+          <Route path="/birthday-wishes/:uid" element={<BirthdayWall />} />
           <Route path="/events" element={<Events />} />
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/transparency" element={<Transparency />} />

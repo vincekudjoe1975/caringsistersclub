@@ -39,6 +39,7 @@ export function BirthdaysCard({ me }) {
             <Avatar name={b.name} src={b.picture} size={38} />
             <div className="flex-1 min-w-0"><p className="font-semibold text-[#3B0A2E] text-[14px] truncate">{b.name}</p><p className="text-[12px] text-[#241019]/55">{MONTH} {b.day}</p></div>
             <Wish b={b} me={me} onSent={(n) => setSent(n)} />
+            <a data-testid={`wall-link-${b.user_id}`} href={`/birthday-wishes/${b.user_id}`} className="text-[12px] text-[#3B0A2E]/60 hover:text-[#B4247E] font-semibold">View wishes</a>
           </div>
         ))}
       </div>

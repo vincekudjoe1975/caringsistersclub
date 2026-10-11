@@ -4,7 +4,7 @@ import { CalendarDays, MapPin, Clock, Send, Sparkles } from 'lucide-react';
 import { Avatar } from './Avatar';
 import { BirthdaysCard } from './BirthdaysCard';
 import { Gatherings, Spotlight } from './HomeExtras';
-import { BirthdayToday } from './Phase7';
+import { BirthdayToday, MyWishes } from './Phase7';
 
 const longDate = (d) => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 const time12 = (t) => (t ? new Date(`2000-01-01T${t}:00`).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '');
@@ -66,5 +66,5 @@ function Anniversaries() {
 }
 
 export function HomeCards({ me }) {
-  return (<><BirthdayToday me={me} /><Spotlight me={me} /><Gatherings /><NextMeeting /><Anniversaries /><BirthdaysCard me={me} /></>);
+  return (<><BirthdayToday me={me} /><MyWishes me={me} /><Spotlight me={me} /><Gatherings /><NextMeeting /><Anniversaries /><BirthdaysCard me={me} /></>);
 }
