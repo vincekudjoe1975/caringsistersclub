@@ -6391,6 +6391,9 @@ class MemberProfile(BaseModel):
     bday_card: bool = True
     push_news: bool = True
     push_prayer: bool = True
+    push_events: bool = True
+    push_votes: bool = True
+    push_bday: bool = True
 
 
 @api_router.put("/members/profile")
@@ -6403,7 +6406,8 @@ async def members_profile(payload: MemberProfile, user=Depends(require_member)):
             raise HTTPException(status_code=400, detail="Please choose a valid birthday month and day.")
     prof = {"city": payload.city.strip()[:80], "phone": payload.phone.strip()[:30], "bio": payload.bio.strip()[:600], "show_contact": payload.show_contact,
             "birthday_month": int(bm) if bm else None, "birthday_day": int(bd) if bd else None, "prayer_weekly": payload.prayer_weekly,
-            "bday_notices": payload.bday_notices, "bday_card": payload.bday_card, "push_news": payload.push_news, "push_prayer": payload.push_prayer}
+            "bday_notices": payload.bday_notices, "bday_card": payload.bday_card, "push_news": payload.push_news, "push_prayer": payload.push_prayer,
+            "push_events": payload.push_events, "push_votes": payload.push_votes, "push_bday": payload.push_bday}
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_profile": prof}})
     return prof
 
@@ -6587,7 +6591,7 @@ async def admin_announce(payload: AnnouncementIn, background: BackgroundTasks, u
     await db.member_announcements.insert_one(dict(a))
     if payload.email_members:
         background.add_task(_email_announcement, a)
-    background.add_task(_push_members, f"New announcement: {title}", body, "/members?tab=news", "push_news")
+    background.add_task(_push_members, f"New announcement: {title}", body, "/members?tab=news", kind="announcement")
     return a
 
 
@@ -7137,6 +7141,7 @@ async def admin_ballot_create(payload: BallotIn, background: BackgroundTasks, us
          "created_by": user.get("email"), "created_at": _now_iso()}
     await db.member_ballots.insert_one(dict(b))
     background.add_task(_email_ballot_notice, b)
+    background.add_task(_push_votes)
     return b
 
 
@@ -8590,7 +8595,7 @@ async def members_prayer_new(payload: PrayerIn, request: Request, background: Ba
     await db.member_prayers.insert_one(dict(p))
     who = "A sister" if payload.anonymous else (user.get("name") or "A sister").split(" ")[0]
     msg = f"{who} shared a new prayer request. Open the board to pray with her." if payload.kind == "request" else f"{who} shared a praise report. Come celebrate with her."
-    background.add_task(_push_members, "Prayer & Support Board", msg, "/members?tab=prayer", "push_prayer", user["user_id"])
+    background.add_task(_push_members, "Prayer & Support Board", msg, "/members?tab=prayer", exclude_uid=user["user_id"], kind="prayer")
     return _prayer_view(p, user)
 
 
@@ -10136,21 +10141,117 @@ def _push_one(sub: dict, data: str) -> bool:
         return False
 
 
-async def _push_members(title: str, body: str, url: str = "/members", pref: str = "", exclude_uid: str = "") -> int:
-    q = {"member_status": "active"}
+PUSH_KINDS = {"announcement": "push_news", "prayer": "push_prayer", "event": "push_events", "vote": "push_votes", "birthday": "push_bday", "custom": ""}
+
+
+async def _push_users(uids, title: str, body: str, url: str, kind: str, exclude_uid: str = "") -> int:
+    pref = PUSH_KINDS.get(kind, "")
+    q = {"user_id": {"$in": [u for u in set(uids) if u and u != exclude_uid]}}
     if pref:
         q[f"member_profile.{pref}"] = {"$ne": False}
-    uids = {u["user_id"] async for u in db.users.find(q, {"_id": 0, "user_id": 1})}
-    uids |= {u["user_id"] async for u in db.users.find({"role": "admin", **({f"member_profile.{pref}": {"$ne": False}} if pref else {})}, {"_id": 0, "user_id": 1})}
-    uids.discard(exclude_uid)
+    targets = [u["user_id"] async for u in db.users.find(q, {"_id": 0, "user_id": 1})]
     data = json.dumps({"title": title[:80], "body": body[:180], "url": url})
-    sent = 0
-    async for sub in db.push_subs.find({"user_id": {"$in": list(uids)}}, {"_id": 0}):
+    sent = failed = removed = 0
+    async for sub in db.push_subs.find({"user_id": {"$in": targets}}, {"_id": 0}):
         ok = await asyncio.to_thread(_push_one, sub, data)
         if ok is None:
+            removed += 1
             await db.push_subs.delete_one({"endpoint": sub["endpoint"]})
-        sent += 1 if ok else 0
+        elif ok:
+            sent += 1
+        else:
+            failed += 1
+    await db.push_log.insert_one({"id": str(uuid.uuid4()), "kind": kind, "title": title[:80], "body": body[:180], "url": url, "sent_at": _now_iso(),
+                                  "members": len(targets), "delivered": sent, "failed": failed, "expired": removed})
     return sent
+
+
+async def _member_uids() -> list:
+    return [u["user_id"] async for u in db.users.find({"$or": [{"member_status": "active"}, {"role": "admin"}]}, {"_id": 0, "user_id": 1})]
+
+
+async def _push_members(title: str, body: str, url: str = "/members", exclude_uid: str = "", kind: str = "custom") -> int:
+    return await _push_users(await _member_uids(), title, body, url, kind, exclude_uid)
+
+
+async def _push_mark(key: str) -> bool:
+    try:
+        await db.push_marks.insert_one({"key": key, "at": _now_iso()})
+        return True
+    except Exception:
+        return False
+
+
+async def _push_votes() -> int:
+    now, n = datetime.now(timezone.utc), 0
+    for b in await db.member_ballots.find({"closed_at": {"$exists": False}, "opens_at": {"$lte": now.isoformat()}, "closes_at": {"$gt": now.isoformat()}}, {"_id": 0}).to_list(50):
+        label = f"Election: {b['position']}" if b["kind"] == "election" else "A member vote is open"
+        if await _push_mark(f"vote-open:{b['id']}"):
+            n += await _push_users(await _member_uids(), label, f"{b['title']}. Tap to cast your secret vote.", "/members?tab=votes", "vote")
+        if datetime.fromisoformat(b["closes_at"]) - now <= timedelta(hours=24) and await _push_mark(f"vote-close:{b['id']}"):
+            voted = set(await db.member_voters.distinct("user_id", {"ballot_id": b["id"]}))
+            n += await _push_users([u for u in await _member_uids() if u not in voted], "Voting closes tomorrow", f"You haven't voted on {b['title']} yet. Tap to cast your vote.", "/members?tab=votes", "vote")
+    return n
+
+
+async def _push_events(now=None) -> int:
+    et = (now or datetime.now(timezone.utc)).astimezone(EVENT_TZ)
+    if et.hour < 9:
+        return 0
+    tomorrow, n = (et.date() + timedelta(days=1)).isoformat(), 0
+    for m in await db.member_meetings.find({"date": tomorrow}, {"_id": 0, "id": 1, "title": 1, "location": 1, "rsvps": 1}).to_list(20):
+        uids = [uid for uid, r in (m.get("rsvps") or {}).items() if (r or {}).get("response") in ("yes", "maybe")]
+        if uids and await _push_mark(f"event:{m['id']}:{tomorrow}"):
+            n += await _push_users(uids, f"Tomorrow: {m['title']}", "We can't wait to see you" + (f" at {m['location']}" if m.get("location") else "") + ".", "/members", "event")
+    for sess in await db.program_sessions.find({"date": tomorrow}, {"_id": 0}).to_list(500):
+        p = await db.programs.find_one({"id": sess["program_id"], "published": True}, {"_id": 0, "title": 1})
+        if not p:
+            continue
+        emails = [(x.get("data") or {}).get("email", "").strip().lower() for x in await db.submissions.find({**_session_taken_q(sess["id"]), "released": {"$ne": True}}, {"_id": 0, "data.email": 1}).to_list(2000)]
+        emails = [e for e in emails if e]
+        if not emails:
+            continue
+        rx = [{"email": {"$regex": f"^{re.escape(e)}$", "$options": "i"}} for e in set(emails)]
+        uids = [u["user_id"] async for u in db.users.find({"$or": rx}, {"_id": 0, "user_id": 1})]
+        if uids and await _push_mark(f"session:{sess['id']}"):
+            when = f" at {sess['start_time']}" if sess.get("start_time") else ""
+            n += await _push_users(uids, f"Tomorrow: {p['title']}", f"Your session is tomorrow{when}. See you there!", "/sessions", "event")
+    return n
+
+
+async def _push_birthdays(now=None) -> int:
+    et = (now or datetime.now(timezone.utc)).astimezone(EVENT_TZ)
+    if et.hour < 8:
+        return 0
+    n = 0
+    for b in await _todays_birthdays(et.date()):
+        if not await _push_mark(f"bday:{b['user_id']}:{et.year}"):
+            continue
+        first = (b.get("name") or "Sister").split(" ")[0]
+        others = [u["user_id"] async for u in db.users.find({"member_status": "active", "user_id": {"$ne": b["user_id"]}, "member_profile.bday_notices": {"$ne": False}}, {"_id": 0, "user_id": 1})]
+        n += await _push_users(others, f"It's {first}'s birthday!", f"Send {first} your wishes. A few kind words mean so much.", f"/birthday-wishes/{b['user_id']}", "birthday")
+        if (b.get("member_profile") or {}).get("bday_card") is not False:
+            n += await _push_users([b["user_id"]], f"Happy birthday, {first}!", "With love from all your sisters at the Caring Sisters Club. Tap to see your wishes.", f"/birthday-wishes/{b['user_id']}", "birthday")
+    return n
+
+
+async def _push_loop():
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await _push_votes()
+            await _push_events()
+            await _push_birthdays()
+        except Exception as e:
+            logging.error(f"Push loop error: {e}")
+        await asyncio.sleep(300)
+
+
+@app.on_event("startup")
+async def _start_push_loop():
+    await db.push_marks.create_index("key", unique=True)
+    await db.push_log.create_index("sent_at")
+    asyncio.create_task(_push_loop())
 
 
 class AdminPushIn(BaseModel):
@@ -10171,7 +10272,13 @@ async def admin_push_send(payload: AdminPushIn, request: Request, user=Depends(r
     url = payload.url.strip() if payload.url.strip().startswith("/") else "/members"
     if not title or not body:
         raise HTTPException(status_code=400, detail="Please add a title and a message.")
-    return {"sent": await _push_members(title, body, url)}
+    return {"sent": await _push_members(title, body, url, kind="custom")}
+
+
+@api_router.get("/admin/members/push/history")
+async def admin_push_history(kind: str = "", user=Depends(require_admin)):
+    q = {"kind": kind} if kind in PUSH_KINDS else {}
+    return await db.push_log.find(q, {"_id": 0}).sort("sent_at", -1).to_list(300)
 
 # Include the router in the main app
 app.include_router(api_router)

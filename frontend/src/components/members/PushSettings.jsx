@@ -3,6 +3,8 @@ import { BellRing, Loader2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useToast } from '../../hooks/use-toast';
 
+const PREFS = [['push_news', 'New announcements'], ['push_prayer', 'New prayer requests and praise reports'], ['push_events', 'Gatherings and sessions I signed up for (the day before)'], ['push_votes', 'Votes opening and closing soon'], ['push_bday', "Sisters' birthdays (and my own)"]];
+
 const supported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const toKey = (b64) => {
   const pad = '='.repeat((4 - (b64.length % 4)) % 4);
@@ -51,14 +53,13 @@ export const PushSettings = ({ p, set }) => {
           <p data-testid="push-status" className="text-[12.5px] text-[#241019]/55 mt-2">{on ? 'On for this device.' : 'Off for this device.'}</p>
         </>
       )}
-      <label className="flex items-start gap-3 text-[14px] text-[#241019]/80 mt-4 cursor-pointer">
-        <input data-testid="profile-push-news" type="checkbox" checked={p.push_news !== false} onChange={(e) => set('push_news', e.target.checked)} className="mt-0.5 accent-[#B4247E] w-5 h-5 shrink-0" />
-        <span>New announcements</span>
-      </label>
-      <label className="flex items-start gap-3 text-[14px] text-[#241019]/80 mt-3 cursor-pointer">
-        <input data-testid="profile-push-prayer" type="checkbox" checked={p.push_prayer !== false} onChange={(e) => set('push_prayer', e.target.checked)} className="mt-0.5 accent-[#B4247E] w-5 h-5 shrink-0" />
-        <span>New prayer requests and praise reports</span>
-      </label>
+      <p className="text-[13px] font-semibold text-[#3B0A2E] mt-4">Alert me about</p>
+      {PREFS.map(([k, l]) => (
+        <label key={k} className="flex items-start gap-3 text-[14px] text-[#241019]/80 mt-3 cursor-pointer">
+          <input data-testid={`profile-${k.replace('_', '-')}`} type="checkbox" checked={p[k] !== false} onChange={(e) => set(k, e.target.checked)} className="mt-0.5 accent-[#B4247E] w-5 h-5 shrink-0" />
+          <span>{l}</span>
+        </label>
+      ))}
     </div>
   );
 };
