@@ -5,6 +5,7 @@ import { Toaster } from './components/ui/toaster';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Header from './components/Header';
 import Footer from './components/Footer';
+import { Splash } from './components/Splash';
 import Home from './pages/Home';
 import About from './pages/About';
 import Leadership from './pages/Leadership';
@@ -81,6 +82,7 @@ function Shell() {
   return (
     <>
       <ScrollToTop />
+      <Splash />
       {!bare && <Header />}
       <main>
         <Routes>

@@ -15,6 +15,9 @@ import { Minutes } from '../components/members/Minutes';
 import { SpotlightArchive, PrayerBoard } from '../components/members/Phase6';
 import { PhotoAlbums } from '../components/members/Phase7';
 import { InstallApp } from '../components/InstallApp';
+import { CheckinPassButton, OfflinePass } from '../components/members/CheckinPass';
+
+const BADGES = { news: 1, talk: 1, prayer: 1, votes: 1, photos: 1, spotlights: 1, minutes: 1 };
 
 const TABS = [
   { k: 'news', l: 'Announcements', icon: Megaphone, C: Announcements },
@@ -61,8 +64,17 @@ function MemberLogin() {
 }
 
 function Portal({ me, onChange }) {
-  const [tab, setTab] = useState(() => (window.location.search.includes('dues_session') ? 'dues' : sessionStorage.getItem('csc_member_tab') || 'news'));
-  const pick = (k) => { sessionStorage.setItem('csc_member_tab', k); setTab(k); };
+  const [tab, setTab] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (q.has('dues_session')) return 'dues';
+    return TABS.some((t) => t.k === q.get('tab')) ? q.get('tab') : sessionStorage.getItem('csc_member_tab') || 'news';
+  });
+  const [badges, setBadges] = useState({});
+  const seen = useCallback((k) => { if (k in BADGES) api.post('/members/badges/seen', { tab: k }).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get('/members/badges').then(({ data }) => { setBadges({ ...data, [tab]: false }); seen(tab); }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const pick = (k) => { seen(tab); seen(k); sessionStorage.setItem('csc_member_tab', k); setTab(k); setBadges((b) => ({ ...b, [k]: false })); };
   const { logout } = useAuth();
   const Current = (TABS.find((t) => t.k === tab) || TABS[0]).C;
   return (
@@ -72,7 +84,8 @@ function Portal({ me, onChange }) {
           <p className="eyebrow text-[#CBA24B] mb-3">Members only</p>
           <h1 data-testid="portal-welcome" className="font-serif text-[#F7EFE9] text-4xl sm:text-5xl font-semibold">Welcome, {(me.name || 'Sister').split(' ')[0]}</h1>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <CheckinPassButton />
           {me.is_admin && <Link to="/admin" data-testid="portal-admin-link" className="rounded-full px-5 py-2.5 text-[13px] font-semibold text-[#F7EFE9] border border-white/25 flex items-center gap-1.5 hover:bg-white/10 transition-colors"><ShieldCheck size={14} /> Staff admin</Link>}
           <button data-testid="portal-logout-btn" onClick={logout} className="rounded-full px-5 py-2.5 text-[13px] font-semibold text-[#F7EFE9] border border-white/25 flex items-center gap-1.5 hover:bg-white/10 transition-colors"><LogOut size={14} /> Sign out</button>
         </div>
@@ -82,7 +95,7 @@ function Portal({ me, onChange }) {
         {TABS.map(({ k, l, icon: Icon }) => (
           <button key={k} data-testid={`portal-tab-${k}`} onClick={() => pick(k)}
             className={`min-w-0 min-h-[60px] md:min-h-0 px-1.5 md:px-5 py-2 rounded-2xl md:rounded-full text-[12.5px] md:text-[14px] leading-tight font-semibold flex flex-col md:flex-row items-center justify-center gap-1 md:gap-2 text-center transition-colors ${tab === k ? 'bg-[#F7EFE9] text-[#3B0A2E]' : 'text-[#F7EFE9]/85 hover:text-white hover:bg-white/5'}`}>
-            <Icon size={17} className="shrink-0" /> <span className="truncate max-w-full">{l}</span>
+            <span className="relative"><Icon size={17} className="shrink-0" />{badges[k] && <span data-testid={`portal-badge-${k}`} aria-label="New" className="absolute -top-1 -right-1.5 w-2.5 h-2.5 rounded-full bg-[#E0358F] ring-2 ring-[#3B0A2E] animate-pulse" />}</span> <span className="truncate max-w-full">{l}</span>
           </button>
         ))}
       </div>
@@ -100,7 +113,7 @@ export default function Members() {
   useEffect(() => { if (user) load(); }, [user, load]);
 
   if (user === null || (user && me === null)) return <Shell><div className="flex justify-center py-32"><Loader2 className="animate-spin text-[#CBA24B]" size={36} /></div></Shell>;
-  if (!user || me === false) return <Shell><MemberLogin /></Shell>;
+  if (!user || me === false) return <Shell><MemberLogin /><OfflinePass /></Shell>;
   if (me.status === 'active') return <Shell><Portal me={me} onChange={load} /></Shell>;
   if (me.status === 'applied') return <Shell><Card icon={Clock} title="Application received" testid="member-pending-card"><p className="text-[#241019]/65 text-[14.5px]">Thank you, {(me.name || '').split(' ')[0]}. Our membership team will review your application and email you once you're approved.</p></Card></Shell>;
   if (me.status === 'declined' || me.status === 'suspended' || me.status === 'ended') return <Shell><Card icon={Clock} title="Portal access paused" testid="member-paused-card"><p className="text-[#241019]/65 text-[14.5px]">Your member access isn't active right now. Please <Link to="/contact" className="text-[#B4247E] font-semibold">contact us</Link> if you have questions.</p></Card></Shell>;

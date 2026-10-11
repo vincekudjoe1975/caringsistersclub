@@ -5,6 +5,7 @@ import { Loader2, Save, Camera } from 'lucide-react';
 import { Avatar } from './Avatar';
 import { LeaveRequest } from './LeaveRequest';
 import { CheckinCode } from './Phase6';
+import { PushSettings } from './PushSettings';
 
 const inputCls = 'w-full mt-1.5 rounded-xl border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] bg-white focus:outline-none focus:border-[#B4247E] transition-colors';
 
@@ -73,6 +74,7 @@ export function MyProfile({ me, onChange }) {
         <input data-testid="profile-bday-card" type="checkbox" checked={p.bday_card !== false} onChange={(e) => set('bday_card', e.target.checked)} className="mt-0.5 accent-[#B4247E] w-5 h-5 shrink-0" />
         <span>Send me a birthday card email from the Club on my birthday</span>
       </label>
+      <PushSettings p={p} set={set} />
       <button data-testid="profile-save-btn" disabled={busy} className="btn-magenta rounded-full w-full sm:w-auto justify-center px-7 py-3 font-semibold mt-7 flex items-center gap-2 disabled:opacity-60">
         {busy ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save profile
       </button>

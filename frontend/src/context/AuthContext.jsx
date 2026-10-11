@@ -32,6 +32,7 @@ export function AuthProvider({ children }) {
     } catch (e) {
       console.error('Auth: logout request failed', e);
     }
+    localStorage.removeItem('csc_checkin_code');
     setUser(false);
     window.location.href = '/';
   };

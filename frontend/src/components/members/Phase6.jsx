@@ -4,15 +4,15 @@ import { QRCodeSVG } from 'qrcode.react';
 import { HandHeart, Sparkles, Trash2, CheckCircle2, Send, Star, X } from 'lucide-react';
 import { Avatar } from './Avatar';
 import { fmtDate } from './fmt';
+import { useCheckinCode } from './CheckinPass';
 
 export function CheckinCode() {
-  const [code, setCode] = useState('');
-  useEffect(() => { api.get('/members/checkin-code').then(({ data }) => setCode(data.code)).catch(() => {}); }, []);
+  const code = useCheckinCode();
   if (!code) return null;
   return (
     <div data-testid="checkin-code-card" className="max-w-xl mt-8 bg-white rounded-2xl p-5 border border-[#3B0A2E]/8 flex flex-col sm:flex-row items-center text-center sm:text-left gap-4 sm:gap-5">
       <div data-testid="checkin-qr" className="bg-white p-2 rounded-xl border border-[#3B0A2E]/10"><QRCodeSVG value={code} size={140} fgColor="#3B0A2E" /></div>
-      <div><p className="font-semibold text-[#3B0A2E]">My check-in code</p><p className="text-[13px] text-[#241019]/65 mt-1">Show this at the door of meetings and gatherings so staff can check you in with one scan.</p></div>
+      <div><p className="font-semibold text-[#3B0A2E]">My check-in code</p><p className="text-[13px] text-[#241019]/65 mt-1">Show this at the door of meetings and gatherings so staff can check you in with one scan. It's saved on this phone, so it works even without signal.</p></div>
     </div>
   );
 }

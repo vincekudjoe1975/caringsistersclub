@@ -6389,6 +6389,8 @@ class MemberProfile(BaseModel):
     prayer_weekly: bool = True
     bday_notices: bool = True
     bday_card: bool = True
+    push_news: bool = True
+    push_prayer: bool = True
 
 
 @api_router.put("/members/profile")
@@ -6401,7 +6403,7 @@ async def members_profile(payload: MemberProfile, user=Depends(require_member)):
             raise HTTPException(status_code=400, detail="Please choose a valid birthday month and day.")
     prof = {"city": payload.city.strip()[:80], "phone": payload.phone.strip()[:30], "bio": payload.bio.strip()[:600], "show_contact": payload.show_contact,
             "birthday_month": int(bm) if bm else None, "birthday_day": int(bd) if bd else None, "prayer_weekly": payload.prayer_weekly,
-            "bday_notices": payload.bday_notices, "bday_card": payload.bday_card}
+            "bday_notices": payload.bday_notices, "bday_card": payload.bday_card, "push_news": payload.push_news, "push_prayer": payload.push_prayer}
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_profile": prof}})
     return prof
 
@@ -6585,6 +6587,7 @@ async def admin_announce(payload: AnnouncementIn, background: BackgroundTasks, u
     await db.member_announcements.insert_one(dict(a))
     if payload.email_members:
         background.add_task(_email_announcement, a)
+    background.add_task(_push_members, f"New announcement: {title}", body, "/members?tab=news", "push_news")
     return a
 
 
@@ -8578,13 +8581,16 @@ async def members_prayers(user=Depends(require_member)):
 
 
 @api_router.post("/members/prayers")
-async def members_prayer_new(payload: PrayerIn, request: Request, user=Depends(require_member)):
+async def members_prayer_new(payload: PrayerIn, request: Request, background: BackgroundTasks, user=Depends(require_member)):
     await _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     body = payload.body.strip()[:2000]
     if payload.kind not in ("request", "praise") or not body:
         raise HTTPException(status_code=400, detail="Please write your prayer request or praise report.")
     p = {"id": str(uuid.uuid4()), "kind": payload.kind, "body": body, "anonymous": payload.anonymous, **_author(user), "praying": [], "encouragements": [], "created_at": _now_iso()}
     await db.member_prayers.insert_one(dict(p))
+    who = "A sister" if payload.anonymous else (user.get("name") or "A sister").split(" ")[0]
+    msg = f"{who} shared a new prayer request. Open the board to pray with her." if payload.kind == "request" else f"{who} shared a praise report. Come celebrate with her."
+    background.add_task(_push_members, "Prayer & Support Board", msg, "/members?tab=prayer", "push_prayer", user["user_id"])
     return _prayer_view(p, user)
 
 
@@ -10029,6 +10035,143 @@ async def admin_session_attendance(sid: str, payload: SessionAttendanceIn, backg
         background.add_task(_check_streaks, [x["data"].get("email") async for x in db.submissions.find({"id": {"$in": ids}}, {"_id": 0, "data.email": 1})])
     return {"updated": n}
 
+
+
+# --- Portal "new since last visit" badges ---
+BADGE_TABS = ("news", "talk", "prayer", "votes", "photos", "spotlights", "minutes")
+
+
+async def _top(coll, q: dict, field: str) -> str:
+    d = await coll.find_one({**q, field: {"$nin": [None, ""]}}, {"_id": 0, field: 1}, sort=[(field, -1)])
+    for k in field.split("."):
+        d = (d or {}).get(k)
+    return d or ""
+
+
+async def _badge_latest() -> dict:
+    ph = "approved"
+    return {"news": await _top(db.member_announcements, {}, "created_at"),
+            "talk": await _top(db.member_threads, {}, "last_activity"),
+            "prayer": await _top(db.member_prayers, {}, "created_at"),
+            "votes": await _top(db.member_ballots, {}, "created_at"),
+            "photos": max(await _top(db.member_gathering_photos, {"status": ph}, "approved_at"), await _top(db.member_gathering_photos, {"status": ph}, "created_at")),
+            "spotlights": await _top(db.member_spotlights, {"status": "published", "month": {"$lte": _cur_month()}}, "published_at"),
+            "minutes": await _top(db.member_meetings, {"minutes.status": "approved"}, "minutes.updated_at")}
+
+
+@api_router.get("/members/badges")
+async def members_badges(user=Depends(require_member)):
+    seen = user.get("member_seen") or {}
+    if not seen:
+        seen = {t: _now_iso() for t in BADGE_TABS}
+        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_seen": seen}})
+    latest = await _badge_latest()
+    return {t: bool(latest[t]) and latest[t] > (seen.get(t) or "") for t in BADGE_TABS}
+
+
+class SeenIn(BaseModel):
+    tab: str
+
+
+@api_router.post("/members/badges/seen")
+async def members_badges_seen(payload: SeenIn, user=Depends(require_member)):
+    if payload.tab not in BADGE_TABS:
+        raise HTTPException(status_code=400, detail="Unknown tab")
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {f"member_seen.{payload.tab}": _now_iso()}})
+    return {"ok": True}
+
+
+# --- Web push notifications ---
+import json
+from pywebpush import webpush, WebPushException
+
+
+class PushKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubIn(BaseModel):
+    endpoint: str
+    keys: PushKeys
+
+
+@api_router.get("/members/push/config")
+async def members_push_config(user=Depends(require_member)):
+    return {"public_key": os.environ["VAPID_PUBLIC_KEY"], "devices": await db.push_subs.count_documents({"user_id": user["user_id"]})}
+
+
+@api_router.post("/members/push/subscribe")
+async def members_push_subscribe(payload: PushSubIn, user=Depends(require_member)):
+    if not payload.endpoint.startswith("https://"):
+        raise HTTPException(status_code=400, detail="Invalid subscription")
+    await db.push_subs.update_one({"endpoint": payload.endpoint}, {"$set": {"endpoint": payload.endpoint[:1000], "keys": payload.keys.model_dump(),
+                                  "user_id": user["user_id"], "updated_at": _now_iso()}}, upsert=True)
+    return {"ok": True}
+
+
+class PushUnsubIn(BaseModel):
+    endpoint: str
+
+
+@api_router.post("/members/push/unsubscribe")
+async def members_push_unsubscribe(payload: PushUnsubIn, user=Depends(require_member)):
+    await db.push_subs.delete_one({"endpoint": payload.endpoint, "user_id": user["user_id"]})
+    return {"ok": True}
+
+
+def _push_one(sub: dict, data: str) -> bool:
+    try:
+        webpush(subscription_info={"endpoint": sub["endpoint"], "keys": sub["keys"]}, data=data, vapid_private_key=os.environ["VAPID_PRIVATE_KEY"],
+                vapid_claims={"sub": os.environ["VAPID_SUBJECT"]}, ttl=86400)
+        return True
+    except WebPushException as e:
+        code = getattr(e.response, "status_code", None)
+        if code in (404, 410):
+            return None
+        logging.warning(f"Push failed ({code}): {e}")
+        return False
+    except Exception as e:
+        logging.warning(f"Push failed: {e}")
+        return False
+
+
+async def _push_members(title: str, body: str, url: str = "/members", pref: str = "", exclude_uid: str = "") -> int:
+    q = {"member_status": "active"}
+    if pref:
+        q[f"member_profile.{pref}"] = {"$ne": False}
+    uids = {u["user_id"] async for u in db.users.find(q, {"_id": 0, "user_id": 1})}
+    uids |= {u["user_id"] async for u in db.users.find({"role": "admin", **({f"member_profile.{pref}": {"$ne": False}} if pref else {})}, {"_id": 0, "user_id": 1})}
+    uids.discard(exclude_uid)
+    data = json.dumps({"title": title[:80], "body": body[:180], "url": url})
+    sent = 0
+    async for sub in db.push_subs.find({"user_id": {"$in": list(uids)}}, {"_id": 0}):
+        ok = await asyncio.to_thread(_push_one, sub, data)
+        if ok is None:
+            await db.push_subs.delete_one({"endpoint": sub["endpoint"]})
+        sent += 1 if ok else 0
+    return sent
+
+
+class AdminPushIn(BaseModel):
+    title: str
+    body: str
+    url: str = "/members"
+
+
+@api_router.get("/admin/members/push")
+async def admin_push_stats(user=Depends(require_admin)):
+    return {"devices": await db.push_subs.count_documents({}), "members": len(await db.push_subs.distinct("user_id"))}
+
+
+@api_router.post("/admin/members/push")
+async def admin_push_send(payload: AdminPushIn, request: Request, user=Depends(require_admin)):
+    await _rate_limit(request, f"admin-push:{user['user_id']}", max_hits=10, window_s=600)
+    title, body = payload.title.strip(), payload.body.strip()
+    url = payload.url.strip() if payload.url.strip().startswith("/") else "/members"
+    if not title or not body:
+        raise HTTPException(status_code=400, detail="Please add a title and a message.")
+    return {"sent": await _push_members(title, body, url)}
 
 # Include the router in the main app
 app.include_router(api_router)
