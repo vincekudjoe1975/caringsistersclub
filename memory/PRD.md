@@ -413,3 +413,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Map: profile show_on_map; GET /api/members/map; Nominatim geocode cached db.geo_cache; Directory List/Map (react-leaflet 5, leaflet 1.9.4).
 - Member hours: tab 'hours' (MyHours.jsx), /api/members/hours, admin /api/admin/members/hours (+.csv); badges MEMBER_HOUR_BADGES (10,25,50,100,250) separate from public VOL_MILESTONES; push on badge.
 - Best times: GET /api/admin/members/push/best-times heatmap + hint.
+
+## 2026-06 — Push device fix, thermometer, statements, ticketing (iteration_43: backend 28/28, frontend 100%)
+- PROD RCA (push): phones showed "On" from local subscription but no push_subs row; subs under 2 accounts. Fix: /members/push/config?endpoint returns registered + device_list; syncPush() re-registers local sub on portal load/profile; status only "On" when server confirms; member test-self endpoint. USER must re-toggle on phones while signed into the same account; iPhone must use home-screen app (iOS 16.4+).
+- Thermometer: components/Thermometer.jsx (HomeThermometer on Home, ShareCampaign also in DonorWall); 30s polling.
+- Statements: /api/donor/statement-link (24h token, db.donor_statement_tokens), /api/donor/statements/{t}, /{year}.pdf (reportlab); page /giving-statement; form on Donate.
+- Ticketing: events.ticket_types; db.ticket_orders, db.tickets (code unique); checkout via Stripe metadata kind=tickets; webhook + /tickets/session poll fulfil; QR PNG /api/tickets/qr/{code}.png (qrcode lib); /tickets/:token, /admin/tickets/:eid door page (Scanner exported from CheckIn.jsx); report + CSV.
