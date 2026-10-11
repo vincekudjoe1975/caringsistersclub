@@ -303,3 +303,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Gatherings: meetings kind 'in-person' get rsvp_deadline/details + rsvps{uid:{response,guests,dietary}}; portal home card; staff GatheringPanel with headcounts/dietary/no-reply; reminder 7 days before to non-responders (rsvp_reminder_sent_at).
 - Annual summary: _annual_data(year) membership/attendance/dues/support/votes; printable /annual-report?year= (admin) and shared snapshot member_annual_reports -> Minutes tab -> /annual-report/:id.
 - Spotlight (member_spotlights): staff-written or invite mode (member submits photo+story -> staff approve); one published per month shown on portal home; publish emails her. Spotlight photos excluded from public /api/media list.
+
+## 2026-06 Member Portal phase 6 (iteration 27 — 37/37 backend, all frontend flows pass)
+- Welcome packet: _send_welcome(uid) (editable subject/message in member_settings key 'welcome'; auto bylaws summary, her dues balance/due date, next 3 in-person gatherings). Triggered on approval, invite acceptance (_activate_invited), import with invites; staff resend per member; Admin "Welcome email" sub-tab with live preview.
+- Door check-in: /checkin?m=<mid> mobile page (admin) — search + Check in with guests, undo, QR scan (html5-qrcode) of member code "CSC:<users.member_checkin_token>" (shown as QR in My Profile via qrcode.react), Finish marks remaining active members absent; all paths run _apply_attendance_rules.
+- Spotlight archive: /members/spotlights -> portal "Spotlights" gallery + modal.
+- Prayer & Support board (member_prayers): request/praise, anonymous (masked to others, visible to author/admin), praying toggle, encouragements, author marks answered, author/admin delete.

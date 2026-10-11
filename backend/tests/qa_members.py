@@ -27,6 +27,8 @@ db.users.delete_many({"user_id": {"$in": imp}})
 db.member_ledger.delete_many({"user_id": {"$in": imp}})
 db.member_spotlights.delete_many({"user_id": {"$in": uids + imp}})
 db.member_annual_reports.delete_many({"shared_by": {"$regex": "^QA"}})
+db.member_prayers.delete_many({"author_id": {"$in": uids}})
+db.member_settings.delete_many({"key": "welcome", "subject": "Hello {first}!"})
 db.member_december.delete_many({"key": {"$regex": "qa_mem"}})
 db.member_collections.delete_many({"beneficiary_id": {"$in": uids}})
 bids = [b["id"] for b in db.member_ballots.find({"title": {"$regex": "^QA"}}, {"id": 1})]
