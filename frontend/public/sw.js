@@ -1,4 +1,4 @@
-const CACHE = 'csc-shell-v1';
+const CACHE = 'csc-shell-v2';
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/icon-192.png', '/manifest.json'])).catch(() => {}));
@@ -38,6 +38,7 @@ self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   const url = (e.notification.data && e.notification.data.url) || '/members';
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((cs) => {
+    if (!url.startsWith('/')) return self.clients.openWindow(url);
     const c = cs.find((x) => x.url.startsWith(self.location.origin));
     if (c) { c.navigate(url); return c.focus(); }
     return self.clients.openWindow(url);

@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { BellRing, Loader2 } from 'lucide-react';
+import { BellRing, Loader2, Moon } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useToast } from '../../hooks/use-toast';
 
 const PREFS = [['push_news', 'New announcements'], ['push_prayer', 'New prayer requests and praise reports'], ['push_events', 'Gatherings and sessions I signed up for (the day before)'], ['push_votes', 'Votes opening and closing soon'], ['push_bday', "Sisters' birthdays (and my own)"]];
+
+const timeCls = 'w-full mt-1.5 rounded-xl border border-[#3B0A2E]/15 px-3 py-2.5 text-[14px] bg-white font-normal focus:outline-none focus:border-[#B4247E]';
 
 const supported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const toKey = (b64) => {
@@ -60,6 +62,17 @@ export const PushSettings = ({ p, set }) => {
           <span>{l}</span>
         </label>
       ))}
+      <label className="flex items-start gap-3 text-[14px] text-[#241019]/80 mt-5 pt-4 border-t border-[#3B0A2E]/8 cursor-pointer">
+        <input data-testid="profile-quiet-on" type="checkbox" checked={!!p.quiet_on} onChange={(e) => set('quiet_on', e.target.checked)} className="mt-0.5 accent-[#B4247E] w-5 h-5 shrink-0" />
+        <span className="flex items-center gap-1.5"><Moon size={14} className="text-[#B4247E]" /> Quiet hours: hold alerts until they end</span>
+      </label>
+      {p.quiet_on && (
+        <div className="grid grid-cols-2 gap-3 mt-3" data-testid="quiet-hours-fields">
+          <label className="text-[13px] font-semibold text-[#3B0A2E]">From<input data-testid="profile-quiet-start" type="time" value={p.quiet_start || '21:00'} onChange={(e) => set('quiet_start', e.target.value)} className={timeCls} /></label>
+          <label className="text-[13px] font-semibold text-[#3B0A2E]">Until<input data-testid="profile-quiet-end" type="time" value={p.quiet_end || '08:00'} onChange={(e) => set('quiet_end', e.target.value)} className={timeCls} /></label>
+          <p className="col-span-2 text-[12.5px] text-[#241019]/55">Eastern time. Alerts that arrive during quiet hours are delivered when they end.</p>
+        </div>
+      )}
     </div>
   );
 };

@@ -6349,7 +6349,14 @@ async def members_me(user=Depends(get_current_user)):
     status = "active" if _is_member(user) else (user.get("member_status") or "none")
     return {"status": status, "user_id": user["user_id"], "is_admin": user.get("role") == "admin", "name": user.get("name"), "email": user.get("email"),
             "picture": user.get("picture"), "profile": user.get("member_profile") or {}, "application": user.get("member_application") or {},
-            "member_since": user.get("member_since", ""), "leave_request": user.get("member_leave_request"), "ends_at": user.get("member_ends_at")}
+            "member_since": user.get("member_since", ""), "leave_request": user.get("member_leave_request"), "ends_at": user.get("member_ends_at"),
+            "app_installed": bool(user.get("app_installed_at"))}
+
+
+@api_router.post("/members/app-installed")
+async def members_app_installed(user=Depends(get_current_user)):
+    await db.users.update_one({"user_id": user["user_id"], "app_installed_at": {"$exists": False}}, {"$set": {"app_installed_at": _now_iso()}})
+    return {"ok": True}
 
 
 class MemberApplication(BaseModel):
@@ -6394,11 +6401,16 @@ class MemberProfile(BaseModel):
     push_events: bool = True
     push_votes: bool = True
     push_bday: bool = True
+    quiet_on: bool = False
+    quiet_start: str = "21:00"
+    quiet_end: str = "08:00"
 
 
 @api_router.put("/members/profile")
 async def members_profile(payload: MemberProfile, user=Depends(require_member)):
     bm, bd = payload.birthday_month, payload.birthday_day
+    if not all(re.match(r"^([01]\d|2[0-3]):[0-5]\d$", t) for t in (payload.quiet_start, payload.quiet_end)) or payload.quiet_start == payload.quiet_end:
+        raise HTTPException(status_code=400, detail="Please choose valid, different quiet hours start and end times.")
     if bm or bd:
         try:
             datetime(2000, int(bm), int(bd))
@@ -6407,7 +6419,8 @@ async def members_profile(payload: MemberProfile, user=Depends(require_member)):
     prof = {"city": payload.city.strip()[:80], "phone": payload.phone.strip()[:30], "bio": payload.bio.strip()[:600], "show_contact": payload.show_contact,
             "birthday_month": int(bm) if bm else None, "birthday_day": int(bd) if bd else None, "prayer_weekly": payload.prayer_weekly,
             "bday_notices": payload.bday_notices, "bday_card": payload.bday_card, "push_news": payload.push_news, "push_prayer": payload.push_prayer,
-            "push_events": payload.push_events, "push_votes": payload.push_votes, "push_bday": payload.push_bday}
+            "push_events": payload.push_events, "push_votes": payload.push_votes, "push_bday": payload.push_bday,
+            "quiet_on": payload.quiet_on, "quiet_start": payload.quiet_start, "quiet_end": payload.quiet_end}
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_profile": prof}})
     return prof
 
@@ -6481,7 +6494,7 @@ async def members_new_thread(payload: PostIn, request: Request, user=Depends(req
 
 
 @api_router.post("/members/threads/{tid}/replies")
-async def members_reply(tid: str, payload: PostIn, request: Request, user=Depends(require_member)):
+async def members_reply(tid: str, payload: PostIn, request: Request, background: BackgroundTasks, user=Depends(require_member)):
     await _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     body = payload.body.strip()[:3000]
     if not body:
@@ -6490,6 +6503,9 @@ async def members_reply(tid: str, payload: PostIn, request: Request, user=Depend
     res = await db.member_threads.update_one({"id": tid}, {"$push": {"replies": r}, "$inc": {"reply_count": 1}, "$set": {"last_activity": r["created_at"]}})
     if not res.matched_count:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    key = ((await db.member_threads.find_one({"id": tid}, {"_id": 0, "key": 1})) or {}).get("key") or ""
+    if key.startswith("birthday:"):
+        background.add_task(_push_wish, key.split(":")[1], user)
     return r
 
 
@@ -6883,7 +6899,7 @@ class WishIn(BaseModel):
 
 
 @api_router.post("/members/birthdays/{uid}/wish")
-async def members_birthday_wish(uid: str, payload: WishIn, request: Request, user=Depends(require_member)):
+async def members_birthday_wish(uid: str, payload: WishIn, request: Request, background: BackgroundTasks, user=Depends(require_member)):
     await _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     msg = payload.message.strip()[:1000]
     if not msg:
@@ -6900,7 +6916,15 @@ async def members_birthday_wish(uid: str, payload: WishIn, request: Request, use
     r = {"id": str(uuid.uuid4()), "body": msg, **_author(user), "created_at": now}
     await db.member_threads.update_one({"key": key}, {"$push": {"replies": r}, "$inc": {"reply_count": 1}, "$set": {"last_activity": now}})
     t = await db.member_threads.find_one({"key": key}, {"_id": 0, "id": 1})
+    background.add_task(_push_wish, uid, user)
     return {"thread_id": t["id"]}
+
+
+async def _push_wish(uid: str, author: dict):
+    if uid == author["user_id"]:
+        return
+    who = (author.get("name") or "A sister").split(" ")[0]
+    await _push_users([uid], "A new birthday wish for you", f"{who} just left you a birthday wish. Tap to read it.", f"/birthday-wishes/{uid}", "wish")
 
 
 # --- Admin: dues ---
@@ -10141,18 +10165,20 @@ def _push_one(sub: dict, data: str) -> bool:
         return False
 
 
-PUSH_KINDS = {"announcement": "push_news", "prayer": "push_prayer", "event": "push_events", "vote": "push_votes", "birthday": "push_bday", "custom": ""}
+PUSH_KINDS = {"announcement": "push_news", "prayer": "push_prayer", "event": "push_events", "vote": "push_votes", "birthday": "push_bday", "wish": "push_bday", "custom": "", "test": ""}
 
 
-async def _push_users(uids, title: str, body: str, url: str, kind: str, exclude_uid: str = "") -> int:
-    pref = PUSH_KINDS.get(kind, "")
-    q = {"user_id": {"$in": [u for u in set(uids) if u and u != exclude_uid]}}
-    if pref:
-        q[f"member_profile.{pref}"] = {"$ne": False}
-    targets = [u["user_id"] async for u in db.users.find(q, {"_id": 0, "user_id": 1})]
-    data = json.dumps({"title": title[:80], "body": body[:180], "url": url})
+def _quiet_now(prof: dict, now=None) -> bool:
+    if not prof.get("quiet_on"):
+        return False
+    st, en = prof.get("quiet_start") or "21:00", prof.get("quiet_end") or "08:00"
+    t = (now or datetime.now(timezone.utc)).astimezone(EVENT_TZ).strftime("%H:%M")
+    return (st <= t < en) if st < en else (t >= st or t < en)
+
+
+async def _deliver(uid: str, data: str) -> tuple:
     sent = failed = removed = 0
-    async for sub in db.push_subs.find({"user_id": {"$in": targets}}, {"_id": 0}):
+    async for sub in db.push_subs.find({"user_id": uid}, {"_id": 0}):
         ok = await asyncio.to_thread(_push_one, sub, data)
         if ok is None:
             removed += 1
@@ -10161,9 +10187,43 @@ async def _push_users(uids, title: str, body: str, url: str, kind: str, exclude_
             sent += 1
         else:
             failed += 1
-    await db.push_log.insert_one({"id": str(uuid.uuid4()), "kind": kind, "title": title[:80], "body": body[:180], "url": url, "sent_at": _now_iso(),
-                                  "members": len(targets), "delivered": sent, "failed": failed, "expired": removed})
+    return sent, failed, removed
+
+
+async def _push_users(uids, title: str, body: str, url: str, kind: str, exclude_uid: str = "") -> int:
+    pref = PUSH_KINDS.get(kind, "")
+    q = {"user_id": {"$in": [u for u in set(uids) if u and u != exclude_uid]}}
+    if pref:
+        q[f"member_profile.{pref}"] = {"$ne": False}
+    targets = await db.users.find(q, {"_id": 0, "user_id": 1, "member_profile": 1}).to_list(5000)
+    data = json.dumps({"title": title[:80], "body": body[:180], "url": url})
+    log_id = str(uuid.uuid4())
+    sent = failed = removed = held = 0
+    for u in targets:
+        if kind != "test" and _quiet_now(u.get("member_profile") or {}):
+            if await db.push_subs.find_one({"user_id": u["user_id"]}, {"_id": 1}):
+                await db.push_held.insert_one({"user_id": u["user_id"], "data": data, "log_id": log_id, "at": _now_iso()})
+                held += 1
+            continue
+        a, b, c = await _deliver(u["user_id"], data)
+        sent, failed, removed = sent + a, failed + b, removed + c
+    await db.push_log.insert_one({"id": log_id, "kind": kind, "title": title[:80], "body": body[:180], "url": url, "sent_at": _now_iso(),
+                                  "members": len(targets), "delivered": sent, "failed": failed, "expired": removed, "held": held})
     return sent
+
+
+async def _release_held(now=None) -> int:
+    n = 0
+    for uid in await db.push_held.distinct("user_id"):
+        u = await db.users.find_one({"user_id": uid}, {"_id": 0, "member_profile": 1}) or {}
+        if _quiet_now(u.get("member_profile") or {}, now):
+            continue
+        for h in await db.push_held.find({"user_id": uid}, {"_id": 0}).sort("at", 1).to_list(50):
+            a, b, c = await _deliver(uid, h["data"])
+            await db.push_log.update_one({"id": h["log_id"]}, {"$inc": {"delivered": a, "failed": b, "expired": c, "held": -1}})
+            n += a
+        await db.push_held.delete_many({"user_id": uid})
+    return n
 
 
 async def _member_uids() -> list:
@@ -10194,11 +10254,28 @@ async def _push_votes() -> int:
     return n
 
 
+async def _push_gathering_soon(now=None) -> int:
+    now = now or datetime.now(timezone.utc)
+    today, n = now.astimezone(EVENT_TZ).date().isoformat(), 0
+    for m in await db.member_meetings.find({"date": today, "time": {"$regex": r"^\d{2}:\d{2}$"}}, {"_id": 0, "id": 1, "title": 1, "date": 1, "time": 1, "location": 1, "rsvps": 1}).to_list(20):
+        start = datetime.fromisoformat(f"{m['date']}T{m['time']}").replace(tzinfo=EVENT_TZ)
+        if not (0 < (start - now).total_seconds() <= 150 * 60):
+            continue
+        uids = [uid for uid, r in (m.get("rsvps") or {}).items() if (r or {}).get("response") in ("yes", "maybe")]
+        if uids and await _push_mark(f"event2h:{m['id']}:{m['date']}"):
+            loc = (m.get("location") or "").strip()
+            url = f"https://www.google.com/maps/dir/?api=1&destination={_urlquote(loc)}" if loc else "/members"
+            at = start.strftime("%-I:%M %p")
+            n += await _push_users(uids, f"Starting soon: {m['title']}", f"We start at {at}" + (f" at {loc}. Tap for directions." if loc else ". See you soon!"), url, "event")
+    return n
+
+
 async def _push_events(now=None) -> int:
+    n = await _push_gathering_soon(now)
     et = (now or datetime.now(timezone.utc)).astimezone(EVENT_TZ)
     if et.hour < 9:
-        return 0
-    tomorrow, n = (et.date() + timedelta(days=1)).isoformat(), 0
+        return n
+    tomorrow = (et.date() + timedelta(days=1)).isoformat()
     for m in await db.member_meetings.find({"date": tomorrow}, {"_id": 0, "id": 1, "title": 1, "location": 1, "rsvps": 1}).to_list(20):
         uids = [uid for uid, r in (m.get("rsvps") or {}).items() if (r or {}).get("response") in ("yes", "maybe")]
         if uids and await _push_mark(f"event:{m['id']}:{tomorrow}"):
@@ -10242,6 +10319,7 @@ async def _push_loop():
             await _push_votes()
             await _push_events()
             await _push_birthdays()
+            await _release_held()
         except Exception as e:
             logging.error(f"Push loop error: {e}")
         await asyncio.sleep(300)
@@ -10273,6 +10351,19 @@ async def admin_push_send(payload: AdminPushIn, request: Request, user=Depends(r
     if not title or not body:
         raise HTTPException(status_code=400, detail="Please add a title and a message.")
     return {"sent": await _push_members(title, body, url, kind="custom")}
+
+
+@api_router.post("/admin/members/push/test")
+async def admin_push_test(payload: AdminPushIn, request: Request, user=Depends(require_admin)):
+    await _rate_limit(request, f"admin-push-test:{user['user_id']}", max_hits=20, window_s=600)
+    title, body = payload.title.strip(), payload.body.strip()
+    url = payload.url.strip() if payload.url.strip().startswith("/") else "/members"
+    if not title or not body:
+        raise HTTPException(status_code=400, detail="Please add a title and a message.")
+    devices = await db.push_subs.count_documents({"user_id": user["user_id"]})
+    if not devices:
+        raise HTTPException(status_code=400, detail="Turn on phone alerts in your My Profile tab on your phone first, then send a test.")
+    return {"sent": await _push_users([user["user_id"]], f"[Test] {title}", body, url, "test"), "devices": devices}
 
 
 @api_router.get("/admin/members/push/history")

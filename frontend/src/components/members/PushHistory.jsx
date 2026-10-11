@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 
-const KINDS = [['', 'All'], ['announcement', 'Announcements'], ['prayer', 'Prayer'], ['event', 'Events'], ['vote', 'Votes'], ['birthday', 'Birthdays'], ['custom', 'Custom']];
+const KINDS = [['', 'All'], ['announcement', 'Announcements'], ['prayer', 'Prayer'], ['event', 'Events'], ['vote', 'Votes'], ['birthday', 'Birthdays'], ['wish', 'Wishes'], ['custom', 'Custom'], ['test', 'Tests']];
 const LABEL = Object.fromEntries(KINDS);
 const when = (iso) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
@@ -27,7 +27,7 @@ export const PushHistory = ({ refresh }) => {
                 <p className="text-[#3B0A2E] font-semibold min-w-0 break-words">{r.title}</p>
                 <span className="shrink-0 rounded-full px-2 py-0.5 text-[12px] bg-[#F7EFE9] text-[#B4247E] font-semibold">{LABEL[r.kind] || r.kind}</span>
               </div>
-              <p className="text-[#241019]/55 mt-0.5">{when(r.sent_at)} · <span data-testid={`push-history-reached-${r.id}`}>{r.delivered} phone{r.delivered === 1 ? '' : 's'} reached</span>{r.failed ? ` · ${r.failed} failed` : ''}{r.expired ? ` · ${r.expired} expired removed` : ''}</p>
+              <p className="text-[#241019]/55 mt-0.5">{when(r.sent_at)} · <span data-testid={`push-history-reached-${r.id}`}>{r.delivered} phone{r.delivered === 1 ? '' : 's'} reached</span>{r.failed ? ` · ${r.failed} failed` : ''}{r.expired ? ` · ${r.expired} expired removed` : ''}{r.held ? ` · ${r.held} held for quiet hours` : ''}</p>
             </div>
           ))}
         </div>
