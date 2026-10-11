@@ -44,6 +44,7 @@ import BirthdayWall from './pages/BirthdayWall';
 import GalleryAlbum from './pages/GalleryAlbum';
 import SessionCheckIn from './pages/SessionCheckIn';
 import SessionSheet from './pages/SessionSheet';
+import SaveSpot from './pages/SaveSpot';
 import { Loader2 } from 'lucide-react';
 
 function ScrollToTop() {
@@ -113,6 +114,7 @@ function Shell() {
           <Route path="/gallery/album/:slug" element={<GalleryAlbum />} />
           <Route path="/session-checkin/:sid" element={<SessionCheckIn />} />
           <Route path="/session-sheet/:sid" element={<SessionSheet />} />
+          <Route path="/save-spot" element={<SaveSpot />} />
           <Route path="/transparency" element={<Transparency />} />
           <Route path="/donate" element={<Donate />} />
           <Route path="/payment/success" element={<PaymentSuccess />} />

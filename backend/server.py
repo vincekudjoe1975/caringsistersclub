@@ -5538,14 +5538,14 @@ async def _next_session(p: dict):
     return await _with_seats(nxt) if nxt else None
 
 
-def _noshow_html(name: str, p: dict, nxt) -> str:
+def _noshow_html(name: str, p: dict, nxt, spot_url: str = "") -> str:
     if nxt:
         dates = datetime.strptime(nxt["start_date"], "%Y-%m-%d").strftime("%A, %B %-d")
         seats = "" if not nxt.get("capacity") else (" The session is full, but you can join the waitlist." if nxt.get("full") else f" {nxt['seats_left']} seat{'s' if nxt['seats_left'] != 1 else ''} left.")
         block = (f'<div style="background:#faf2f7;border-radius:12px;padding:18px 20px;margin:0 0 20px"><p style="font-size:12px;color:#B4247E;font-weight:bold;margin:0 0 6px;text-transform:uppercase;letter-spacing:1px">Next session</p>'
                  f'<p style="font-family:Georgia,serif;font-size:19px;color:#3B0A2E;font-weight:bold;margin:0 0 4px">{_esc(nxt["title"])}</p>'
                  f'<p style="font-size:13.5px;color:#4a3340;margin:0">Starts {dates}{(" · " + _esc(nxt["schedule"])) if nxt.get("schedule") else ""}.{seats}</p></div>'
-                 + _btn(f"{PUBLIC_APP_URL}/initiatives/{nxt['slug']}#join", "Save My Spot", primary=True))
+                 + _btn(spot_url or f"{PUBLIC_APP_URL}/initiatives/{nxt['slug']}#join", "Save My Spot", primary=True))
     else:
         block = ('<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">We don\'t have the next session on the calendar yet, but you can see everything coming up here:</p>'
                  + _btn(f"{PUBLIC_APP_URL}/sessions", "See Upcoming Sessions", primary=True))
@@ -5566,7 +5566,7 @@ def _noshow_html(name: str, p: dict, nxt) -> str:
 async def _noshow_for_program(p: dict) -> int:
     nxt = await _next_session(p)
     sent = 0
-    for s in await db.submissions.find({**_seats_q(p), "attendance": "no_show"}, {"_id": 0, "id": 1, "data": 1}).to_list(2000):
+    for s in await db.submissions.find({**_seats_q(p), "attendance": "no_show", "session_id": {"$exists": False}}, {"_id": 0, "id": 1, "data": 1}).to_list(2000):
         r = await db.noshow_emails.update_one({"submission_id": s["id"]}, {"$setOnInsert": {"program_id": p["id"], "email": (s["data"].get("email") or "").lower(), "at": _now_iso()}}, upsert=True)
         if r.upserted_id is None:
             continue
@@ -9146,6 +9146,8 @@ async def _member_phase7_scheduled():
         await _auto_recaps(today)
     if hour >= 8 and await _once(f"spam-digest:{today.isoformat()}"):
         await _send_spam_digest()
+    if hour >= 10:
+        await _send_session_absent_followups(today)
 
 
 # ---------- Member Portal phase 9: wish reminders, captions, slideshow, gathering recaps ----------
@@ -9808,7 +9810,20 @@ async def _send_spam_digest() -> bool:
 
 @api_router.get("/admin/security/spam")
 async def admin_spam_summary(user=Depends(require_admin)):
-    return await _spam_summary()
+    out = await _spam_summary()
+    today = _today_et()
+    start = datetime.combine(today - timedelta(days=6), datetime.min.time(), tzinfo=EVENT_TZ).astimezone(timezone.utc)
+    days, forms = defaultdict(int), defaultdict(int)
+    for r in await db.blocked_attempts.find({"at": {"$gte": start}}, {"_id": 0, "at": 1, "bucket": 1}).to_list(50000):
+        at = r["at"] if r["at"].tzinfo else r["at"].replace(tzinfo=timezone.utc)
+        days[at.astimezone(EVENT_TZ).date().isoformat()] += 1
+        forms[r["bucket"]] += 1
+    out["days"] = [{"date": (today - timedelta(days=i)).isoformat(), "count": days.get((today - timedelta(days=i)).isoformat(), 0)} for i in range(6, -1, -1)]
+    out["today"] = days.get(today.isoformat(), 0)
+    out["week_total"] = sum(days.values())
+    top = max(forms.items(), key=lambda x: x[1]) if forms else None
+    out["top_form"] = {"label": SPAM_LABELS.get(top[0], top[0]), "count": top[1]} if top else None
+    return out
 
 
 # ---------- Session attendance report ----------
@@ -9819,12 +9834,13 @@ async def admin_session_report(pid: str, user=Depends(require_admin)):
         raise HTTPException(status_code=404, detail="Program not found")
     out, tot = [], defaultdict(int)
     for s in await db.program_sessions.find({"program_id": pid}, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(500):
-        rows = await db.submissions.find({**_session_taken_q(s["id"]), "released": {"$ne": True}}, {"_id": 0, "attendance": 1}).to_list(2000)
+        rows = await db.submissions.find({**_session_taken_q(s["id"]), "released": {"$ne": True}}, {"_id": 0, "attendance": 1, "walk_in": 1}).to_list(2000)
         c = {"signed_up": len(rows), "attended": sum(1 for r in rows if r.get("attendance") == "attended"), "no_show": sum(1 for r in rows if r.get("attendance") == "no_show")}
         c["unmarked"] = c["signed_up"] - c["attended"] - c["no_show"]
         for k, v in c.items():
             tot[k] += v
-        out.append({"id": s["id"], "date": s["date"], "label": _session_label(s), "seats": s.get("seats", 0), **c,
+        c["walk_ins"] = sum(1 for r in rows if r.get("walk_in"))
+        out.append({"id": s["id"], "date": s["date"], "start_time": s.get("start_time", ""), "label": _session_label(s), "seats": s.get("seats", 0), **c,
                     "attendance_pct": round(100 * c["attended"] / (c["attended"] + c["no_show"])) if c["attended"] + c["no_show"] else None})
     tot = dict(tot) or {"signed_up": 0, "attended": 0, "no_show": 0, "unmarked": 0}
     tot["attendance_pct"] = round(100 * tot["attended"] / (tot["attended"] + tot["no_show"])) if tot.get("attended", 0) + tot.get("no_show", 0) else None
@@ -9847,6 +9863,132 @@ async def admin_session_attendance_csv(pid: str, user=Depends(require_admin)):
     return Response(content=buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{p["slug"][:50]}-session-attendance.csv"', "Cache-Control": "no-store"})
 
 
+# ---------- Session absent follow-ups, save-my-spot, walk-ins ----------
+async def _next_open_session(pid: str, after: str):
+    for s in await db.program_sessions.find({"program_id": pid, "date": {"$gt": after}}, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(100):
+        v = await _session_view(s)
+        if not v.get("full"):
+            return s, v
+    return None, None
+
+
+async def _send_session_absent_followups(today=None) -> int:
+    today = today or _today_et()
+    lo, hi = (today - timedelta(days=3)).isoformat(), (today - timedelta(days=1)).isoformat()
+    sent = 0
+    for sess in await db.program_sessions.find({"date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(500):
+        p = await db.programs.find_one({"id": sess["program_id"], "published": True}, {"_id": 0})
+        if not p:
+            continue
+        nxt, view = await _next_open_session(p["id"], today.isoformat() if today.isoformat() > sess["date"] else sess["date"])
+        for sub in await db.submissions.find({**_session_taken_q(sess["id"]), "attendance": "no_show"}, {"_id": 0, "id": 1, "data": 1}).to_list(2000):
+            r = await db.noshow_emails.update_one({"submission_id": sub["id"]}, {"$setOnInsert": {"program_id": p["id"], "session_id": sess["id"], "email": (sub["data"].get("email") or "").lower(), "at": _now_iso()}}, upsert=True)
+            if r.upserted_id is None or not sub["data"].get("email"):
+                continue
+            spot, n = "", None
+            if nxt:
+                tok = secrets.token_urlsafe(24)
+                await db.spot_tokens.insert_one({"token": tok, "submission_id": sub["id"], "session_id": nxt["id"], "used": False, "created_at": _now_iso()})
+                spot = f"{PUBLIC_APP_URL}/save-spot?token={tok}"
+                tm = (_fmt_time(nxt["start_time"]) + (f" – {_fmt_time(nxt['end_time'])}" if nxt.get("end_time") else "")) if nxt.get("start_time") else ""
+                n = {"title": p["title"], "slug": p["slug"], "start_date": nxt["date"], "schedule": " · ".join(x for x in (tm, nxt.get("location")) if x),
+                     "capacity": nxt.get("seats"), "full": False, "seats_left": view.get("seats_left")}
+            try:
+                await send_email(to=sub["data"]["email"], subject=f"We missed you at {p['title']}"[:150], html=_noshow_html((sub["data"].get("name") or "friend").split(" ")[0], p, n, spot))
+                sent += 1
+            except Exception as ex:
+                logging.error(f"Session absent follow-up failed: {ex}")
+    return sent
+
+
+class SpotIn(BaseModel):
+    token: str
+
+
+async def _spot_lookup(token: str):
+    t = await db.spot_tokens.find_one({"token": token[:80]}, {"_id": 0})
+    if t is None:
+        raise HTTPException(status_code=404, detail="This link isn't valid.")
+    sess = await db.program_sessions.find_one({"id": t["session_id"]}, {"_id": 0})
+    sub = await db.submissions.find_one({"id": t["submission_id"]}, {"_id": 0})
+    p = await db.programs.find_one({"id": (sess or {}).get("program_id"), "published": True}, {"_id": 0}) if sess else None
+    if not (sess and sub and p):
+        raise HTTPException(status_code=404, detail="This session is no longer available.")
+    return t, sess, sub, p
+
+
+@api_router.get("/sessions/save-spot")
+async def save_spot_info(token: str, request: Request):
+    await _rate_limit(request, "claim", max_hits=30, window_s=300)
+    t, sess, sub, p = await _spot_lookup(token)
+    v = await _session_view(sess)
+    return {"program": p["title"], "slug": p["slug"], "label": _session_label(sess), "name": (sub["data"].get("name") or "").split(" ")[0],
+            "used": t["used"], "full": v.get("full", False), "past": sess["date"] < _today_et().isoformat()}
+
+
+@api_router.post("/sessions/save-spot")
+async def save_spot(payload: SpotIn, request: Request, background: BackgroundTasks):
+    await _rate_limit(request, "claim", max_hits=10, window_s=300)
+    t, sess, sub, p = await _spot_lookup(payload.token)
+    if t["used"]:
+        return {"ok": True, "already": True, "label": _session_label(sess)}
+    if sess["date"] < _today_et().isoformat():
+        raise HTTPException(status_code=400, detail="This session has already happened.")
+    if (await _session_view(sess)).get("full"):
+        raise HTTPException(status_code=400, detail="Sorry, this session just filled up. Please choose another date.")
+    if (await db.spot_tokens.update_one({"token": t["token"], "used": False}, {"$set": {"used": True, "used_at": _now_iso()}})).modified_count == 0:
+        return {"ok": True, "already": True, "label": _session_label(sess)}
+    d = sub["data"]
+    data = {"program": p["title"], "program_slug": p["slug"], "name": d.get("name", ""), "email": (d.get("email") or "").lower(), "phone": d.get("phone", ""), "message": "", "session": _session_label(sess)}
+    await db.submissions.insert_one({"id": str(uuid.uuid4()), "type": "program_signup", "program_id": p["id"], "session_id": sess["id"], "waitlist": False, "data": data,
+                                     "read": False, "created_at": _now_iso(), "source": "save_spot", "from_submission": sub["id"]})
+    background.add_task(_send_signup_confirm, data["email"], data["name"], {**p, "session_label": data["session"]}, False)
+    return {"ok": True, "label": data["session"]}
+
+
+class WalkInIn(BaseModel):
+    name: str
+    email: str = ""
+    phone: str = ""
+
+
+def _walkin_thanks_html(name: str, p: dict, label: str) -> str:
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
+        + _brand_header("Thank You") +
+        '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 12px">Thank you for joining us, {_esc(name)}!</h1>'
+        f'<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">It was wonderful to have you at <strong>{_esc(p["title"])}</strong> ({_esc(label)}). '
+        'We hope you left feeling encouraged. Here is what else is coming up:</p>'
+        + _btn(f"{PUBLIC_APP_URL}/sessions", "See Upcoming Sessions", primary=True) +
+        '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:20px 0 0">With warmth,<br/>The Caring Sisters Club</p></td></tr></table></td></tr></table>'
+    )
+
+
+@api_router.post("/admin/sessions/{sid}/walkin")
+async def admin_session_walkin(sid: str, payload: WalkInIn, background: BackgroundTasks, user=Depends(require_admin)):
+    sess = await db.program_sessions.find_one({"id": sid}, {"_id": 0})
+    p = await db.programs.find_one({"id": (sess or {}).get("program_id")}, {"_id": 0}) if sess else None
+    if not p:
+        raise HTTPException(status_code=404, detail="Session not found")
+    name = payload.name.strip()[:120]
+    email = payload.email.strip().lower()[:200]
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(status_code=400, detail="Please enter a valid email or leave it blank")
+    label = _session_label(sess)
+    data = {"program": p["title"], "program_slug": p["slug"], "name": name, "email": email, "phone": re.sub(r"[^0-9+()\- .]", "", payload.phone)[:30], "message": "", "session": label, "walk_in": True}
+    doc = {"id": str(uuid.uuid4()), "type": "program_signup", "program_id": p["id"], "session_id": sid, "waitlist": False, "data": data, "read": True,
+           "walk_in": True, "attendance": "attended", "attendance_at": _now_iso(), "created_at": _now_iso(), "added_by": user.get("email")}
+    await db.submissions.insert_one(dict(doc))
+    if email:
+        background.add_task(send_email, to=email, subject=f"Thank you for joining us at {p['title']}"[:150], html=_walkin_thanks_html(name.split(" ")[0], p, label))
+        background.add_task(_check_streaks, [email])
+    return {"id": doc["id"], "name": name, "email": email, "phone": data["phone"], "attendance": "attended", "walk_in": True}
+
+
 # ---------- Dated session check-in ----------
 @api_router.get("/admin/sessions/{sid}/roster")
 async def admin_session_roster(sid: str, user=Depends(require_admin)):
@@ -9856,7 +9998,7 @@ async def admin_session_roster(sid: str, user=Depends(require_admin)):
     p = await db.programs.find_one({"id": s["program_id"]}, {"_id": 0, "title": 1}) or {}
     rows = await db.submissions.find({**_session_taken_q(sid), "released": {"$ne": True}}, {"_id": 0, "id": 1, "data": 1, "attendance": 1}).sort("created_at", 1).to_list(2000)
     return {"program": p.get("title", ""), "label": _session_label(s), "date": s["date"],
-            "items": [{"id": r["id"], "name": r["data"].get("name"), "email": r["data"].get("email"), "phone": r["data"].get("phone", ""), "attendance": r.get("attendance")} for r in rows]}
+            "items": [{"id": r["id"], "name": r["data"].get("name"), "email": r["data"].get("email"), "phone": r["data"].get("phone", ""), "attendance": r.get("attendance"), "walk_in": bool(r.get("walk_in"))} for r in rows]}
 
 
 class SessionAttendanceIn(BaseModel):

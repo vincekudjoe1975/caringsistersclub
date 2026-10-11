@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api, BACKEND_URL } from '../lib/api';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { useToast } from '../hooks/use-toast';
 import { Loader2, Plus, Pencil, Trash2, CalendarDays, Clock, MapPin, Users } from 'lucide-react';
 
@@ -33,6 +34,51 @@ function SessionForm({ pid, initial, onDone }) {
   );
 }
 
+const WD = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const bucket = (t) => { if (!t) return 'Time not set'; const h = parseInt(t.slice(0, 2), 10); return h < 12 ? 'Morning' : h < 17 ? 'Afternoon' : 'Evening'; };
+function best(groups) {
+  const rows = Object.entries(groups).map(([k, v]) => ({ k, rate: Math.round((100 * v.a) / v.m), n: v.n })).sort((x, y) => y.rate - x.rate || y.n - x.n);
+  return rows;
+}
+function SessionInsights({ sessions }) {
+  const marked = sessions.filter((s) => s.attended + s.no_show > 0);
+  if (marked.length < 3) return <p data-testid="insights-pending" className="px-5 py-4 text-[12.5px] text-[#241019]/55 border-t border-[#3B0A2E]/6">Attendance insights appear once at least 3 sessions have attendance marked ({marked.length}/3 so far).</p>;
+  const byDay = {}; const byTime = {};
+  marked.forEach((s) => {
+    const add = (g, k) => { g[k] = g[k] || { a: 0, m: 0, n: 0 }; g[k].a += s.attended; g[k].m += s.attended + s.no_show; g[k].n += 1; };
+    add(byDay, WD[new Date(`${s.date}T12:00:00`).getDay()]); add(byTime, bucket(s.start_time));
+  });
+  const days = best(byDay); const times = best(byTime);
+  const data = marked.map((s) => ({ date: new Date(`${s.date}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), rate: s.attendance_pct, label: s.label }));
+  const Pill = ({ title, rows, tid }) => (
+    <div className="flex-1 min-w-[220px] rounded-xl bg-[#fdf9fb] p-4" data-testid={tid}>
+      <p className="text-[11.5px] uppercase tracking-wide text-[#241019]/50 mb-1">{title}</p>
+      <p className="font-serif text-[20px] text-[#3B0A2E] font-semibold">{rows[0].k} <span className="text-[14px] text-[#B4247E]">{rows[0].rate}%</span></p>
+      <p className="text-[12px] text-[#241019]/55 mt-1">{rows.slice(1).map((r) => `${r.k} ${r.rate}%`).join(' · ') || 'Only one option so far'}</p>
+    </div>
+  );
+  return (
+    <div className="border-t border-[#3B0A2E]/6 px-5 py-5" data-testid="session-insights">
+      <p className="font-serif text-[17px] text-[#3B0A2E] font-semibold mb-3">Attendance trend</p>
+      <div className="h-52" data-testid="insights-chart">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 6, right: 12, left: -18, bottom: 0 }}>
+            <CartesianGrid stroke="#3B0A2E" strokeOpacity={0.06} vertical={false} />
+            <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11.5, fill: '#6b5560' }} />
+            <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#8a7380' }} />
+            <Tooltip formatter={(v) => [`${v}%`, 'Attendance']} labelFormatter={(l, p) => p?.[0]?.payload?.label || l} />
+            <Line type="monotone" dataKey="rate" stroke="#B4247E" strokeWidth={2.5} dot={{ r: 4, fill: '#3B0A2E' }} activeDot={{ r: 6 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="flex flex-wrap gap-3 mt-4">
+        <Pill title="Best day of the week" rows={days} tid="insights-best-day" />
+        <Pill title="Best time of day" rows={times} tid="insights-best-time" />
+      </div>
+    </div>
+  );
+}
+
 function SessionReport({ pid }) {
   const [r, setR] = useState(null);
   useEffect(() => { api.get(`/admin/programs/${pid}/session-report`).then(({ data }) => setR(data)); }, [pid]);
@@ -54,6 +100,7 @@ function SessionReport({ pid }) {
             <td className="px-5 font-semibold">{pct(s.attendance_pct)}</td>
           </tr>))}</tbody>
       </table></div>
+      <SessionInsights sessions={r.sessions} />
     </div>
   );
 }
