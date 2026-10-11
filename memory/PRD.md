@@ -350,3 +350,11 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Regression iteration 33: all public pages/admin views/member tabs rendered; only issue was the attendance model bug (fixed, curl-verified).
 - CORS_ORIGINS now includes https://caring-sisters-club.emergent.host (allowlist; '*' is ignored by code). Add any custom domain here too.
 - Zeffy evaluated and declined by user (no card-charging API; embed+webhook only). Merchandise not needed now.
+
+## 2026-06 Security hardening, members-only avatars, session attendance report, spam digest (iteration 34 — 20/20 backend, frontend 100%)
+- _rate_limit is now async + Mongo-backed (db.rate_hits TTL 1h, key+at index); every call site uses `await _rate_limit(...)`. Blocked requests logged to db.blocked_attempts (TTL 30d).
+- Spam digest: _send_spam_digest at >=8am ET once/day (_once spam-digest:<date>) to settings.staff_notify_email when total>0; GET /admin/security/spam summary (masked IPs).
+- Avatars (media category 'avatar') served only to signed-in members/admins (404 otherwise, Cache-Control private); Avatar.jsx falls back to initials on error.
+- Stripe fail-closed: no placeholder key; _require_stripe() -> 503 before checkout/dues/portal sessions (and before consuming manage-gift token).
+- Admin preview iframes (YIR, recap) sandboxed.
+- Session attendance: GET /admin/programs/{pid}/session-report, CSV /admin/programs/{pid}/session-attendance.csv; SessionReport in AdminSessions; printable /session-sheet/:sid (8 blank walk-in rows).

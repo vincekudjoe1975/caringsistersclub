@@ -9783,7 +9783,7 @@ async def _spam_summary(hours: int = 24) -> dict:
         by_ip[r["ip"]] += 1
     return {"total": len(rows), "forms": sorted(({"bucket": k, "label": SPAM_LABELS.get(k, k), "count": v} for k, v in by_form.items()), key=lambda x: -x["count"]),
             "sources": [{"ip": _mask_ip(k), "count": v} for k, v in sorted(by_ip.items(), key=lambda x: -x[1])[:5]],
-            "examples": [{"at": r["at"].isoformat() if hasattr(r["at"], "isoformat") else str(r["at"]), "form": SPAM_LABELS.get(r["bucket"], r["bucket"]), "ip": _mask_ip(r["ip"]),
+            "examples": [{"at": (r["at"] if r["at"].tzinfo else r["at"].replace(tzinfo=timezone.utc)).isoformat(), "form": SPAM_LABELS.get(r["bucket"], r["bucket"]), "ip": _mask_ip(r["ip"]),
                           "path": r.get("path", ""), "ua": (r.get("ua") or "")[:80]} for r in rows[:5]]}
 
 

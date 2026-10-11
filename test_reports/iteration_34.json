@@ -1,0 +1,23 @@
+{
+  "summary": "Iteration 34 security hardening + session attendance report fully validated. Backend pytest file test_iter34_security_sessions.py ran 20 tests, 20/20 PASS. Covered: (1) DB-backed rate limiting on /api/payments/checkout — first 6 calls succeed, 7th+ returns 429 with Retry-After header, blocked_attempts logged, rate_hits persisted; limit survives a `sudo supervisorctl restart backend` (verified). (2) Awaited _rate_limit on /api/submissions — no 500. (3) /api/admin/security/spam returns {total, forms, sources (ip masked as 1.2.x.x), examples}; non-admin 401/403. (4) Members-only avatar media: GET /api/media/file/<avatar_id> anonymous -> 404; member/admin cookie passes the auth gate (then 404 File missing because storage path is fake, but auth gate is OK). Public gallery media still passes gate for anonymous. (5) Session attendance report returns correct per-session {signed_up, attended, no_show, unmarked, attendance_pct}; CSV endpoint 200 text/csv with Attended/Absent/Unmarked rows; roster endpoint admin-gated. (6) Stripe fail-closed: _require_stripe() present, raises 503, used 3+ times. Donation checkout works now (not 503). Frontend Playwright: Admin → Sessions tab shows session-report-row-<sid> with pct '50%', session-report-csv href = /api/admin/programs/<pid>/session-attendance.csv, session-sheet-<sid> link = /session-sheet/<sid>. Printable sheet renders sheet-title 'Business Elevation Lab', 3 sheet-row-* + 8 sheet-blank-row + sheet-print-btn. Anonymous visitor sees sheet-auth. All four preview iframes (yir-email-preview, recap-preview-frame-<id>, impact-preview-frame, welcome-preview) carry sandbox=\"\" attribute. Avatar.jsx uses onError->setBroken fallback to initials (no broken image icon). All seed data cleaned up.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter34_security_sessions.py",
+    "/app/test_reports/pytest/iter34.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 9932 lines — still worth splitting into routers (sessions, admin, members) as flagged in iter33.",
+    "_rate_limit swallows exceptions on count_documents (logs warning, returns None without raising); if Mongo is down the limiter fails OPEN. Consider logging and still returning without raising only on transient errors, or circuit-breaker to fail-closed for sensitive buckets (checkout/dues).",
+    "SessionAttendanceIn correctly binds — the iter33 AttendanceIn shadowing bug is resolved.",
+    "_require_stripe() lives in a module where stripe.api_key is captured at import time; if the env var is set after startup (reloaders), the key won't be re-read — acceptable given deploy process but worth noting."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter34_security_sessions.py"],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "100% (session report + sheet + sandbox iframes + Avatar fallback all verified)"},
+  "test_credentials": "Admin: python3 /app/backend/tests/qa_session.py up -> cookie session_token=qa_tok_123 (state-changing calls need X-Requested-With: XMLHttpRequest). Members: python3 /app/backend/tests/qa_members.py up -> mem_tok_a / mem_tok_b (set member_status=active for portal access). Both torn down.",
+  "seed_data_creation": "Created during test: 1 program_session (location 'QA Hall', business-elevation-lab, future date), 3 submissions (qa.person0..2@example.com, mix of attendances), 2 fake media docs (ids prefix qa-avatar- and qa-gal-), ~8 payment_transactions from rate-limit smoke. ALL CLEANED UP post-test; qa_session.py down and qa_members.py down executed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All iteration 34 security + session features validated green. Rate-limit tests exercise the 'checkout' and 'submission' buckets from the test runner IP — the module fixture clears db.rate_hits and db.blocked_attempts before/after. Use `pytest -o addopts=''` to avoid xdist double-execution. The /admin frontend route is a tab app, not a nested route: use /admin + click the Sessions tab (never /admin/sessions). Program slug 'caring-sisters-clone' in the review request appears to be the preview hostname — the real program slug is 'business-elevation-lab'."
+}
