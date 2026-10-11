@@ -23,7 +23,7 @@ export function LeaveRequest({ me, onChange }) {
           <textarea data-testid="leave-reason" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Would you like to share why? (optional)" className="w-full rounded-xl border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] bg-white focus:outline-none focus:border-[#B4247E]" />
           <div className="flex gap-2">
             <button data-testid="leave-submit-btn" onClick={send} className="rounded-full px-5 py-2 text-[13px] font-semibold bg-[#3B0A2E] text-white">Send request</button>
-            <button onClick={() => setOpen(false)} className="rounded-full px-5 py-2 text-[13px] font-semibold border border-[#3B0A2E]/15 text-[#3B0A2E]">Cancel</button>
+            <button data-testid="leave-cancel-open-btn" onClick={() => setOpen(false)} className="rounded-full px-5 py-2 text-[13px] font-semibold border border-[#3B0A2E]/15 text-[#3B0A2E]">Cancel</button>
           </div>
         </div>
       ) : (

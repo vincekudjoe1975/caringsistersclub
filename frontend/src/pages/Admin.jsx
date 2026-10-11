@@ -21,6 +21,7 @@ import AdminGallery from './AdminGallery';
 import AdminSessions from './AdminSessions';
 import AdminOverview from './AdminOverview';
 import { SiteUrlBanner } from '../components/SiteUrlBanner';
+import { InstallApp } from '../components/InstallApp';
 import { useToast } from '../hooks/use-toast';
 import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote, BarChart3, HeartHandshake } from 'lucide-react';
 
@@ -143,6 +144,7 @@ export default function Admin() {
         </div>
 
         <SiteUrlBanner />
+        <InstallApp light />
 
         {/* View switch */}
         <div className="inline-flex flex-wrap gap-1 p-1.5 rounded-full mb-8 bg-white border border-[#3B0A2E]/8">

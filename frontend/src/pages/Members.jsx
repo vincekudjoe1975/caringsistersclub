@@ -14,6 +14,7 @@ import { Standing } from '../components/members/Standing';
 import { Minutes } from '../components/members/Minutes';
 import { SpotlightArchive, PrayerBoard } from '../components/members/Phase6';
 import { PhotoAlbums } from '../components/members/Phase7';
+import { InstallApp } from '../components/InstallApp';
 
 const TABS = [
   { k: 'news', l: 'Announcements', icon: Megaphone, C: Announcements },
@@ -76,15 +77,16 @@ function Portal({ me, onChange }) {
           <button data-testid="portal-logout-btn" onClick={logout} className="rounded-full px-5 py-2.5 text-[13px] font-semibold text-[#F7EFE9] border border-white/25 flex items-center gap-1.5 hover:bg-white/10 transition-colors"><LogOut size={14} /> Sign out</button>
         </div>
       </div>
-      <div data-testid="portal-tabbar" className="flex md:inline-flex flex-nowrap md:flex-wrap overflow-x-auto md:overflow-visible max-w-full csc-noscrollbar snap-x gap-1 p-1.5 rounded-full mb-8 bg-white/10 backdrop-blur-md border border-white/15">
+      <InstallApp />
+      <div data-testid="portal-tabbar" className="grid grid-cols-3 sm:grid-cols-4 md:flex md:flex-wrap md:w-fit gap-1.5 md:gap-1 p-1.5 rounded-3xl md:rounded-full mb-8 bg-white/10 backdrop-blur-md border border-white/15">
         {TABS.map(({ k, l, icon: Icon }) => (
-          <button key={k} data-testid={`portal-tab-${k}`} onClick={(e) => { pick(k); e.currentTarget.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' }); }}
-            className={`shrink-0 snap-start whitespace-nowrap px-4 md:px-5 py-2.5 md:py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 transition-colors ${tab === k ? 'bg-[#F7EFE9] text-[#3B0A2E]' : 'text-[#F7EFE9]/85 hover:text-white'}`}>
-            <Icon size={16} /> {l}
+          <button key={k} data-testid={`portal-tab-${k}`} onClick={() => pick(k)}
+            className={`min-w-0 min-h-[60px] md:min-h-0 px-1.5 md:px-5 py-2 rounded-2xl md:rounded-full text-[12.5px] md:text-[14px] leading-tight font-semibold flex flex-col md:flex-row items-center justify-center gap-1 md:gap-2 text-center transition-colors ${tab === k ? 'bg-[#F7EFE9] text-[#3B0A2E]' : 'text-[#F7EFE9]/85 hover:text-white hover:bg-white/5'}`}>
+            <Icon size={17} className="shrink-0" /> <span className="truncate max-w-full">{l}</span>
           </button>
         ))}
       </div>
-      <div className="bg-[#F7EFE9] rounded-3xl p-3.5 sm:p-6 md:p-10 -mx-1 sm:mx-0"><Current me={me} onChange={onChange} /></div>
+      <div data-testid="portal-panel" className="bg-[#F7EFE9] rounded-3xl p-4 sm:p-6 md:p-10 min-w-0"><Current me={me} onChange={onChange} /></div>
     </>
   );
 }

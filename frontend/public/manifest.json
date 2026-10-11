@@ -1,0 +1,15 @@
+{
+  "name": "Caring Sisters Club",
+  "short_name": "Caring Sisters",
+  "description": "Caring Sisters Club — member portal, sessions, events and giving.",
+  "start_url": "/members",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#3B0A2E",
+  "theme_color": "#3B0A2E",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
