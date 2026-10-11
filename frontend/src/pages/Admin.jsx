@@ -16,13 +16,14 @@ import AdminAbout from './AdminAbout';
 import AdminStories from './AdminStories';
 import AdminReports from './AdminReports';
 import AdminMembers from './AdminMembers';
+import AdminLeadership from './AdminLeadership';
+import AdminGallery from './AdminGallery';
+import AdminSessions from './AdminSessions';
 import { SiteUrlBanner } from '../components/SiteUrlBanner';
 import { useToast } from '../hooks/use-toast';
 import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote, BarChart3, HeartHandshake } from 'lucide-react';
 
 const TABS = [
-  { key: 'gallery', label: 'Gallery Photos', icon: ImageIcon, accept: 'image/*', titleLabel: 'Caption', subLabel: '' },
-  { key: 'board', label: 'Leadership', icon: Users, accept: 'image/*', titleLabel: 'Full Name', subLabel: 'Role / Title' },
   { key: 'event', label: 'Event Images', icon: CalendarDays, accept: 'image/*', titleLabel: 'Event Name', subLabel: 'Date / Location' },
   { key: 'document', label: 'Documents', icon: FileText, accept: '.pdf,application/pdf', titleLabel: 'Document Title', subLabel: 'Year / Label' },
 ];
@@ -31,7 +32,7 @@ export default function Admin() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [tab, setTab] = useState('gallery');
+  const [tab, setTab] = useState('event');
   const [view, setViewState] = useState(() => sessionStorage.getItem('csc_admin_view') || 'media');
   const setView = (v) => { sessionStorage.setItem('csc_admin_view', v); setViewState(v); };
   const [items, setItems] = useState([]);
@@ -145,6 +146,8 @@ export default function Admin() {
         {/* View switch */}
         <div className="inline-flex flex-wrap gap-1 p-1.5 rounded-full mb-8 bg-white border border-[#3B0A2E]/8">
           {[
+            { k: 'gallery', l: 'Gallery', icon: ImageIcon },
+            { k: 'leadership', l: 'Leadership', icon: Users },
             { k: 'media', l: 'Media Library', icon: Images },
             { k: 'inbox', l: 'Form Submissions', icon: Inbox },
             { k: 'home', l: 'Home Page', icon: LayoutTemplate },
@@ -152,6 +155,7 @@ export default function Admin() {
             { k: 'stories', l: 'Stories & Updates', icon: MessageSquareQuote },
             { k: 'reports', l: 'Reports', icon: BarChart3 },
             { k: 'programs', l: 'Programs', icon: Layers },
+            { k: 'sessions', l: 'Sessions', icon: CalendarDays },
             { k: 'events', l: 'Events', icon: CalendarHeart },
             { k: 'transparency', l: 'Transparency', icon: PieChart },
             { k: 'donations', l: 'Donations', icon: DollarSign },
@@ -171,7 +175,13 @@ export default function Admin() {
           })}
         </div>
 
-        {view === 'inbox' ? (
+        {view === 'gallery' ? (
+          <AdminGallery />
+        ) : view === 'leadership' ? (
+          <AdminLeadership />
+        ) : view === 'sessions' ? (
+          <AdminSessions />
+        ) : view === 'inbox' ? (
           <AdminSubmissions />
         ) : view === 'reports' ? (
           <AdminReports />

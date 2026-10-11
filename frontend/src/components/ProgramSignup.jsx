@@ -44,8 +44,14 @@ const Done = ({ waitlist, email, position, token }) => (
   </div>
 );
 
+const t12 = (t) => { if (!t) return ''; const [h, m] = t.split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
+export const sessionOption = (x) => [new Date(`${x.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+  x.start_time ? `${t12(x.start_time)}${x.end_time ? ` – ${t12(x.end_time)}` : ''}` : '', x.location, x.full ? 'FULL' : x.seats_left != null ? `${x.seats_left} spots left` : ''].filter(Boolean).join(' · ');
+
 export const ProgramSignup = ({ program: p }) => {
-  const [form, setForm] = useState({ name: '', email: '', phone: '', message: '' });
+  const sessions = p.sessions || [];
+  const pre = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('session') : '';
+  const [form, setForm] = useState({ name: '', email: '', phone: '', message: '', session_id: sessions.some((x) => x.id === pre && !x.full) ? pre : '' });
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
   const [error, setError] = useState('');
@@ -72,6 +78,14 @@ export const ProgramSignup = ({ program: p }) => {
                 <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Full Name</label><input required value={form.name} onChange={set('name')} className={inp} data-testid="signup-name-input" /></div>
                 <div><label className="text-[13px] font-semibold text-[#3B0A2E]">Email</label><input required type="email" value={form.email} onChange={set('email')} className={inp} data-testid="signup-email-input" /></div>
               </div>
+              {sessions.length > 0 && (
+                <div className="mt-4"><label className="text-[13px] font-semibold text-[#3B0A2E]">Choose a session *</label>
+                  <select required value={form.session_id} onChange={set('session_id')} className={inp} data-testid="signup-session-select">
+                    <option value="">Select a date…</option>
+                    {sessions.map((x) => <option key={x.id} value={x.id} disabled={x.full}>{sessionOption(x)}</option>)}
+                  </select>
+                </div>
+              )}
               <div className="mt-4"><label className="text-[13px] font-semibold text-[#3B0A2E]">Phone (optional)</label><input type="tel" value={form.phone} onChange={set('phone')} className={inp} data-testid="signup-phone-input" /></div>
               <div className="mt-4"><label className="text-[13px] font-semibold text-[#3B0A2E]">Message (optional)</label><textarea rows={3} value={form.message} onChange={set('message')} className={`${inp} resize-y`} data-testid="signup-message-input" /></div>
               {error && <p className="text-[13px] text-red-600 mt-3" data-testid="signup-error">{error}</p>}

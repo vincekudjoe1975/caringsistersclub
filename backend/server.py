@@ -73,6 +73,7 @@ import requests as _requests
 from fastapi import Request, Response, HTTPException, UploadFile, File, Form, Depends, Header, Query, BackgroundTasks
 from typing import Optional
 from pymongo.errors import DuplicateKeyError
+from pymongo import ReturnDocument
 from datetime import timedelta
 
 # ---- Emergent Object Storage config ----
@@ -318,7 +319,9 @@ async def list_media(category: Optional[str] = None):
     query = {"is_deleted": {"$ne": True}, "category": {"$nin": ["story", "spotlight", "avatar", "gathering"]}}
     if category and category not in ("story", "spotlight", "avatar", "gathering"):
         query["category"] = category
-    items = await db.media.find(query, {"_id": 0}).sort("uploaded_at", -1).to_list(500)
+    if category == "gallery":
+        query["hidden"] = {"$ne": True}
+    items = await db.media.find(query, {"_id": 0}).sort([("order", 1), ("uploaded_at", -1)] if category == "gallery" else [("uploaded_at", -1)]).to_list(1000)
     for it in items:
         it["url"] = _media_url(it["id"])
     return items
@@ -2903,6 +2906,7 @@ async def public_program(slug: str):
     if ids:
         home = {t["id"]: t for t in (await _get_home_content())["testimonials"]}
         p["testimonials"] = (p.get("testimonials") or []) + [home[i] for i in ids if i in home]
+    p["sessions"] = await _upcoming_program_sessions(p["id"])
     return _with_rating(await _with_seats(p), await _program_ratings())
 
 
@@ -3235,6 +3239,7 @@ class ProgramSignupIn(BaseModel):
     email: str
     phone: str = ""
     message: str = ""
+    session_id: str = ""
 
 
 def _signup_confirm_html(name: str, prog: dict, waitlist: bool = False, pos: int = 0, status_token: str = "") -> str:
@@ -3244,7 +3249,8 @@ def _signup_confirm_html(name: str, prog: dict, waitlist: bool = False, pos: int
             '<p style="font-size:13px;color:#6b5560;margin:0 0 18px">Your place updates as spots open. Check it anytime:</p>'
             + _btn(f"{PUBLIC_APP_URL}/waitlist/status?token={status_token}", "Check My Position") + "&nbsp; ") if waitlist else (
             f'Thank you for your interest in <strong>{_esc(prog["title"])}</strong>. '
-            'A member of our team will reach out within 3 business days with next steps.</p>')
+            + (f'Your session: <strong>{_esc(prog["session_label"])}</strong>. ' if prog.get("session_label") else "")
+            + 'A member of our team will reach out within 3 business days with next steps.</p>')
     return (
         '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
         '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
@@ -3275,12 +3281,25 @@ async def program_signup(slug: str, payload: ProgramSignupIn, request: Request, 
     if not prog:
         raise HTTPException(status_code=404, detail="Program not found")
     full = bool((await _with_seats(dict(prog))).get("full"))
+    sess = None
+    if payload.session_id:
+        sess = await db.program_sessions.find_one({"id": payload.session_id[:60], "program_id": prog["id"], "date": {"$gte": _today_et().isoformat()}}, {"_id": 0})
+        if sess is None:
+            raise HTTPException(status_code=400, detail="That session is no longer available. Please choose another date.")
+        if (await _session_view(sess)).get("full"):
+            raise HTTPException(status_code=400, detail="That session is full. Please choose another date.")
+    elif await db.program_sessions.find_one({"program_id": prog["id"], "date": {"$gte": _today_et().isoformat()}}, {"_id": 1}):
+        raise HTTPException(status_code=400, detail="Please choose a session date.")
     phone = re.sub(r"[^0-9+()\- .]", "", payload.phone)[:30]
     data = {"program": prog["title"], "program_slug": prog["slug"], "name": name, "email": email.lower(), "phone": phone, "message": payload.message.strip()[:3000]}
+    if sess:
+        data["session"] = _session_label(sess)
     if full:
         data["list"] = "Waitlist"
     doc = {"id": str(uuid.uuid4()), "type": "program_signup", "program_id": prog["id"], "waitlist": full,
            "data": data, "read": False, "created_at": _now_iso()}
+    if sess:
+        doc["session_id"] = sess["id"]
     cutoff = (datetime.now(timezone.utc) - timedelta(days=LAUNCH_WINDOW_DAYS)).isoformat()
     le = await db.session_launch_emails.find_one_and_update(
         {"program_id": prog["id"], "email": email.lower(), "at": {"$gte": cutoff}, "converted_at": {"$exists": False}},
@@ -3303,7 +3322,7 @@ async def program_signup(slug: str, payload: ProgramSignupIn, request: Request, 
         background.add_task(_waitlist_join_alert, prog, data, pos, total)
         return {"waitlist": True, "position": pos, "total": total, "status_token": doc["status_token"],
                 "message": f"This program is full, so you've been added to the waitlist. You're #{pos} in line."}
-    background.add_task(_send_signup_confirm, email.lower(), name, prog, False)
+    background.add_task(_send_signup_confirm, email.lower(), name, {**prog, "session_label": data.get("session", "")}, False)
     return {"waitlist": False, "message": "You're signed up! Check your email for a confirmation."}
 
 
@@ -9248,6 +9267,231 @@ async def _auto_recaps(today) -> int:
             await _send_recap(m["id"], None, "", "auto")
             n += 1
     return n
+
+
+# ---------- Leadership manager ----------
+LEADER_GROUPS = ("board", "executive")
+
+
+class LeaderIn(BaseModel):
+    name: str
+    role: str = ""
+    group: str = "board"
+    intro: str = ""
+    bio: str = ""
+    photo_url: str = ""
+    email: str = ""
+    linkedin: str = ""
+    visible: bool = True
+
+
+def _clean_leader(p: LeaderIn) -> dict:
+    if not p.name.strip():
+        raise HTTPException(status_code=400, detail="Name is required")
+    if p.group not in LEADER_GROUPS:
+        raise HTTPException(status_code=400, detail="Invalid group")
+    link = p.linkedin.strip()[:300]
+    if link and not re.match(r"^https?://", link):
+        link = "https://" + link
+    photo = p.photo_url.strip()[:500]
+    if photo and not (photo.startswith("/api/media/file/") or photo.startswith("/static/") or re.match(r"^https://", photo)):
+        raise HTTPException(status_code=400, detail="Invalid photo")
+    email = p.email.strip().lower()[:200]
+    if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(status_code=400, detail="Invalid email")
+    return {"name": p.name.strip()[:120], "role": p.role.strip()[:120], "group": p.group, "intro": p.intro.strip()[:400], "bio": p.bio.strip()[:8000],
+            "photo_url": photo, "email": email, "linkedin": link, "visible": p.visible}
+
+
+@api_router.get("/leaders")
+async def public_leaders():
+    return {"items": await db.leaders.find({"visible": True}, {"_id": 0}).sort("order", 1).to_list(200)}
+
+
+@api_router.get("/admin/leaders")
+async def admin_leaders(user=Depends(require_admin)):
+    return {"items": await db.leaders.find({}, {"_id": 0}).sort("order", 1).to_list(200)}
+
+
+@api_router.post("/admin/leaders")
+async def admin_leader_create(payload: LeaderIn, user=Depends(require_admin)):
+    last = await db.leaders.find_one({}, {"_id": 0, "order": 1}, sort=[("order", -1)])
+    doc = {"id": str(uuid.uuid4()), **_clean_leader(payload), "order": ((last or {}).get("order") or 0) + 1, "created_at": _now_iso()}
+    await db.leaders.insert_one(dict(doc))
+    return doc
+
+
+@api_router.put("/admin/leaders/{lid}")
+async def admin_leader_update(lid: str, payload: LeaderIn, user=Depends(require_admin)):
+    doc = await db.leaders.find_one_and_update({"id": lid}, {"$set": {**_clean_leader(payload), "updated_at": _now_iso()}}, {"_id": 0}, return_document=ReturnDocument.AFTER)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return doc
+
+
+@api_router.delete("/admin/leaders/{lid}")
+async def admin_leader_delete(lid: str, user=Depends(require_admin)):
+    if not (await db.leaders.delete_one({"id": lid})).deleted_count:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True}
+
+
+@api_router.post("/admin/leaders/reorder")
+async def admin_leaders_reorder(payload: ReorderIn, user=Depends(require_admin)):
+    for i, lid in enumerate(payload.ids[:200]):
+        await db.leaders.update_one({"id": lid}, {"$set": {"order": i + 1}})
+    return {"ok": True}
+
+
+# ---------- Gallery manager ----------
+class GalleryEditIn(BaseModel):
+    title: str = ""
+    description: str = ""
+    tag_type: str = ""
+    tag_label: str = ""
+    tag_ref: str = ""
+    hidden: bool = False
+
+
+@api_router.get("/admin/gallery")
+async def admin_gallery(user=Depends(require_admin)):
+    items = await db.media.find({"category": "gallery", "is_deleted": {"$ne": True}}, {"_id": 0}).sort([("order", 1), ("uploaded_at", -1)]).to_list(1000)
+    for it in items:
+        it["url"] = _media_url(it["id"])
+    return {"items": items}
+
+
+@api_router.put("/admin/gallery/{mid}")
+async def admin_gallery_edit(mid: str, payload: GalleryEditIn, user=Depends(require_admin)):
+    if payload.tag_type not in ("", "event", "program"):
+        raise HTTPException(status_code=400, detail="Invalid tag")
+    upd = {"title": payload.title.strip()[:150], "description": payload.description.strip()[:2000], "tag_type": payload.tag_type,
+           "tag_label": payload.tag_label.strip()[:150] if payload.tag_type else "", "tag_ref": payload.tag_ref.strip()[:120] if payload.tag_type else "", "hidden": payload.hidden}
+    if not (await db.media.update_one({"id": mid, "category": "gallery", "is_deleted": {"$ne": True}}, {"$set": upd})).matched_count:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True, **upd}
+
+
+@api_router.post("/admin/gallery/reorder")
+async def admin_gallery_reorder(payload: ReorderIn, user=Depends(require_admin)):
+    for i, mid in enumerate(payload.ids[:1000]):
+        await db.media.update_one({"id": mid, "category": "gallery"}, {"$set": {"order": i + 1}})
+    return {"ok": True}
+
+
+# ---------- Program sessions (multiple dated sessions per program) ----------
+class SessionIn(BaseModel):
+    date: str
+    start_time: str = ""
+    end_time: str = ""
+    location: str = ""
+    seats: int = 0
+    notes: str = ""
+
+
+def _clean_session(p: SessionIn) -> dict:
+    try:
+        datetime.strptime(p.date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
+    for t in (p.start_time, p.end_time):
+        if t and not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", t):
+            raise HTTPException(status_code=400, detail="Times must be HH:MM")
+    if p.start_time and p.end_time and p.end_time <= p.start_time:
+        raise HTTPException(status_code=400, detail="End time must be after start time")
+    if not 0 <= p.seats <= 10000:
+        raise HTTPException(status_code=400, detail="Invalid seats")
+    return {"date": p.date, "start_time": p.start_time, "end_time": p.end_time, "location": p.location.strip()[:200], "seats": p.seats, "notes": p.notes.strip()[:500]}
+
+
+def _session_taken_q(sid: str) -> dict:
+    return {"type": "program_signup", "session_id": sid, "waitlist": {"$ne": True}, "stage": {"$ne": "not_fit"}, "transferred": {"$ne": True}}
+
+
+async def _session_view(s: dict) -> dict:
+    out = {k: s.get(k) for k in ("id", "program_id", "date", "start_time", "end_time", "location", "seats", "notes")}
+    if s.get("seats"):
+        out["seats_left"] = max(0, s["seats"] - await db.submissions.count_documents(_session_taken_q(s["id"])))
+        out["full"] = out["seats_left"] == 0
+    return out
+
+
+def _fmt_time(t: str) -> str:
+    return datetime.strptime(t, "%H:%M").strftime("%-I:%M %p") if t else ""
+
+
+def _session_label(s: dict) -> str:
+    when = datetime.strptime(s["date"], "%Y-%m-%d").strftime("%a, %b %-d, %Y")
+    tm = _fmt_time(s.get("start_time", "")) + (f" – {_fmt_time(s['end_time'])}" if s.get("end_time") else "")
+    return " · ".join(x for x in (when, tm, s.get("location", "")) if x)
+
+
+@api_router.get("/admin/programs/{pid}/sessions")
+async def admin_program_sessions(pid: str, user=Depends(require_admin)):
+    rows = await db.program_sessions.find({"program_id": pid}, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(500)
+    out = []
+    for s in rows:
+        v = await _session_view(s)
+        v["signups"] = await db.submissions.count_documents(_session_taken_q(s["id"]))
+        out.append(v)
+    return {"items": out}
+
+
+@api_router.post("/admin/programs/{pid}/sessions")
+async def admin_session_create(pid: str, payload: SessionIn, user=Depends(require_admin)):
+    if not await db.programs.find_one({"id": pid}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Program not found")
+    doc = {"id": str(uuid.uuid4()), "program_id": pid, **_clean_session(payload), "created_at": _now_iso()}
+    await db.program_sessions.insert_one(dict(doc))
+    return await _session_view(doc)
+
+
+@api_router.put("/admin/sessions/{sid}")
+async def admin_session_update(sid: str, payload: SessionIn, user=Depends(require_admin)):
+    s = await db.program_sessions.find_one_and_update({"id": sid}, {"$set": _clean_session(payload)}, {"_id": 0}, return_document=ReturnDocument.AFTER)
+    if s is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return await _session_view(s)
+
+
+@api_router.delete("/admin/sessions/{sid}")
+async def admin_session_delete(sid: str, user=Depends(require_admin)):
+    if await db.submissions.count_documents(_session_taken_q(sid)):
+        raise HTTPException(status_code=400, detail="This session has sign-ups. Move or remove them before deleting it.")
+    if not (await db.program_sessions.delete_one({"id": sid})).deleted_count:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"ok": True}
+
+
+async def _upcoming_program_sessions(pid: str) -> list:
+    today = _today_et().isoformat()
+    return [await _session_view(s) for s in await db.program_sessions.find({"program_id": pid, "date": {"$gte": today}}, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(200)]
+
+
+@api_router.get("/sessions/calendar")
+async def public_sessions_calendar():
+    today = _today_et().isoformat()
+    progs = {p["id"]: p for p in await db.programs.find({"published": True}, {"_id": 0, "body": 0, "gallery": 0, "testimonials": 0}).to_list(500)}
+    entries, with_sessions = [], set()
+    for s in await db.program_sessions.find({"date": {"$gte": today}, "program_id": {"$in": list(progs)}}, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(1000):
+        p = progs[s["program_id"]]
+        with_sessions.add(p["id"])
+        v = await _session_view(s)
+        entries.append({"kind": "session", "id": s["id"], "title": p["title"], "category": p.get("category", ""), "slug": p["slug"], "summary": p.get("summary", ""),
+                        "image_url": p.get("image_url", ""), "date": s["date"], "end_date": s["date"], "start_time": s["start_time"], "end_time": s["end_time"],
+                        "location": s["location"], "notes": s["notes"], "seats_left": v.get("seats_left"), "full": v.get("full", False), "link": f"/initiatives/{p['slug']}?session={s['id']}#join"})
+    for p in progs.values():
+        if p["id"] in with_sessions or not p.get("start_date") or (p.get("end_date") or p["start_date"]) < today:
+            continue
+        p = await _with_seats(p)
+        entries.append({"kind": "program", "id": p["id"], "title": p["title"], "category": p.get("category", ""), "slug": p["slug"], "summary": p.get("summary", ""),
+                        "image_url": p.get("image_url", ""), "date": p["start_date"], "end_date": p.get("end_date") or p["start_date"], "schedule": p.get("schedule", ""),
+                        "seats_left": p.get("seats_left"), "full": p.get("full", False), "link": f"/initiatives/{p['slug']}#join"})
+    for e in (await public_events())["items"]:
+        entries.append({"kind": "event", "id": e["id"], "title": e.get("title", ""), "category": e.get("category") or "Event", "summary": e.get("description", ""), "image_url": e.get("image_url", ""),
+                        "date": e["date"], "end_date": e["date"], "start_time": e.get("time", ""), "location": e.get("location", ""), "link": "/events", "gcal_url": e.get("gcal_url", "")})
+    entries.sort(key=lambda x: (x["date"], x.get("start_time") or ""))
+    return {"entries": entries, "categories": sorted({x["category"] for x in entries if x["category"]})}
 
 
 # Include the router in the main app
