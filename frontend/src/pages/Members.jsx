@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
-import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText, Star, HandHeart } from 'lucide-react';
+import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText, Star, HandHeart, Camera } from 'lucide-react';
 import { MemberApply } from '../components/members/MemberApply';
 import { Announcements } from '../components/members/Announcements';
 import { Discussion } from '../components/members/Discussion';
@@ -13,6 +13,7 @@ import { Ballots } from '../components/members/Ballots';
 import { Standing } from '../components/members/Standing';
 import { Minutes } from '../components/members/Minutes';
 import { SpotlightArchive, PrayerBoard } from '../components/members/Phase6';
+import { PhotoAlbums } from '../components/members/Phase7';
 
 const TABS = [
   { k: 'news', l: 'Announcements', icon: Megaphone, C: Announcements },
@@ -22,6 +23,7 @@ const TABS = [
   { k: 'dues', l: 'My Dues', icon: Wallet, C: Standing },
   { k: 'people', l: 'Directory', icon: Users, C: Directory },
   { k: 'spotlights', l: 'Spotlights', icon: Star, C: SpotlightArchive },
+  { k: 'photos', l: 'Photos', icon: Camera, C: PhotoAlbums },
   { k: 'minutes', l: 'Minutes', icon: FileText, C: Minutes },
   { k: 'bylaws', l: 'Bylaws', icon: ScrollText, C: Bylaws },
   { k: 'me', l: 'My Profile', icon: UserCircle, C: MyProfile },

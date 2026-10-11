@@ -13,6 +13,8 @@ import { AdminReferrers } from '../components/members/admin/AdminReferrers';
 import { AdminImport } from '../components/members/admin/AdminImport';
 import { AdminWelcome } from '../components/members/admin/AdminWelcome';
 import { AdminAnnual, AdminSpotlight } from '../components/members/admin/AdminAnnualSpotlight';
+import { AdminGatheringPhotos, AdminPhotoControl } from '../components/members/Phase7';
+import { Avatar } from '../components/members/Avatar';
 
 const inputCls = 'w-full rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
 const Box = ({ title, children, testid }) => (
@@ -49,13 +51,15 @@ function JoinedInput({ m }) {
   return <input data-testid={`joined-${m.user_id}`} type="date" title="Date she joined the Club" value={v} onChange={(e) => setV(e.target.value)} onBlur={() => v && api.put(`/admin/members/${m.user_id}/joined`, { date: v })} className="rounded-lg border border-[#3B0A2E]/10 px-2 py-1 text-[12px] focus:outline-none focus:border-[#B4247E]" />;
 }
 
-function Roster({ rows, act }) {
+function Roster({ rows, act, reload }) {
   if (!rows.length) return <p className="text-[13.5px] text-[#241019]/50">No members yet.</p>;
   return (
     <div className="divide-y divide-[#3B0A2E]/8" data-testid="member-roster">
       {rows.map((m) => (
         <div key={m.user_id} className="py-2.5 flex items-center justify-between gap-3">
-          <div className="min-w-0"><p className="text-[14px] font-semibold text-[#3B0A2E] truncate">{m.name} {m.status !== 'active' && <span className="text-[11px] uppercase text-[#B4247E] ml-1">{m.status}</span>}</p><p className="text-[12px] text-[#241019]/50 truncate">{m.email}</p></div>
+          <Avatar name={m.name} src={m.picture} size={32} />
+          <div className="flex-1 min-w-0"><p className="text-[14px] font-semibold text-[#3B0A2E] truncate">{m.name} {m.status !== 'active' && <span className="text-[11px] uppercase text-[#B4247E] ml-1">{m.status}</span>}</p><p className="text-[12px] text-[#241019]/50 truncate">{m.email}</p></div>
+          <AdminPhotoControl m={m} reload={reload} />
           <OfficeInput m={m} />
           <JoinedInput m={m} />
           {m.status === 'active' && <button data-testid={`welcome-send-${m.user_id}`} onClick={async () => { try { await api.post(`/admin/members/${m.user_id}/welcome`); window.alert('Welcome email sent'); } catch (ex) { window.alert(ex?.response?.data?.detail || 'Could not send'); } }} className="text-[12px] text-[#B4247E] font-semibold">Send welcome</button>}
@@ -161,16 +165,16 @@ export default function AdminMembers() {
   };
   const [sub, setSub] = useState('people');
   const apps = d.members.filter((m) => m.status === 'applied');
-  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['treasurer', 'Treasurer report'], ['referrers', 'Referrers'], ['import', 'Import'], ['welcome', 'Welcome email'], ['annual', 'Annual summary'], ['spotlight', 'Spotlight'], ['december', 'December renewal']];
+  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['treasurer', 'Treasurer report'], ['referrers', 'Referrers'], ['import', 'Import'], ['welcome', 'Welcome email'], ['annual', 'Annual summary'], ['spotlight', 'Spotlight'], ['photos', 'Gathering photos'], ['december', 'December renewal']];
   return (
     <div>
     <div className="flex flex-wrap gap-1 mb-6">{tabs.map(([k, l]) => <button key={k} data-testid={`members-sub-${k}`} onClick={() => setSub(k)} className={`rounded-full px-4 py-2 text-[13px] font-semibold transition-colors ${sub === k ? 'bg-[#3B0A2E] text-white' : 'bg-white border border-[#3B0A2E]/15 text-[#3B0A2E]'}`}>{l}</button>)}</div>
-    {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : sub === 'treasurer' ? <AdminTreasurer /> : sub === 'referrers' ? <AdminReferrers /> : sub === 'import' ? <AdminImport /> : sub === 'welcome' ? <AdminWelcome /> : sub === 'annual' ? <AdminAnnual /> : sub === 'spotlight' ? <AdminSpotlight /> : (
+    {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : sub === 'treasurer' ? <AdminTreasurer /> : sub === 'referrers' ? <AdminReferrers /> : sub === 'import' ? <AdminImport /> : sub === 'welcome' ? <AdminWelcome /> : sub === 'annual' ? <AdminAnnual /> : sub === 'spotlight' ? <AdminSpotlight /> : sub === 'photos' ? <AdminGatheringPhotos /> : (
     <div className="grid lg:grid-cols-2 gap-6" data-testid="admin-members">
       <Box title={`Applications (${apps.length})`} testid="admin-applications"><Applications rows={apps} act={act} /></Box>
       <Box title="Invite members" testid="admin-invites"><Invites invites={d.invites} reload={load} toast={toast} /></Box>
       <Box title="Announcements" testid="admin-announcements"><AnnouncementForm toast={toast} /></Box>
-      <Box title={`Members (${d.members.filter((m) => m.status === 'active').length} active)`} testid="admin-roster"><Roster rows={d.members.filter((m) => m.status !== 'applied')} act={act} /></Box>
+      <Box title={`Members (${d.members.filter((m) => m.status === 'active').length} active)`} testid="admin-roster"><Roster rows={d.members.filter((m) => m.status !== 'applied')} act={act} reload={load} /></Box>
       <Box title="Bylaws" testid="admin-bylaws"><BylawsUpload toast={toast} /></Box>
     </div>
     )}

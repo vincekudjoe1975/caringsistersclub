@@ -182,7 +182,7 @@ async def auth_session(payload: SessionRequest, response: Response):
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         user_id = existing["user_id"]
-        update = {"name": data.get("name"), "picture": data.get("picture")}
+        update = {"name": data.get("name")} if existing.get("picture_custom") else {"name": data.get("name"), "picture": data.get("picture")}
         if email.lower() in ADMIN_OWNER_EMAILS and existing.get("role") != "admin":
             update["role"] = "admin"
         await db.users.update_one({"user_id": user_id}, {"$set": update})
@@ -315,8 +315,8 @@ async def _store_upload(file: UploadFile, category: str, title, subtitle, upload
 
 @api_router.get("/media")
 async def list_media(category: Optional[str] = None):
-    query = {"is_deleted": {"$ne": True}, "category": {"$nin": ["story", "spotlight"]}}
-    if category and category not in ("story", "spotlight"):
+    query = {"is_deleted": {"$ne": True}, "category": {"$nin": ["story", "spotlight", "avatar", "gathering"]}}
+    if category and category not in ("story", "spotlight", "avatar", "gathering"):
         query["category"] = category
     items = await db.media.find(query, {"_id": 0}).sort("uploaded_at", -1).to_list(500)
     for it in items:
@@ -327,7 +327,7 @@ async def list_media(category: Optional[str] = None):
 @api_router.get("/media/file/{item_id}")
 async def get_media_file(item_id: str):
     item = await db.media.find_one({"id": item_id, "is_deleted": {"$ne": True}}, {"_id": 0})
-    if not item:
+    if not item or item.get("category") == "gathering":
         raise HTTPException(status_code=404, detail="Not found")
     data, content_type = None, None
     try:
@@ -429,6 +429,7 @@ def _create_stripe_donation_session(req: "DonationCheckout", amount: float, mont
 
 import time as _time
 from collections import deque, defaultdict
+import calendar
 
 _RATE_BUCKETS: dict = defaultdict(deque)
 
@@ -6335,6 +6336,7 @@ class MemberProfile(BaseModel):
     show_contact: bool = False
     birthday_month: Optional[int] = None
     birthday_day: Optional[int] = None
+    prayer_weekly: bool = True
 
 
 @api_router.put("/members/profile")
@@ -6346,7 +6348,7 @@ async def members_profile(payload: MemberProfile, user=Depends(require_member)):
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="Please choose a valid birthday month and day.")
     prof = {"city": payload.city.strip()[:80], "phone": payload.phone.strip()[:30], "bio": payload.bio.strip()[:600], "show_contact": payload.show_contact,
-            "birthday_month": int(bm) if bm else None, "birthday_day": int(bd) if bd else None}
+            "birthday_month": int(bm) if bm else None, "birthday_day": int(bd) if bd else None, "prayer_weekly": payload.prayer_weekly}
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_profile": prof}})
     return prof
 
@@ -7446,6 +7448,7 @@ async def _member_scheduled():
     await _send_agenda_reminders(today)
     await _send_gathering_reminders(today)
     await _send_member_anniversaries(today)
+    await _member_phase7_scheduled()
 
 
 # ---------- Member Portal phase 4: treasurer report, agendas, anniversaries, referrer notices ----------
@@ -8535,8 +8538,12 @@ async def members_prayer_pray(pid: str, user=Depends(require_member)):
     p = await db.member_prayers.find_one({"id": pid}, {"_id": 0, "praying": 1})
     if p is None:
         raise HTTPException(status_code=404, detail="Post not found")
-    op = "$pull" if user["user_id"] in (p.get("praying") or []) else "$addToSet"
-    await db.member_prayers.update_one({"id": pid}, {op: {"praying": user["user_id"]}})
+    if user["user_id"] in (p.get("praying") or []):
+        op = "$pull"
+        await db.member_prayers.update_one({"id": pid}, {"$pull": {"praying": user["user_id"]}})
+    else:
+        op = "$addToSet"
+        await db.member_prayers.update_one({"id": pid}, {"$addToSet": {"praying": user["user_id"]}, "$push": {"praying_log": {"by": user["user_id"], "at": _now_iso()}}})
     return {"praying": op == "$addToSet"}
 
 
@@ -8579,6 +8586,355 @@ async def members_prayer_encourage_delete(pid: str, eid: str, user=Depends(requi
     if not (await db.member_prayers.update_one({"id": pid, "encouragements": {"$elemMatch": match}}, {"$pull": {"encouragements": {"id": eid}}})).modified_count:
         raise HTTPException(status_code=403, detail="You can only remove your own messages.")
     return {"ok": True}
+
+
+# ---------- Member Portal phase 7: avatars, gathering albums, self check-in, prayer & birthday emails ----------
+def _hour_et() -> int:
+    return datetime.now(EVENT_TZ).hour
+
+
+async def _once(key: str) -> bool:
+    try:
+        await db.scheduled_runs.insert_one({"_id": key, "key": key, "ran_at": _now_iso()})
+        return True
+    except DuplicateKeyError:
+        return False
+
+
+# --- Member avatar ---
+async def _set_member_photo(uid: str, url: str):
+    await db.users.update_one({"user_id": uid}, {"$set": {"picture": url, "picture_custom": bool(url)}})
+    for coll in (db.member_threads, db.member_prayers):
+        await coll.update_many({"author_id": uid}, {"$set": {"author_picture": url}})
+
+
+@api_router.post("/members/photo")
+async def members_photo_upload(request: Request, file: UploadFile = File(...), user=Depends(require_member)):
+    _rate_limit(request, "member-avatar", max_hits=6, window_s=600)
+    doc = await _store_upload(file, "avatar", "Profile photo", None, user["user_id"])
+    await _set_member_photo(user["user_id"], doc["url"])
+    return {"picture": doc["url"]}
+
+
+@api_router.delete("/members/photo")
+async def members_photo_remove(user=Depends(require_member)):
+    await _set_member_photo(user["user_id"], "")
+    return {"picture": ""}
+
+
+@api_router.post("/admin/members/{uid}/photo")
+async def admin_member_photo(uid: str, file: UploadFile = File(...), user=Depends(require_admin)):
+    if not await db.users.find_one({"user_id": uid}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Member not found")
+    doc = await _store_upload(file, "avatar", "Profile photo", None, user.get("email"))
+    await _set_member_photo(uid, doc["url"])
+    return {"picture": doc["url"]}
+
+
+@api_router.delete("/admin/members/{uid}/photo")
+async def admin_member_photo_remove(uid: str, user=Depends(require_admin)):
+    await _set_member_photo(uid, "")
+    return {"ok": True}
+
+
+# --- Gathering photo albums ---
+def _gphoto_view(p: dict, user: dict) -> dict:
+    return {"id": p["id"], "meeting_id": p["meeting_id"], "caption": p.get("caption", ""), "status": p["status"], "uploader_name": p["uploader_name"],
+            "mine": p["uploader_id"] == user["user_id"], "created_at": p["created_at"], "url": f"/api/members/gathering-photos/{p['id']}/file"}
+
+
+@api_router.get("/members/albums")
+async def members_albums(user=Depends(require_member)):
+    rows = await db.member_meetings.find({"kind": "in-person", "date": {"$lte": _today_et().isoformat()}}, {"_id": 0, "id": 1, "title": 1, "date": 1, "location": 1}).sort("date", -1).to_list(24)
+    out = []
+    for m in rows:
+        approved = await db.member_gathering_photos.find({"meeting_id": m["id"], "status": "approved"}, {"_id": 0}).sort("created_at", 1).to_list(500)
+        out.append({**m, "count": len(approved), "cover": f"/api/members/gathering-photos/{approved[0]['id']}/file" if approved else ""})
+    return out
+
+
+@api_router.get("/members/albums/{mid}")
+async def members_album(mid: str, user=Depends(require_member)):
+    m = await db.member_meetings.find_one({"id": mid, "kind": "in-person"}, {"_id": 0, "id": 1, "title": 1, "date": 1, "location": 1})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Gathering not found")
+    q = {"meeting_id": mid} if user.get("role") == "admin" else {"meeting_id": mid, "$or": [{"status": "approved"}, {"uploader_id": user["user_id"]}]}
+    rows = await db.member_gathering_photos.find(q, {"_id": 0}).sort("created_at", 1).to_list(1000)
+    return {"gathering": m, "can_upload": m["date"] <= _today_et().isoformat(), "photos": [_gphoto_view(p, user) for p in rows]}
+
+
+@api_router.post("/members/albums/{mid}/photos")
+async def members_album_upload(mid: str, request: Request, file: UploadFile = File(...), caption: str = Form(""), user=Depends(require_member)):
+    _rate_limit(request, "gathering-photo", max_hits=30, window_s=600)
+    m = await db.member_meetings.find_one({"id": mid, "kind": "in-person"}, {"_id": 0, "date": 1})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Gathering not found")
+    if m["date"] > _today_et().isoformat():
+        raise HTTPException(status_code=400, detail="Photos can be shared once the gathering has happened.")
+    doc = await _store_upload(file, "gathering", "Gathering photo", None, user["user_id"])
+    is_admin = user.get("role") == "admin"
+    p = {"id": str(uuid.uuid4()), "meeting_id": mid, "media_id": doc["id"], "storage_path": doc["storage_path"], "content_type": doc["content_type"],
+         "caption": caption.strip()[:200], "uploader_id": user["user_id"], "uploader_name": user.get("name") or "Member",
+         "status": "approved" if is_admin else "pending", "created_at": _now_iso()}
+    if is_admin:
+        p["approved_at"] = p["created_at"]
+    await db.member_gathering_photos.insert_one(dict(p))
+    return _gphoto_view(p, user)
+
+
+@api_router.get("/members/gathering-photos/{pid}/file")
+async def members_gathering_photo_file(pid: str, user=Depends(require_member)):
+    p = await db.member_gathering_photos.find_one({"id": pid}, {"_id": 0})
+    if p is None or not (p["status"] == "approved" or p["uploader_id"] == user["user_id"] or user.get("role") == "admin"):
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        data, _ = get_object(p["storage_path"])
+    except Exception as e:
+        logging.error(f"Gathering photo fetch failed: {e}")
+        raise HTTPException(status_code=404, detail="File missing")
+    return Response(content=data, media_type=p["content_type"], headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=3600"})
+
+
+@api_router.delete("/members/gathering-photos/{pid}")
+async def members_gathering_photo_delete(pid: str, user=Depends(require_member)):
+    q = {"id": pid} if user.get("role") == "admin" else {"id": pid, "uploader_id": user["user_id"], "status": "pending"}
+    p = await db.member_gathering_photos.find_one_and_delete(q, {"_id": 0})
+    if p is None:
+        raise HTTPException(status_code=403, detail="You can only withdraw your own photos that are still awaiting review.")
+    await db.media.update_one({"id": p["media_id"]}, {"$set": {"is_deleted": True}})
+    return {"ok": True}
+
+
+@api_router.get("/admin/members/gathering-photos")
+async def admin_gathering_photos(user=Depends(require_admin)):
+    rows = await db.member_gathering_photos.find({"status": "pending"}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    titles = {m["id"]: m["title"] for m in await db.member_meetings.find({"id": {"$in": list({r["meeting_id"] for r in rows})}}, {"_id": 0, "id": 1, "title": 1}).to_list(200)}
+    return [{**_gphoto_view(p, user), "gathering_title": titles.get(p["meeting_id"], "")} for p in rows]
+
+
+@api_router.post("/admin/members/gathering-photos/{pid}/approve")
+async def admin_gathering_photo_approve(pid: str, user=Depends(require_admin)):
+    if not (await db.member_gathering_photos.update_one({"id": pid}, {"$set": {"status": "approved", "approved_at": _now_iso(), "approved_by": user.get("email")}})).matched_count:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return {"ok": True}
+
+
+# --- Self check-in (door QR) ---
+async def _door_token(mid: str, reset: bool = False) -> str:
+    m = await db.member_meetings.find_one({"id": mid}, {"_id": 0, "door_token": 1})
+    if m is None:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    if m.get("door_token") and not reset:
+        return m["door_token"]
+    tok = secrets.token_urlsafe(16)
+    await db.member_meetings.update_one({"id": mid}, {"$set": {"door_token": tok}})
+    return tok
+
+
+@api_router.get("/admin/members/checkin/{mid}/door")
+async def admin_door_code(mid: str, user=Depends(require_admin)):
+    return {"token": await _door_token(mid)}
+
+
+@api_router.post("/admin/members/checkin/{mid}/door/reset")
+async def admin_door_reset(mid: str, user=Depends(require_admin)):
+    return {"token": await _door_token(mid, reset=True)}
+
+
+async def _self_meeting(mid: str, t: str) -> dict:
+    m = await db.member_meetings.find_one({"id": mid}, {"_id": 0})
+    if m is None or not m.get("door_token") or not secrets.compare_digest(m["door_token"], t or ""):
+        raise HTTPException(status_code=404, detail="This check-in code isn't valid. Please scan the code at the door again.")
+    return m
+
+
+def _self_open(m: dict) -> bool:
+    return m["date"] == _today_et().isoformat() and not m.get("finished_at")
+
+
+@api_router.get("/members/self-checkin/{mid}")
+async def members_self_checkin_info(mid: str, t: str = "", user=Depends(require_member)):
+    m = await _self_meeting(mid, t)
+    ci = (m.get("checkins") or {}).get(user["user_id"])
+    return {"title": m["title"], "date": m["date"], "time": m.get("time", ""), "location": m.get("location", ""), "open": _self_open(m),
+            "checked_in": (m.get("attendance") or {}).get(user["user_id"]) == "present", "guests": (ci or {}).get("guests", 0),
+            "rsvp_guests": ((m.get("rsvps") or {}).get(user["user_id"]) or {}).get("guests", 0)}
+
+
+class SelfCheckinIn(BaseModel):
+    t: str
+    guests: int = 0
+
+
+@api_router.post("/members/self-checkin/{mid}")
+async def members_self_checkin(mid: str, payload: SelfCheckinIn, background: BackgroundTasks, user=Depends(require_member)):
+    if not 0 <= payload.guests <= 20:
+        raise HTTPException(status_code=400, detail="Guests must be between 0 and 20.")
+    m = await _self_meeting(mid, payload.t)
+    if not _self_open(m):
+        raise HTTPException(status_code=400, detail="Self check-in is only open on the day of the gathering.")
+    if user.get("member_status") != "active":
+        raise HTTPException(status_code=403, detail="Only active members can check in.")
+    await db.member_meetings.update_one({"id": mid}, {"$set": {f"attendance.{user['user_id']}": "present",
+                                        f"checkins.{user['user_id']}": {"at": _now_iso(), "guests": payload.guests, "by": "self"}}})
+    await _apply_attendance_rules(mid, int(m["date"][:4]), background)
+    return {"ok": True, "guests": payload.guests}
+
+
+# --- Prayer email digests ---
+def _prayer_snip(p: dict, n: int = 140) -> str:
+    b = p["body"].replace("\n", " ")
+    return b if len(b) <= n else b[:n].rsplit(" ", 1)[0] + "…"
+
+
+async def _send_prayer_author_digests() -> int:
+    now = _now_iso()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    by_author = defaultdict(list)
+    for p in await db.member_prayers.find({"created_at": {"$gte": cutoff}}, {"_id": 0}).to_list(2000):
+        since = p.get("digest_at") or p["created_at"]
+        pray = [x for x in p.get("praying_log") or [] if x["at"] > since and x["by"] != p["author_id"] and x["by"] in (p.get("praying") or [])]
+        enc = [e for e in p.get("encouragements") or [] if e["created_at"] > since and e["author_id"] != p["author_id"]]
+        if pray or enc:
+            by_author[p["author_id"]].append((p, len({x["by"] for x in pray}), enc))
+    sent = 0
+    for uid, items in by_author.items():
+        u = await db.users.find_one({"user_id": uid, "member_status": "active"}, {"_id": 0, "email": 1, "name": 1})
+        await db.member_prayers.update_many({"id": {"$in": [p["id"] for p, _, _ in items]}}, {"$set": {"digest_at": now}})
+        if not u or not u.get("email"):
+            continue
+        first = (u.get("name") or "Sister").split(" ")[0]
+        parts = []
+        for p, n, enc in items:
+            line = f'Your {"praise report" if p["kind"] == "praise" else "prayer request"}: "{_prayer_snip(p, 90)}"\n'
+            if n:
+                line += f'  {n} sister{"s are" if n > 1 else " is"} {"rejoicing" if p["kind"] == "praise" else "praying"} with you.\n'
+            for e in enc[:5]:
+                line += f'  {e["author_name"]}: "{_prayer_snip(e, 160)}"\n'
+            if len(enc) > 5:
+                line += f"  …and {len(enc) - 5} more words of encouragement.\n"
+            parts.append(line)
+        html = _member_email_html("Prayer & Support", f"Your sisters are with you, {first}", "Here's the love your sisters shared today:\n\n" + "\n".join(parts),
+                                  "Open the Prayer board", "/members")
+        try:
+            await send_email(to=u["email"], subject="Your sisters are praying with you"[:150], html=html)
+            sent += 1
+        except Exception as e:
+            logging.warning(f"Prayer digest failed: {e}")
+    return sent
+
+
+async def _send_prayer_weekly(today) -> int:
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    posts = await db.member_prayers.find({"created_at": {"$gte": since}}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    if not posts:
+        return 0
+    lines = [f'{"Praise" if p["kind"] == "praise" else "Prayer"} from {"a sister" if p.get("anonymous") else p["author_name"]}: "{_prayer_snip(p)}"'
+             + (" (answered!)" if p.get("answered_at") else "") for p in posts[:15]]
+    if len(posts) > 15:
+        lines.append(f"…and {len(posts) - 15} more on the board.")
+    sent = 0
+    for u in await db.users.find({"member_status": "active", "email": {"$nin": [None, ""]}, "member_profile.prayer_weekly": {"$ne": False}}, {"_id": 0, "email": 1, "name": 1}).to_list(2000):
+        first = (u.get("name") or "Sister").split(" ")[0]
+        html = _member_email_html("Weekly Prayer & Support", f"Dear {first},", f"Here's what your sisters shared on the Prayer board this week. Take a moment to pray, rejoice or leave a word of encouragement.\n\n"
+                                  + "\n\n".join(lines) + "\n\nYou can turn off this weekly email in My Profile.", "Pray with your sisters", "/members")
+        try:
+            await send_email(to=u["email"], subject=f"This week on the Prayer board ({len(posts)} new)"[:150], html=html)
+            sent += 1
+        except Exception as e:
+            logging.warning(f"Weekly prayer digest failed: {e}")
+    return sent
+
+
+# --- Birthday emails ---
+def _bday_match(today) -> list:
+    pairs = [(today.month, today.day)]
+    if today.month == 2 and today.day == 28 and not calendar.isleap(today.year):
+        pairs.append((2, 29))
+    return pairs
+
+
+async def _todays_birthdays(today) -> list:
+    q = {"member_status": "active", "$or": [{"member_profile.birthday_month": m, "member_profile.birthday_day": d} for m, d in _bday_match(today)]}
+    return await db.users.find(q, {"_id": 0, "user_id": 1, "name": 1, "email": 1, "picture": 1}).to_list(200)
+
+
+def _bday_card_html(first: str) -> str:
+    return (
+        '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
+        '<table role="presentation" width="600" style="max-width:600px;background:#3B0A2E;border-radius:16px;overflow:hidden">'
+        + _brand_header("Happy Birthday") +
+        '<tr><td align="center" style="padding:40px 32px;font-family:Arial,sans-serif;color:#F7EFE9">'
+        '<p style="font-size:13px;letter-spacing:3px;text-transform:uppercase;color:#CBA24B;margin:0 0 12px">With love from your sisters</p>'
+        f'<h1 style="font-family:Georgia,serif;font-size:34px;margin:0 0 18px;color:#F7EFE9">Happy Birthday, {_esc(first)}!</h1>'
+        '<p style="font-size:15.5px;line-height:1.8;color:#f3dfe9;margin:0 0 26px">Today we celebrate you: your kindness, your strength and the light you bring to our circle. '
+        'May this new year bring you joy, good health and every blessing. Thank you for being part of the Caring Sisters Club.</p>'
+        + _btn(f"{PUBLIC_APP_URL}/members", "See your birthday wishes", primary=True) +
+        '</td></tr></table></td></tr></table>'
+    )
+
+
+async def _send_birthday_emails(today) -> int:
+    year, sent = today.year, 0
+    celebrants = await _todays_birthdays(today)
+    for b in celebrants:
+        if (await db.users.update_one({"user_id": b["user_id"], "member_bday_sent_year": {"$ne": year}}, {"$set": {"member_bday_sent_year": year}})).modified_count == 0:
+            continue
+        first = (b.get("name") or "Sister").split(" ")[0]
+        key = f"birthday:{b['user_id']}:{year}"
+        await db.member_threads.update_one({"key": key}, {"$setOnInsert": {
+            "id": str(uuid.uuid4()), "key": key, "title": f"Happy Birthday, {first}!", "body": f"Let's celebrate {b.get('name')} this month. Share your wishes below.",
+            "author_id": "system", "author_name": "Caring Sisters Club", "author_picture": "", "created_at": _now_iso(), "last_activity": _now_iso(), "reply_count": 0, "replies": []}}, upsert=True)
+        if b.get("email"):
+            try:
+                await send_email(to=b["email"], subject=f"Happy Birthday, {first}!"[:150], html=_bday_card_html(first))
+                sent += 1
+            except Exception as e:
+                logging.warning(f"Birthday card failed: {e}")
+        for u in await db.users.find({"member_status": "active", "user_id": {"$ne": b["user_id"]}, "email": {"$nin": [None, ""]}}, {"_id": 0, "email": 1, "name": 1}).to_list(2000):
+            html = _member_email_html("Birthday today", f"It's {first}'s birthday!", f"Dear {(u.get('name') or 'Sister').split(' ')[0]},\n\nToday is {b.get('name')}'s birthday. "
+                                      "Take a moment to send her your wishes in the member portal. A few kind words mean so much.", f"Send {first} wishes", "/members")
+            try:
+                await send_email(to=u["email"], subject=f"Today is {b.get('name')}'s birthday"[:150], html=html)
+                sent += 1
+            except Exception as e:
+                logging.warning(f"Birthday notice failed: {e}")
+    return sent
+
+
+async def _send_staff_birthday_list(today) -> bool:
+    to = (await _get_settings()).get("staff_notify_email")
+    if not to:
+        return False
+    rows = sorted(await db.users.find({"member_status": "active", "member_profile.birthday_month": today.month}, {"_id": 0, "name": 1, "member_profile": 1}).to_list(500),
+                  key=lambda u: u["member_profile"].get("birthday_day") or 0)
+    month = today.strftime("%B")
+    body = (f"{len(rows)} sister{'s' if len(rows) != 1 else ''} celebrate a birthday in {month}:\n\n"
+            + "\n".join(f"{month} {u['member_profile'].get('birthday_day')}: {u.get('name')}" for u in rows)
+            + "\n\nEach sister receives a birthday card email on the morning of her birthday, and all members are invited to send wishes.") if rows else f"No member birthdays are on file for {month}."
+    try:
+        await send_email(to=to, subject=f"{month} member birthdays ({len(rows)})", html=_member_email_html("Staff · Birthdays", f"{month} birthdays", body, "Open admin", "/admin"))
+        return True
+    except Exception as e:
+        logging.warning(f"Staff birthday list failed: {e}")
+        return False
+
+
+@api_router.get("/members/birthdays/today")
+async def members_birthdays_today(user=Depends(require_member)):
+    return [{"user_id": b["user_id"], "name": b.get("name") or "", "picture": b.get("picture") or ""} for b in await _todays_birthdays(_today_et())]
+
+
+async def _member_phase7_scheduled():
+    today, hour = _today_et(), _hour_et()
+    if hour >= 7:
+        await _send_birthday_emails(today)
+    if hour >= 8 and await _once(f"bday-staff:{today.year}-{today.month:02d}"):
+        await _send_staff_birthday_list(today)
+    if hour >= 8 and today.weekday() == 0 and await _once(f"prayer-weekly:{today.isoformat()}"):
+        await _send_prayer_weekly(today)
+    if hour >= 18 and await _once(f"prayer-daily:{today.isoformat()}"):
+        await _send_prayer_author_digests()
 
 
 # Include the router in the main app

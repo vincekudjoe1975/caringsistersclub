@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { Html5Qrcode } from 'html5-qrcode';
+import { QRCodeSVG } from 'qrcode.react';
 import { Search, QrCode, Check, Undo2, Minus, Plus, X, Loader2 } from 'lucide-react';
 
 function Scanner({ onCode, onClose }) {
@@ -49,6 +50,23 @@ function Row({ r, onCheck, onUndo }) {
   );
 }
 
+function DoorQr({ mid, onClose }) {
+  const [tok, setTok] = useState('');
+  useEffect(() => { api.get(`/admin/members/checkin/${mid}/door`).then(({ data }) => setTok(data.token)); }, [mid]);
+  const reset = async () => { if (window.confirm('Create a new door code? The old one will stop working.')) { const { data } = await api.post(`/admin/members/checkin/${mid}/door/reset`); setTok(data.token); } };
+  const url = tok ? `${window.location.origin}/self-checkin?m=${mid}&t=${tok}` : '';
+  return (
+    <div data-testid="door-qr-modal" className="fixed inset-0 bg-[#F7EFE9] z-50 flex flex-col items-center justify-center p-6 text-center">
+      <button data-testid="door-qr-close" onClick={onClose} className="absolute top-4 right-4 text-[#3B0A2E]"><X size={28} /></button>
+      <p className="eyebrow text-[#B4247E] mb-2">Welcome, sisters</p>
+      <h2 className="font-serif text-[28px] text-[#3B0A2E] font-semibold mb-5">Scan to check yourself in</h2>
+      {url ? <div data-testid="door-qr" className="bg-white p-5 rounded-3xl shadow-lg"><QRCodeSVG value={url} size={260} fgColor="#3B0A2E" /></div> : <Loader2 className="animate-spin text-[#B4247E]" />}
+      <p className="text-[13.5px] text-[#241019]/65 mt-5 max-w-xs">Open your phone camera, scan the code and sign in with Google. Works only today.</p>
+      <button data-testid="door-qr-reset" onClick={reset} className="text-[12.5px] text-[#241019]/50 mt-4 underline">Make a new code</button>
+    </div>
+  );
+}
+
 export default function CheckIn() {
   const [sp, setSp] = useSearchParams();
   const [list, setList] = useState(null);
@@ -56,6 +74,7 @@ export default function CheckIn() {
   const [sheet, setSheet] = useState(null);
   const [q, setQ] = useState('');
   const [scan, setScan] = useState(false);
+  const [door, setDoor] = useState(false);
   const [flash, setFlash] = useState('');
   const [err, setErr] = useState('');
   useEffect(() => {
@@ -99,6 +118,7 @@ export default function CheckIn() {
           <label className="relative flex-1"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#241019]/40" />
             <input data-testid="ci-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name" className="w-full rounded-xl pl-9 pr-3 py-2.5 text-[15px] text-[#241019]" /></label>
           <button data-testid="ci-scan-btn" onClick={() => setScan(true)} className="rounded-xl bg-[#CBA24B] text-[#3B0A2E] px-4 font-semibold flex items-center gap-1.5"><QrCode size={18} /> Scan</button>
+          <button data-testid="ci-door-btn" onClick={() => setDoor(true)} disabled={!mid} className="rounded-xl bg-white/15 text-[#F7EFE9] px-3 font-semibold text-[13px] disabled:opacity-40">Door QR</button>
         </div>
       </header>
       {flash && <div data-testid="ci-flash" className="fixed top-3 left-1/2 -translate-x-1/2 z-50 bg-[#3B0A2E] text-white px-5 py-2.5 rounded-full text-[14px] shadow-lg">{flash}</div>}
@@ -107,6 +127,7 @@ export default function CheckIn() {
         <button data-testid="ci-finish-btn" onClick={finish} className="w-full rounded-full py-3.5 font-semibold bg-[#3B0A2E] text-white">{sheet.meeting.finished_at ? 'Finish again (mark remaining absent)' : 'Finish: mark the rest absent'}</button>
       </div>}
       {scan && <Scanner onCode={onCode} onClose={() => { setScan(false); load(); }} />}
+      {door && <DoorQr mid={mid} onClose={() => { setDoor(false); load(); }} />}
     </div>
   );
 }

@@ -39,6 +39,7 @@ import VoteRecord from './pages/VoteRecord';
 import TreasurerReport from './pages/TreasurerReport';
 import AnnualReport from './pages/AnnualReport';
 import CheckIn from './pages/CheckIn';
+import SelfCheckIn from './pages/SelfCheckIn';
 import { Loader2 } from 'lucide-react';
 
 function ScrollToTop() {
@@ -101,6 +102,7 @@ function Shell() {
           <Route path="/annual-report" element={<AnnualReport />} />
           <Route path="/annual-report/:id" element={<AnnualReport />} />
           <Route path="/checkin" element={<CheckIn />} />
+          <Route path="/self-checkin" element={<SelfCheckIn />} />
           <Route path="/events" element={<Events />} />
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/transparency" element={<Transparency />} />
