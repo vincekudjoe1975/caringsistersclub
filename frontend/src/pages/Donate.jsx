@@ -4,6 +4,7 @@ import { donationTiers, org } from '../mock/mock';
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
 import DonorWall from '../components/DonorWall';
+import { StatementRequest } from './GivingStatement';
 import { Heart, ShieldCheck, Repeat, CreditCard, CheckCircle2, Loader2 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 import { api } from '../lib/api';
@@ -162,6 +163,7 @@ export default function Donate() {
         </div>
       </section>
       <DonorWall />
+      <StatementRequest />
     </div>
   );
 }

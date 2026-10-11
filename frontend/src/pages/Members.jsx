@@ -17,6 +17,7 @@ import { PhotoAlbums } from '../components/members/Phase7';
 import { InstallApp } from '../components/InstallApp';
 import { ThisWeek } from '../components/members/ThisWeek';
 import { MyHours } from '../components/members/MyHours';
+import { syncPush } from '../components/members/PushSettings';
 import { CheckinPassButton, OfflinePass } from '../components/members/CheckinPass';
 
 const BADGES = { news: 1, talk: 1, prayer: 1, votes: 1, photos: 1, spotlights: 1, minutes: 1 };
@@ -76,6 +77,7 @@ function Portal({ me, onChange }) {
   const [badges, setBadges] = useState({});
   const seen = useCallback((k) => { if (k in BADGES) api.post('/members/badges/seen', { tab: k }).catch(() => {}); }, []);
   useEffect(() => {
+    syncPush().catch(() => {});
     api.get('/members/badges').then(({ data }) => { setBadges({ ...data, [tab]: false }); seen(tab); }).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const pick = (k) => { seen(tab); seen(k); sessionStorage.setItem('csc_member_tab', k); setTab(k); setBadges((b) => ({ ...b, [k]: false })); };

@@ -5,6 +5,7 @@ import { Calendar, MapPin, Clock, Users, Loader2, CheckCircle2, CalendarHeart, C
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { useToast } from '../hooks/use-toast';
 import { api, mediaSrc, BACKEND_URL } from '../lib/api';
+import { TicketPicker } from './Tickets';
 
 const FALLBACK_IMG = 'https://images.pexels.com/photos/7648057/pexels-photo-7648057.jpeg?auto=compress&cs=tinysrgb&h=650&w=940';
 
@@ -54,11 +55,15 @@ function EventCard({ ev, onRsvp }) {
           {ev.location && <span className="flex items-center gap-2"><MapPin size={16} className="text-[#CBA24B]" /> {ev.location}</span>}
         </div>
         <div className="flex flex-wrap items-center gap-4">
-          <button onClick={() => onRsvp(ev, full ? 'waitlist' : 'rsvp')} data-testid={full ? 'event-waitlist-btn' : 'event-rsvp-btn'}
+          {ev.ticket_types?.length > 0 ? (
+            <button onClick={() => onRsvp(ev, 'tickets')} data-testid="event-buy-tickets-btn" disabled={ev.ticket_types.every((t) => t.remaining <= 0)} className="btn-magenta rounded-full px-7 py-3 font-semibold text-[14px] disabled:opacity-50">
+              {ev.ticket_types.every((t) => t.remaining <= 0) ? 'Sold out' : `Buy tickets · from $${Math.min(...ev.ticket_types.map((t) => t.price))}`}
+            </button>
+          ) : <button onClick={() => onRsvp(ev, full ? 'waitlist' : 'rsvp')} data-testid={full ? 'event-waitlist-btn' : 'event-rsvp-btn'}
             className={`rounded-full px-7 py-3 font-semibold text-[14px] ${full ? 'text-[#3B0A2E] hover:bg-[#faf2f7]' : 'btn-magenta'}`}
             style={full ? { border: '1.5px solid #B4247E' } : undefined}>
             {full ? 'Join the Waitlist' : 'RSVP Now'}
-          </button>
+          </button>}
           <a href={ev.gcal_url} target="_blank" rel="noopener noreferrer" data-testid="event-gcal-link" className="text-[13px] font-semibold text-[#B4247E] flex items-center gap-1.5 hover:text-[#D14FA0]">
             <CalendarPlus size={15} /> Add to calendar
           </a>
@@ -189,11 +194,12 @@ export default function Events() {
       </section>
 
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="font-serif text-[22px] text-[#3B0A2E]">{selected?.mode === 'waitlist' ? 'Waitlist' : 'RSVP'}: {selected?.ev.title}</DialogTitle>
+            <DialogTitle className="font-serif text-[22px] text-[#3B0A2E]">{selected?.mode === 'waitlist' ? 'Waitlist' : selected?.mode === 'tickets' ? 'Tickets' : 'RSVP'}: {selected?.ev.title}</DialogTitle>
           </DialogHeader>
-          {selected && <RsvpForm key={selected.ev.id + selected.mode} ev={selected.ev} initialMode={selected.mode} onDone={load} />}
+          {selected?.mode === 'tickets' && <TicketPicker ev={selected.ev} />}
+          {selected && selected.mode !== 'tickets' && <RsvpForm key={selected.ev.id + selected.mode} ev={selected.ev} initialMode={selected.mode} onDone={load} />}
         </DialogContent>
       </Dialog>
     </div>

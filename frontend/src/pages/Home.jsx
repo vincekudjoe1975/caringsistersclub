@@ -10,6 +10,7 @@ import Reveal from '../components/Reveal';
 import Marquee from '../components/Marquee';
 import { LeaderStrip } from '../components/LeaderStrip';
 import { LatestAlbum } from '../components/AlbumExtras';
+import { HomeThermometer } from '../components/Thermometer';
 import * as Icons from 'lucide-react';
 import { ArrowRight, Quote, Heart } from 'lucide-react';
 
@@ -118,6 +119,7 @@ export default function Home() {
         </div>
       </section>
 
+      <HomeThermometer />
       <LeaderStrip />
       <LatestAlbum />
 

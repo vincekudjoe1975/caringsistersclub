@@ -44,6 +44,9 @@ import SelfCheckIn from './pages/SelfCheckIn';
 import BirthdayWall from './pages/BirthdayWall';
 import GalleryAlbum from './pages/GalleryAlbum';
 import SessionCheckIn from './pages/SessionCheckIn';
+import GivingStatement from './pages/GivingStatement';
+import MyTickets, { TicketSuccess } from './pages/Tickets';
+import TicketDoor from './pages/TicketDoor';
 import SessionSheet from './pages/SessionSheet';
 import SaveSpot from './pages/SaveSpot';
 import { Loader2 } from 'lucide-react';
@@ -119,6 +122,9 @@ function Shell() {
           <Route path="/save-spot" element={<SaveSpot />} />
           <Route path="/transparency" element={<Transparency />} />
           <Route path="/donate" element={<Donate />} />
+          <Route path="/giving-statement" element={<GivingStatement />} />
+          <Route path="/tickets/success" element={<TicketSuccess />} />
+          <Route path="/tickets/:token" element={<MyTickets />} />
           <Route path="/payment/success" element={<PaymentSuccess />} />
           <Route path="/manage-gift" element={<ManageGift />} />
           <Route path="/rsvp" element={<RsvpAction />} />
@@ -130,6 +136,7 @@ function Shell() {
           <Route path="/donor-privacy" element={<Legal type="donor" />} />
           <Route path="/login" element={<Login />} />
           <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
+          <Route path="/admin/tickets/:eid" element={<ProtectedRoute><TicketDoor /></ProtectedRoute>} />
         </Routes>
       </main>
       {!bare && <Footer />}

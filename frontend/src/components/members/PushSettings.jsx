@@ -14,31 +14,49 @@ const toKey = (b64) => {
   return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 };
 
+export const syncPush = async () => {
+  if (!supported() || Notification.permission !== 'granted') return null;
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  const { data } = await api.get('/members/push/config', { params: { endpoint: sub?.endpoint || '' } });
+  if (sub && !data.registered) {
+    await api.post('/members/push/subscribe', sub.toJSON());
+    return (await api.get('/members/push/config', { params: { endpoint: sub.endpoint } })).data;
+  }
+  return data;
+};
+
 export const PushSettings = ({ p, set }) => {
   const { toast } = useToast();
   const [on, setOn] = useState(false);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!supported()) return;
-    navigator.serviceWorker.ready.then((r) => r.pushManager.getSubscription()).then((s) => setOn(!!s && Notification.permission === 'granted'));
-  }, []);
+  const [cfg, setCfg] = useState(null);
+  const refresh = () => syncPush().then((d) => { if (d) { setCfg(d); setOn(d.registered); } else api.get('/members/push/config').then(({ data }) => setCfg(data)).catch(() => {}); }).catch(() => {});
+  useEffect(() => { if (supported()) refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const toggle = async () => {
     setBusy(true);
     try {
+      const key = cfg?.public_key;
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') throw new Error('Notifications are blocked. Allow them for this site in your phone settings, then try again.');
       const reg = await navigator.serviceWorker.ready;
       const cur = await reg.pushManager.getSubscription();
       if (on && cur) {
         await api.post('/members/push/unsubscribe', { endpoint: cur.endpoint }); await cur.unsubscribe(); setOn(false);
         toast({ title: 'Phone alerts turned off' });
       } else {
-        if ((await Notification.requestPermission()) !== 'granted') throw new Error('Notifications are blocked in your browser settings.');
-        const { data } = await api.get('/members/push/config');
-        const sub = cur || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: toKey(data.public_key) });
-        await api.post('/members/push/subscribe', sub.toJSON()); setOn(true);
-        toast({ title: 'Phone alerts are on' });
+        const pk = key || (await api.get('/members/push/config')).data.public_key;
+        const sub = cur || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: toKey(pk) });
+        const { data } = await api.post('/members/push/subscribe', sub.toJSON());
+        toast({ title: 'Phone alerts are on', description: `Registered: ${data.kind}` });
       }
+      refresh();
     } catch (ex) { toast({ title: 'Could not change alerts', description: ex?.response?.data?.detail || ex.message, variant: 'destructive' }); }
     finally { setBusy(false); }
+  };
+  const testMe = async () => {
+    try { const { data } = await api.post('/members/push/test-self'); toast({ title: `Test sent to ${data.sent} of your device${data.devices === 1 ? '' : 's'}`, description: 'It should arrive within a few seconds.' }); }
+    catch (ex) { toast({ title: 'Could not send test', description: ex?.response?.data?.detail, variant: 'destructive' }); }
   };
   return (
     <div data-testid="push-settings" className="mt-7 bg-white rounded-2xl p-5 border border-[#3B0A2E]/8">
@@ -52,7 +70,14 @@ export const PushSettings = ({ p, set }) => {
             className={`mt-3 min-h-[44px] rounded-full px-5 py-2.5 text-[14px] font-semibold flex items-center gap-2 disabled:opacity-60 ${on ? 'border border-[#3B0A2E]/20 text-[#3B0A2E]' : 'btn-magenta'}`}>
             {busy && <Loader2 size={14} className="animate-spin" />} {on ? 'Turn off on this phone' : 'Turn on phone alerts'}
           </button>
-          <p data-testid="push-status" className="text-[12.5px] text-[#241019]/55 mt-2">{on ? 'On for this device.' : 'Off for this device.'}</p>
+          <p data-testid="push-status" className="text-[12.5px] text-[#241019]/55 mt-2">{on ? 'On for this device (confirmed with the Club).' : 'Off for this device.'}</p>
+          {cfg?.device_list?.length > 0 && (
+            <div data-testid="push-devices" className="mt-3 text-[13px]">
+              <p className="font-semibold text-[#3B0A2E]">Devices getting your alerts</p>
+              <ul className="mt-1 space-y-0.5">{cfg.device_list.map((d, i) => <li key={i} className="text-[#241019]/70">{d.kind}{d.this ? ' (this device)' : ''}</li>)}</ul>
+              <button type="button" data-testid="push-test-self-btn" onClick={testMe} className="mt-2 min-h-[40px] text-[13.5px] font-semibold text-[#B4247E] underline">Send a test alert to my devices</button>
+            </div>
+          )}
         </>
       )}
       <p className="text-[13px] font-semibold text-[#3B0A2E] mt-4">Alert me about</p>

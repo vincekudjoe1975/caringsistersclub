@@ -5,7 +5,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { QRCodeSVG } from 'qrcode.react';
 import { Search, QrCode, Check, Undo2, Minus, Plus, X, Loader2 } from 'lucide-react';
 
-function Scanner({ onCode, onClose }) {
+export function Scanner({ onCode, onClose, prompt }) {
   const ref = useRef(null);
   const [err, setErr] = useState('');
   useEffect(() => {
@@ -20,7 +20,7 @@ function Scanner({ onCode, onClose }) {
     <div data-testid="qr-scanner" className="fixed inset-0 bg-black/85 z-50 flex flex-col items-center justify-center p-4">
       <button data-testid="qr-close" onClick={onClose} className="absolute top-4 right-4 text-white"><X size={28} /></button>
       <div id="qr-reader" className="w-full max-w-sm rounded-2xl overflow-hidden bg-black" />
-      <p className="text-white/80 text-[14px] mt-4 text-center">{err || "Point the camera at the sister's check-in code"}</p>
+      <p className="text-white/80 text-[14px] mt-4 text-center">{err || prompt || "Point the camera at the sister's check-in code"}</p>
     </div>
   );
 }

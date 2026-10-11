@@ -2,7 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 import { fmtDate, eventImg } from './Events';
-import { Loader2, Plus, Pencil, Trash2, Users, Download, X, UploadCloud, CalendarDays, MapPin, Clock, BellRing } from 'lucide-react';
+import { TicketTypesPanel } from '../components/TicketTypes';
+import { Loader2, Plus, Pencil, Trash2, Users, Download, X, UploadCloud, CalendarDays, MapPin, Clock, BellRing, Ticket } from 'lucide-react';
 
 const EMPTY = { title: '', date: '', time: '', location: '', category: '', description: '', image_url: '', capacity: 50, waitlist_mode: 'auto' };
 const input = 'w-full mt-1.5 rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
@@ -192,7 +193,7 @@ function WaitlistTable({ entries, onRemove }) {
   );
 }
 
-function AdminEventRow({ ev, onEdit, onRsvps, onDelete }) {
+function AdminEventRow({ ev, onEdit, onRsvps, onDelete, onTickets }) {
   const past = ev.date < todayStr;
   const pct = Math.min(100, Math.round((ev.seats_taken / ev.capacity) * 100));
   return (
@@ -214,6 +215,7 @@ function AdminEventRow({ ev, onEdit, onRsvps, onDelete }) {
         </div>
       </div>
       <div className="flex items-center gap-2">
+        <button onClick={onTickets} data-testid="admin-event-tickets-btn" className="text-[12.5px] font-semibold px-4 py-2 rounded-full text-[#3B0A2E] flex items-center gap-1.5" style={{ border: '1px solid rgba(59,10,46,0.15)' }}><Ticket size={14} /> {ev.ticket_types?.length ? 'Tickets' : 'Sell tickets'}</button>
         <button onClick={onRsvps} data-testid="admin-event-rsvps-btn" className="text-[12.5px] font-semibold px-4 py-2 rounded-full text-[#3B0A2E] flex items-center gap-1.5" style={{ border: '1px solid rgba(59,10,46,0.15)' }}><Users size={14} /> RSVPs</button>
         <button onClick={onEdit} data-testid="admin-event-edit-btn" className="p-2 text-[#3B0A2E] hover:text-[#B4247E]"><Pencil size={16} /></button>
         <button onClick={onDelete} data-testid="admin-event-delete-btn" className="p-2 text-red-500 hover:text-red-700"><Trash2 size={16} /></button>
@@ -226,6 +228,7 @@ export default function AdminEvents() {
   const [events, setEvents] = useState(null);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [ticketing, setTicketing] = useState(null);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
@@ -254,10 +257,11 @@ export default function AdminEvents() {
           <div className="bg-white rounded-2xl p-12 text-center border border-[#3B0A2E]/8 text-[#241019]/55 text-[14px]">No events yet. Click "New Event" to publish your first one.</div>
         ) : (
           <div className="space-y-3">{events.map((ev) => (
-            <AdminEventRow key={ev.id} ev={ev} onEdit={() => setEditing(ev)} onRsvps={() => setViewing(ev)} onDelete={() => remove(ev)} />
+            <AdminEventRow key={ev.id} ev={ev} onEdit={() => setEditing(ev)} onRsvps={() => setViewing(ev)} onDelete={() => remove(ev)} onTickets={() => setTicketing(ev)} />
           ))}</div>
         )}
       {editing && <EventForm initial={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+      {ticketing && <TicketTypesPanel ev={ticketing} toast={toast} onClose={() => setTicketing(null)} onSaved={() => { setTicketing(null); load(); }} />}
       {viewing && <RsvpPanel ev={viewing} onClose={() => setViewing(null)} onChanged={load} />}
     </div>
   );

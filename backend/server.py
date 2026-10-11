@@ -623,6 +623,8 @@ async def stripe_webhook(request: Request):
             await _record_paid_donation(obj["id"], txn, recipient_email=cust_email)
         if (obj.get("metadata") or {}).get("kind") == "member_dues" and obj.get("payment_status") == "paid":
             await _record_member_payment(obj["id"])
+        if (obj.get("metadata") or {}).get("kind") == "tickets" and obj.get("payment_status") == "paid":
+            await _fulfil_ticket_order(obj["id"])
     elif t == "checkout.session.expired":
         await db.payment_transactions.update_one(
             {"session_id": obj["id"]},
@@ -2026,6 +2028,7 @@ async def public_events():
         for k in ("created_by", "rsvp_count", "seats_held", "waitlist_count"):
             e.pop(k, None)
         e["gcal_url"] = _gcal_url(e)
+        e["ticket_types"] = await _ticket_types_view(e)
     return {"items": items}
 
 
@@ -10132,9 +10135,16 @@ class PushSubIn(BaseModel):
     keys: PushKeys
 
 
+def _push_device_kind(endpoint: str) -> str:
+    host = endpoint.split("/")[2] if endpoint.count("/") >= 2 else ""
+    return "iPhone / iPad" if "apple.com" in host else "Android / Chrome" if "googleapis.com" in host else "Windows / Edge" if "notify.windows.com" in host else "Firefox" if "mozilla" in host else "Browser"
+
+
 @api_router.get("/members/push/config")
-async def members_push_config(user=Depends(require_member)):
-    return {"public_key": os.environ["VAPID_PUBLIC_KEY"], "devices": await db.push_subs.count_documents({"user_id": user["user_id"]})}
+async def members_push_config(endpoint: str = "", user=Depends(require_member)):
+    subs = await db.push_subs.find({"user_id": user["user_id"]}, {"_id": 0, "endpoint": 1, "updated_at": 1}).to_list(50)
+    return {"public_key": os.environ["VAPID_PUBLIC_KEY"], "devices": len(subs), "registered": any(x["endpoint"] == endpoint for x in subs) if endpoint else False,
+            "device_list": [{"kind": _push_device_kind(x["endpoint"]), "updated_at": x.get("updated_at", ""), "this": x["endpoint"] == endpoint} for x in subs]}
 
 
 @api_router.post("/members/push/subscribe")
@@ -10143,7 +10153,17 @@ async def members_push_subscribe(payload: PushSubIn, user=Depends(require_member
         raise HTTPException(status_code=400, detail="Invalid subscription")
     await db.push_subs.update_one({"endpoint": payload.endpoint}, {"$set": {"endpoint": payload.endpoint[:1000], "keys": payload.keys.model_dump(),
                                   "user_id": user["user_id"], "updated_at": _now_iso()}}, upsert=True)
-    return {"ok": True}
+    logging.info(f"Push subscription saved: {_push_device_kind(payload.endpoint)} for {user['user_id']}")
+    return {"ok": True, "kind": _push_device_kind(payload.endpoint)}
+
+
+@api_router.post("/members/push/test-self")
+async def members_push_test_self(request: Request, user=Depends(require_member)):
+    await _rate_limit(request, f"push-test-self:{user['user_id']}", max_hits=5, window_s=600)
+    devices = await db.push_subs.count_documents({"user_id": user["user_id"]})
+    if not devices:
+        raise HTTPException(status_code=400, detail="No devices are registered yet. Tap 'Turn on phone alerts' on your phone first.")
+    return {"sent": await _push_users([user["user_id"]], "Test alert", "Your phone alerts are working. See you at the next gathering!", "/members", "test"), "devices": devices}
 
 
 class PushUnsubIn(BaseModel):
@@ -10342,6 +10362,9 @@ async def _start_push_loop():
     await db.push_scheduled.create_index([("status", 1), ("send_at", 1)])
     await db.member_carpool.create_index([("meeting_id", 1), ("user_id", 1)], unique=True)
     await db.geo_cache.create_index("key", unique=True)
+    await db.tickets.create_index("code", unique=True)
+    await db.ticket_orders.create_index("session_id")
+    await db.donor_statement_tokens.create_index("expires_at")
     asyncio.create_task(_push_loop())
 
 
@@ -10902,6 +10925,325 @@ async def _member_badge_push(email: str):
     for n in MEMBER_HOUR_BADGES:
         if total >= n and await _push_mark(f"hours-badge:{u['user_id']}:{n}"):
             await _push_users([u["user_id"]], f"You earned the {n}-hour badge!", f"Thank you for {total:g} hours of service, {(u.get('name') or 'sister').split(' ')[0]}. Tap to see your badges.", "/members?tab=hours", "hours")
+
+
+# --- Year-end giving statements (self-serve) ---
+import secrets as _secrets
+
+
+class StatementLinkIn(BaseModel):
+    email: str
+
+
+async def _donor_gifts(email: str) -> list:
+    return await db.payment_transactions.find({"payment_status": "paid", "donor_email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0}).sort("updated_at", 1).to_list(5000)
+
+
+@api_router.post("/donor/statement-link")
+async def donor_statement_link(payload: StatementLinkIn, request: Request, background: BackgroundTasks):
+    await _rate_limit(request, "statement-link", max_hits=3, window_s=300)
+    email = (payload.email or "").strip().lower()
+    if not _EMAIL_RE.match(email) or len(email) > 254:
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+    gifts = await _donor_gifts(email)
+    if gifts:
+        tok = _secrets.token_urlsafe(32)
+        await db.donor_statement_tokens.insert_one({"token": tok, "email": email, "expires_at": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(), "created_at": _now_iso()})
+        name = next((g.get("donor_name") for g in gifts if (g.get("donor_name") or "").strip()), "") or "Friend"
+        url = f"{PUBLIC_APP_URL}/giving-statement?t={tok}"
+        html = _member_email_html("Giving statement", f"Thank you, {name}", "Here is your secure link to download your year-end giving statements. It works for 24 hours.", "Download my statements", url)
+        background.add_task(send_email, to=email, subject="Your giving statements from The Caring Sisters Club", html=html)
+    return {"message": "If we have gifts linked to that email, we've sent a secure download link. Please check your inbox."}
+
+
+async def _statement_token(token: str) -> str:
+    t = await db.donor_statement_tokens.find_one({"token": (token or "")[:100]}, {"_id": 0})
+    if not t or t["expires_at"] <= _now_iso():
+        raise HTTPException(status_code=410, detail="This link has expired. Please request a new one from the Donate page.")
+    return t["email"]
+
+
+@api_router.get("/donor/statements/{token}")
+async def donor_statements(token: str, request: Request):
+    await _rate_limit(request, "statements", max_hits=30, window_s=60)
+    email = await _statement_token(token)
+    years = {}
+    for g in await _donor_gifts(email):
+        y = (g.get("updated_at") or "")[:4]
+        if y:
+            years.setdefault(y, {"year": int(y), "total": 0.0, "count": 0})
+            years[y]["total"] = round(years[y]["total"] + float(g.get("amount", 0)), 2)
+            years[y]["count"] += 1
+    return {"email": email, "years": sorted(years.values(), key=lambda x: -x["year"])}
+
+
+def _statement_pdf(name: str, email: str, year: int, gifts: list, ein: str) -> bytes:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=54, rightMargin=54, topMargin=54, bottomMargin=54, title=f"{year} Giving Statement")
+    ss = getSampleStyleSheet()
+    plum, mag = colors.HexColor("#3B0A2E"), colors.HexColor("#B4247E")
+    h = ParagraphStyle("h", parent=ss["Title"], textColor=plum, fontName="Times-Bold", fontSize=22, alignment=0, spaceAfter=4)
+    sm = ParagraphStyle("sm", parent=ss["Normal"], fontSize=9.5, textColor=colors.HexColor("#4a3340"), leading=13)
+    body = ParagraphStyle("b", parent=ss["Normal"], fontSize=11, leading=15, textColor=colors.HexColor("#241019"))
+    total = sum(float(g.get("amount", 0)) for g in gifts)
+    rows = [["Date", "Type", "Amount"]] + [[(g.get("updated_at") or "")[:10], "Monthly" if g.get("frequency") == "monthly" else "One-time", f"${float(g.get('amount', 0)):,.2f}"] for g in gifts]
+    rows.append(["", f"Total {year}", f"${total:,.2f}"])
+    t = Table(rows, colWidths=[150, 200, 140])
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#faf2f7")), ("TEXTCOLOR", (0, 0), (-1, 0), mag), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                           ("ALIGN", (2, 0), (2, -1), "RIGHT"), ("LINEBELOW", (0, 0), (-1, -2), 0.4, colors.HexColor("#eadfe6")), ("FONTSIZE", (0, 0), (-1, -1), 10.5),
+                           ("BACKGROUND", (0, -1), (-1, -1), plum), ("TEXTCOLOR", (0, -1), (-1, -1), colors.white), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                           ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+    ein_txt = f" (EIN {_esc(ein)})" if ein else ""
+    story = [Paragraph("The Caring Sisters Club, Inc.", ParagraphStyle("o", parent=sm, textColor=mag, fontName="Helvetica-Bold", fontSize=10)),
+             Paragraph(f"{year} Annual Giving Statement", h), Paragraph(f"Issued {datetime.now(EVENT_TZ).strftime('%B %-d, %Y')}", sm), Spacer(1, 16),
+             Paragraph(f"<b>{_esc(name)}</b><br/>{_esc(email)}", body), Spacer(1, 12),
+             Paragraph(f"Thank you for your generosity. Below is a summary of your tax-deductible contributions to The Caring Sisters Club during {year}. Please keep this statement for your records.", body),
+             Spacer(1, 14), t, Spacer(1, 18),
+             Paragraph(f"The Caring Sisters Club, Inc. is a 501(c)(3) tax-exempt organization{ein_txt}. No goods or services were provided in exchange for these contributions. Please consult your tax advisor regarding deductibility.", sm)]
+    doc.build(story)
+    return buf.getvalue()
+
+
+@api_router.get("/donor/statements/{token}/{year}.pdf")
+async def donor_statement_pdf(token: str, year: int, request: Request):
+    await _rate_limit(request, "statements", max_hits=30, window_s=60)
+    email = await _statement_token(token)
+    gifts = [g for g in await _donor_gifts(email) if (g.get("updated_at") or "").startswith(str(year))]
+    if not gifts:
+        raise HTTPException(status_code=404, detail="No gifts found for that year.")
+    name = next((g.get("donor_name") for g in gifts if (g.get("donor_name") or "").strip()), "") or "Friend"
+    pdf = await asyncio.to_thread(_statement_pdf, name, email, year, gifts, (await _get_settings()).get("org_ein", ""))
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="caring-sisters-giving-{year}.pdf"'})
+
+
+# --- Event ticketing ---
+import qrcode as _qrcode
+
+TICKET_HOLD_MIN = 30
+
+
+class TicketTypeIn(BaseModel):
+    id: str = ""
+    name: str
+    price: float
+    qty: int
+    admits: int = 1
+
+
+class TicketTypesIn(BaseModel):
+    ticket_types: List[TicketTypeIn]
+
+
+async def _tickets_sold(eid: str) -> dict:
+    hold = (datetime.now(timezone.utc) - timedelta(minutes=TICKET_HOLD_MIN)).isoformat()
+    sold = {}
+    async for o in db.ticket_orders.find({"event_id": eid, "$or": [{"status": "paid"}, {"status": "pending", "created_at": {"$gte": hold}}]}, {"_id": 0, "items": 1}):
+        for it in o["items"]:
+            sold[it["type_id"]] = sold.get(it["type_id"], 0) + it["qty"]
+    return sold
+
+
+async def _ticket_types_view(e: dict) -> list:
+    sold = await _tickets_sold(e["id"])
+    return [{**t, "remaining": max(0, t["qty"] - sold.get(t["id"], 0))} for t in e.get("ticket_types") or []]
+
+
+@api_router.put("/admin/events/{eid}/tickets")
+async def admin_event_tickets(eid: str, payload: TicketTypesIn, user=Depends(require_admin)):
+    e = await db.events.find_one({"id": eid}, {"_id": 0, "ticket_types": 1})
+    if e is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    sold, out = await _tickets_sold(eid), []
+    for t in payload.ticket_types[:10]:
+        name = t.name.strip()[:60]
+        if not name or not 1 <= t.price <= 10000 or not 1 <= t.qty <= 5000 or not 1 <= t.admits <= 20:
+            raise HTTPException(status_code=400, detail="Each ticket needs a name, a price between $1 and $10,000, a quantity, and 1 to 20 seats per ticket.")
+        tid = t.id or str(uuid.uuid4())[:8]
+        if t.qty < sold.get(tid, 0):
+            raise HTTPException(status_code=400, detail=f"{name}: {sold[tid]} already sold, so the quantity can't be lower than that.")
+        out.append({"id": tid, "name": name, "price": round(t.price, 2), "qty": t.qty, "admits": t.admits})
+    removed = {t["id"] for t in e.get("ticket_types") or []} - {t["id"] for t in out}
+    if any(sold.get(r) for r in removed):
+        raise HTTPException(status_code=400, detail="You can't remove a ticket type that has sales.")
+    await db.events.update_one({"id": eid}, {"$set": {"ticket_types": out}})
+    return {"ticket_types": out}
+
+
+class TicketItemIn(BaseModel):
+    type_id: str
+    qty: int
+
+
+class TicketCheckoutIn(BaseModel):
+    name: str
+    email: str
+    items: List[TicketItemIn]
+
+
+@api_router.get("/events/{eid}/tickets")
+async def event_tickets(eid: str):
+    e = await db.events.find_one({"id": eid}, {"_id": 0})
+    if e is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return {"ticket_types": await _ticket_types_view(e)}
+
+
+@api_router.post("/events/{eid}/tickets/checkout")
+async def event_tickets_checkout(eid: str, payload: TicketCheckoutIn, request: Request):
+    await _rate_limit(request, "ticket-checkout", max_hits=10, window_s=300)
+    e = await db.events.find_one({"id": eid}, {"_id": 0})
+    if e is None or e["date"] < _today_et().isoformat():
+        raise HTTPException(status_code=404, detail="This event isn't selling tickets.")
+    name, email = payload.name.strip()[:80], payload.email.strip().lower()
+    if not name or not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Please enter your name and a valid email.")
+    types = {t["id"]: t for t in await _ticket_types_view(e)}
+    items, lines = [], []
+    for it in payload.items:
+        t = types.get(it.type_id)
+        if not t or it.qty <= 0:
+            continue
+        if it.qty > min(t["remaining"], 20):
+            raise HTTPException(status_code=400, detail=f"Only {t['remaining']} {t['name']} ticket{'s' if t['remaining'] != 1 else ''} left.")
+        items.append({"type_id": t["id"], "name": t["name"], "price": t["price"], "qty": it.qty, "admits": t["admits"]})
+        lines.append({"price_data": {"currency": "usd", "product_data": {"name": f"{e['title']}: {t['name']}"}, "unit_amount": int(round(t["price"] * 100))}, "quantity": it.qty})
+    if not items:
+        raise HTTPException(status_code=400, detail="Please choose at least one ticket.")
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    base = origin if origin in _ALLOWED_ORIGINS else PUBLIC_APP_URL
+    order_id = str(uuid.uuid4())
+    _require_stripe()
+    try:
+        sess = stripe.checkout.Session.create(line_items=lines, mode="payment", customer_email=email,
+                                              success_url=f"{base}/tickets/success?session_id={{CHECKOUT_SESSION_ID}}", cancel_url=f"{base}/events",
+                                              metadata={"kind": "tickets", "order_id": order_id, "event_id": eid})
+    except Exception as ex:
+        logging.error(f"Ticket checkout error: {ex}")
+        raise HTTPException(status_code=424, detail="Could not start checkout. Please try again.")
+    await db.ticket_orders.insert_one({"id": order_id, "session_id": sess.id, "event_id": eid, "event_title": e["title"], "name": name, "email": email, "items": items,
+                                       "total": round(sum(i["price"] * i["qty"] for i in items), 2), "status": "pending", "token": _secrets.token_urlsafe(24), "created_at": _now_iso()})
+    return {"url": sess.url}
+
+
+def _ticket_email_html(o: dict, e: dict, tickets: list) -> str:
+    imgs = "".join(f'<div style="display:inline-block;margin:8px;text-align:center"><img src="{PUBLIC_APP_URL}/api/tickets/qr/{t["code"]}.png" width="150" height="150" alt="Ticket QR" style="border:1px solid #eadfe6;border-radius:10px"/>'
+                   f'<p style="font-size:12px;color:#4a3340;margin:4px 0 0">{_esc(t["type"])} · seat {t["seat"]}</p></div>' for t in tickets[:40])
+    when = f"{e['date']}" + (f" at {e['time']}" if e.get("time") else "")
+    return (_member_email_html("Your tickets", f"See you there, {o['name'].split(' ')[0]}!", f"{e['title']}\n{when}" + (f"\n{e['location']}" if e.get("location") else "") +
+                               "\n\nShow one QR code per guest at the door. You can also open all your tickets on your phone with the button below.", "Open my tickets", f"/tickets/{o['token']}")
+            .replace("</table></td></tr></table>", f'<tr><td style="padding:0 32px 28px;text-align:center">{imgs}</td></tr></table></td></tr></table>', 1))
+
+
+async def _fulfil_ticket_order(session_id: str) -> Optional[dict]:
+    o = await db.ticket_orders.find_one_and_update({"session_id": session_id, "status": "pending"}, {"$set": {"status": "paid", "paid_at": _now_iso()}}, return_document=True, projection={"_id": 0})
+    if not o:
+        return None
+    tickets, seat = [], 0
+    for it in o["items"]:
+        for _ in range(it["qty"] * it["admits"]):
+            seat += 1
+            tickets.append({"code": _secrets.token_urlsafe(12), "order_id": o["id"], "event_id": o["event_id"], "type": it["name"], "seat": seat, "holder": o["name"], "checked_in_at": None, "created_at": _now_iso()})
+    if tickets:
+        await db.tickets.insert_many([dict(t) for t in tickets])
+    e = await db.events.find_one({"id": o["event_id"]}, {"_id": 0}) or {"title": o["event_title"], "date": ""}
+    try:
+        await send_email(to=o["email"], subject=f"Your tickets: {e['title']}", html=_ticket_email_html(o, e, tickets))
+    except Exception as ex:
+        logging.error(f"Ticket email failed: {ex}")
+    return o
+
+
+@api_router.get("/tickets/session/{session_id}")
+async def ticket_session_status(session_id: str):
+    o = await db.ticket_orders.find_one({"session_id": session_id[:200]}, {"_id": 0})
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if o["status"] == "pending":
+        try:
+            sess = stripe.checkout.Session.retrieve(session_id)
+            if sess.payment_status == "paid":
+                await _fulfil_ticket_order(session_id)
+                o = await db.ticket_orders.find_one({"session_id": session_id}, {"_id": 0})
+        except Exception as ex:
+            logging.warning(f"Ticket status check failed: {ex}")
+    return {"status": o["status"], "token": o["token"] if o["status"] == "paid" else "", "event_title": o["event_title"], "email": o["email"]}
+
+
+@api_router.get("/tickets/order/{token}")
+async def ticket_order(token: str, request: Request):
+    await _rate_limit(request, "ticket-view", max_hits=60, window_s=60)
+    o = await db.ticket_orders.find_one({"token": token[:100], "status": "paid"}, {"_id": 0})
+    if not o:
+        raise HTTPException(status_code=404, detail="Tickets not found")
+    e = await db.events.find_one({"id": o["event_id"]}, {"_id": 0, "title": 1, "date": 1, "time": 1, "location": 1}) or {}
+    tickets = await db.tickets.find({"order_id": o["id"]}, {"_id": 0, "code": 1, "type": 1, "seat": 1, "checked_in_at": 1}).sort("seat", 1).to_list(500)
+    return {"name": o["name"], "event": e, "tickets": tickets}
+
+
+@api_router.get("/tickets/qr/{code}.png")
+async def ticket_qr(code: str):
+    if not await db.tickets.find_one({"code": code[:40]}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Not found")
+    img = _qrcode.make(f"CSCT:{code}", box_size=8, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+class TicketScanIn(BaseModel):
+    code: str
+
+
+@api_router.post("/admin/events/{eid}/tickets/checkin")
+async def admin_ticket_checkin(eid: str, payload: TicketScanIn, user=Depends(require_admin)):
+    code = payload.code.strip().removeprefix("CSCT:")[:40]
+    t = await db.tickets.find_one({"code": code}, {"_id": 0})
+    if not t or t["event_id"] != eid:
+        raise HTTPException(status_code=404, detail="This ticket isn't for this event.")
+    res = await db.tickets.update_one({"code": code, "checked_in_at": None}, {"$set": {"checked_in_at": _now_iso(), "checked_in_by": user.get("email")}})
+    if not res.modified_count:
+        return {"ok": False, "already": True, "holder": t["holder"], "type": t["type"], "seat": t["seat"], "at": t["checked_in_at"]}
+    return {"ok": True, "holder": t["holder"], "type": t["type"], "seat": t["seat"]}
+
+
+@api_router.post("/admin/events/{eid}/tickets/undo")
+async def admin_ticket_undo(eid: str, payload: TicketScanIn, user=Depends(require_admin)):
+    await db.tickets.update_one({"code": payload.code.strip().removeprefix("CSCT:")[:40], "event_id": eid}, {"$set": {"checked_in_at": None}})
+    return {"ok": True}
+
+
+@api_router.get("/admin/events/{eid}/tickets/report")
+async def admin_ticket_report(eid: str, user=Depends(require_admin)):
+    e = await db.events.find_one({"id": eid}, {"_id": 0})
+    if e is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    orders = await db.ticket_orders.find({"event_id": eid, "status": "paid"}, {"_id": 0}).sort("paid_at", -1).to_list(5000)
+    tickets = await db.tickets.find({"event_id": eid}, {"_id": 0}).sort("holder", 1).to_list(20000)
+    by = {t["id"]: {"id": t["id"], "name": t["name"], "price": t["price"], "qty": t["qty"], "sold": 0, "revenue": 0.0} for t in e.get("ticket_types") or []}
+    for o in orders:
+        for it in o["items"]:
+            b = by.setdefault(it["type_id"], {"id": it["type_id"], "name": it["name"], "price": it["price"], "qty": 0, "sold": 0, "revenue": 0.0})
+            b["sold"] += it["qty"]
+            b["revenue"] = round(b["revenue"] + it["qty"] * it["price"], 2)
+    return {"event": {"id": e["id"], "title": e["title"], "date": e["date"]}, "types": list(by.values()), "orders": len(orders), "revenue": round(sum(o["total"] for o in orders), 2),
+            "seats": len(tickets), "checked_in": sum(1 for t in tickets if t["checked_in_at"]),
+            "guests": [{"code": t["code"], "holder": t["holder"], "type": t["type"], "seat": t["seat"], "checked_in_at": t["checked_in_at"]} for t in tickets]}
+
+
+@api_router.get("/admin/events/{eid}/tickets.csv")
+async def admin_ticket_csv(eid: str, user=Depends(require_admin)):
+    orders = {o["id"]: o for o in await db.ticket_orders.find({"event_id": eid, "status": "paid"}, {"_id": 0}).to_list(5000)}
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Buyer", "Email", "Ticket type", "Seat", "Order total", "Paid at", "Checked in at"])
+    async for t in db.tickets.find({"event_id": eid}, {"_id": 0}).sort([("order_id", 1), ("seat", 1)]):
+        o = orders.get(t["order_id"], {})
+        w.writerow([_csv_safe(t["holder"]), o.get("email", ""), _csv_safe(t["type"]), t["seat"], o.get("total", ""), o.get("paid_at", ""), t["checked_in_at"] or ""])
+    return Response(content=buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="tickets-{eid[:8]}.csv"'})
 
 # Include the router in the main app
 app.include_router(api_router)

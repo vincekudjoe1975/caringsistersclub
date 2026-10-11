@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import Reveal from './Reveal';
+import { ShareCampaign } from './Thermometer';
 import { Heart, TrendingUp, Users, CalendarClock } from 'lucide-react';
 
 function timeAgo(iso) {
@@ -24,14 +25,17 @@ export default function DonorWall() {
   const [data, setData] = useState(null);
 
   useEffect(() => {
-    (async () => {
+    const load = async () => {
       try {
         const res = await api.get('/donations/public');
         setData(res.data);
       } catch (e) {
         console.error('DonorWall: failed to load public donations', e);
       }
-    })();
+    };
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
   }, []);
 
   if (!data) return null;
@@ -64,6 +68,7 @@ export default function DonorWall() {
                   <Heart size={12} className="text-white fill-white" />
                 </div>
               </div>
+              <div className="mt-5"><ShareCampaign title={data.campaign_title} /></div>
               {(() => {
                 const dl = daysLeft(data.deadline);
                 if (dl === null) return null;
