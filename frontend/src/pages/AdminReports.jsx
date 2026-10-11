@@ -235,7 +235,7 @@ function YirEmail({ year, d, onSaved }) {
       <label className="mt-3 flex items-center gap-2 text-[12.5px] text-[#3B0A2E] font-semibold"><input type="checkbox" checked={!!d.autosend} onChange={toggleAuto} data-testid="yir-autosend-checkbox" className="accent-[#B4247E]" /> Send automatically when a year's page is published (once per year)</label>
       {last && <p className="text-[12px] text-[#241019]/55 mt-2" data-testid="yir-email-last">Last send: {new Date(last.started_at).toLocaleString()} · {last.status === 'done' ? `${last.sent} sent${last.failed ? `, ${last.failed} failed` : ''}` : `sending to ${last.recipients}…`} ({last.trigger})</p>}
       {!d.public && <p className="text-[12px] text-[#9b3b4f] mt-2">Publish the page before sending so the email link works.</p>}
-      {preview && <iframe title="Year in Review email preview" srcDoc={info.html} data-testid="yir-email-preview" className="w-full h-[560px] mt-4 rounded-xl border border-[#3B0A2E]/10 bg-white" />}
+      {preview && <iframe title="Year in Review email preview" sandbox="" srcDoc={info.html} data-testid="yir-email-preview" className="w-full h-[560px] mt-4 rounded-xl border border-[#3B0A2E]/10 bg-white" />}
     </div>
   );
 }

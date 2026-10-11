@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { api } from '../lib/api';
+import { api, BACKEND_URL } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 import { Loader2, Plus, Pencil, Trash2, CalendarDays, Clock, MapPin, Users } from 'lucide-react';
 
@@ -33,6 +33,31 @@ function SessionForm({ pid, initial, onDone }) {
   );
 }
 
+function SessionReport({ pid }) {
+  const [r, setR] = useState(null);
+  useEffect(() => { api.get(`/admin/programs/${pid}/session-report`).then(({ data }) => setR(data)); }, [pid]);
+  if (!r) return null;
+  const pct = (v) => (v == null ? '—' : `${v}%`);
+  return (
+    <div data-testid="session-report" className="mt-8 rounded-xl border border-[#3B0A2E]/10 overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 bg-[#fdf9fb]">
+        <div><p className="font-serif text-[18px] text-[#3B0A2E] font-semibold">Attendance by session</p>
+          <p className="text-[12.5px] text-[#241019]/60">Overall: {r.totals.attended} attended · {r.totals.no_show} absent · {r.totals.unmarked} unmarked · <span data-testid="session-report-pct">{pct(r.totals.attendance_pct)}</span> attendance</p></div>
+        <a data-testid="session-report-csv" href={`${BACKEND_URL}/api/admin/programs/${pid}/session-attendance.csv`} className="rounded-full px-4 py-2 text-[13px] font-semibold border border-[#3B0A2E]/15 text-[#3B0A2E] hover:border-[#B4247E]">Download CSV</a>
+      </div>
+      <div className="overflow-x-auto"><table className="w-full text-[13px]">
+        <thead><tr className="text-left text-[11.5px] uppercase tracking-wide text-[#241019]/50">{['Session', 'Signed up', 'Attended', 'Absent', 'Unmarked', 'Attendance'].map((h) => <th key={h} className="px-5 py-2.5 font-semibold">{h}</th>)}</tr></thead>
+        <tbody>{r.sessions.map((s) => (
+          <tr key={s.id} data-testid={`session-report-row-${s.id}`} className="border-t border-[#3B0A2E]/6">
+            <td className="px-5 py-2.5 text-[#3B0A2E] font-semibold">{s.label}</td><td className="px-5">{s.signed_up}{s.seats ? ` / ${s.seats}` : ''}</td>
+            <td className="px-5 text-green-700">{s.attended}</td><td className="px-5 text-red-600">{s.no_show}</td><td className="px-5 text-[#241019]/55">{s.unmarked}</td>
+            <td className="px-5 font-semibold">{pct(s.attendance_pct)}</td>
+          </tr>))}</tbody>
+      </table></div>
+    </div>
+  );
+}
+
 export default function AdminSessions() {
   const { toast } = useToast();
   const [programs, setPrograms] = useState([]);
@@ -59,6 +84,7 @@ export default function AdminSessions() {
       {edit ? <SessionForm pid={pid} initial={edit} onDone={() => { setEdit(null); load(); }} /> : (
         <button data-testid="session-add-btn" onClick={() => setEdit({})} disabled={!pid} className="btn-magenta rounded-full px-5 py-2.5 text-[13.5px] font-semibold flex items-center gap-2 disabled:opacity-50"><Plus size={15} /> Add session</button>
       )}
+      {pid && rows && rows.length > 0 && <SessionReport pid={pid} key={`${pid}-${rows.map((r) => r.signups).join('.')}`} />}
       <div className="mt-6 divide-y divide-[#3B0A2E]/8">
         {rows === null ? <Loader2 className="animate-spin text-[#B4247E]" /> : !rows.length ? <p data-testid="sessions-admin-empty" className="text-[13.5px] text-[#241019]/55 py-4">No sessions yet for this program.</p> : rows.map((s) => (
           <div key={s.id} data-testid={`session-row-${s.id}`} className={`py-3.5 flex flex-wrap items-center gap-x-6 gap-y-1 ${s.date < today ? 'opacity-50' : ''}`}>
@@ -67,6 +93,7 @@ export default function AdminSessions() {
             <span className="text-[13px] text-[#241019]/70 flex items-center gap-1 flex-1 min-w-[160px]"><MapPin size={13} /> {s.location || 'Location TBA'}</span>
             <span data-testid={`session-seats-${s.id}`} className="text-[13px] text-[#241019]/70 flex items-center gap-1"><Users size={13} /> {s.signups} signed up{s.seats ? ` / ${s.seats}` : ''}</span>
             <span className="flex gap-3 text-[#241019]/50">
+              <a data-testid={`session-sheet-${s.id}`} href={`/session-sheet/${s.id}`} target="_blank" rel="noopener noreferrer" className="text-[12.5px] font-semibold text-[#3B0A2E] hover:underline">Sign-in sheet</a>
               <a data-testid={`session-checkin-${s.id}`} href={`/session-checkin/${s.id}`} className="text-[12.5px] font-semibold text-[#B4247E] hover:underline">Check-in</a>
               <button data-testid={`session-edit-${s.id}`} onClick={() => setEdit(s)} className="hover:text-[#B4247E]"><Pencil size={15} /></button>
               <button data-testid={`session-delete-${s.id}`} onClick={() => del(s)} className="hover:text-red-600"><Trash2 size={15} /></button>

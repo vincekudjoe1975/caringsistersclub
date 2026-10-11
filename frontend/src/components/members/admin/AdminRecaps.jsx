@@ -36,7 +36,7 @@ function RecapEditor({ g, reload }) {
         <button data-testid={`recap-send-${g.id}`} onClick={send} disabled={busy} className="btn-magenta rounded-full px-4 py-2 text-[13px] font-semibold flex items-center gap-1.5 disabled:opacity-60">{busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Send recap</button>
       </div>
       {msg && <p data-testid={`recap-msg-${g.id}`} className="text-[13px] text-[#241019]/70 mt-2">{msg}</p>}
-      {html && <iframe data-testid={`recap-preview-frame-${g.id}`} title="Recap preview" srcDoc={html} className="w-full h-[520px] mt-4 rounded-xl border border-[#3B0A2E]/10 bg-white" />}
+      {html && <iframe data-testid={`recap-preview-frame-${g.id}`} title="Recap preview" sandbox="" srcDoc={html} className="w-full h-[520px] mt-4 rounded-xl border border-[#3B0A2E]/10 bg-white" />}
     </div>
   );
 }

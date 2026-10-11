@@ -263,7 +263,7 @@ async def upload_media(
 
 @api_router.post("/stories/photo")
 async def upload_story_photo(request: Request, file: UploadFile = File(...)):
-    _rate_limit(request, "story-photo", max_hits=3, window_s=600)
+    await _rate_limit(request, "story-photo", max_hits=3, window_s=600)
     doc = await _store_upload(file, "story", "Story photo", None, "public")
     return {"url": doc["url"]}
 
@@ -328,10 +328,18 @@ async def list_media(category: Optional[str] = None):
 
 
 @api_router.get("/media/file/{item_id}")
-async def get_media_file(item_id: str):
+async def get_media_file(item_id: str, request: Request):
     item = await db.media.find_one({"id": item_id, "is_deleted": {"$ne": True}}, {"_id": 0})
     if not item or item.get("category") == "gathering":
         raise HTTPException(status_code=404, detail="Not found")
+    private = item.get("category") == "avatar"
+    if private:
+        try:
+            viewer = await get_current_user(request)
+        except HTTPException:
+            viewer = None
+        if not viewer or not _is_member(viewer):
+            raise HTTPException(status_code=404, detail="Not found")
     data, content_type = None, None
     try:
         data, content_type = get_object(item["storage_path"])
@@ -345,7 +353,7 @@ async def get_media_file(item_id: str):
         headers={
             "X-Content-Type-Options": "nosniff",
             "Content-Disposition": "inline",
-            "Cache-Control": "public, max-age=86400",
+            "Cache-Control": "private, max-age=3600" if private else "public, max-age=86400",
         },
     )
 
@@ -374,7 +382,14 @@ async def delete_media(item_id: str, user=Depends(require_admin)):
 # ---------- Stripe Donations (Flow A - claimable sandbox) ----------
 import stripe
 
-stripe.api_key = os.environ.get("STRIPE_SECRET_KEY") or "sk_test_emergent"
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+if not stripe.api_key:
+    logging.error("STRIPE_SECRET_KEY is not set; payments are disabled.")
+
+
+def _require_stripe():
+    if not stripe.api_key:
+        raise HTTPException(status_code=503, detail="Online payments are temporarily unavailable.")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 DONATION_MIN = 1.0
 DONATION_MAX = 100000.0
@@ -410,6 +425,7 @@ def _build_donation_price_data(amount: float, monthly: bool) -> dict:
 
 
 def _create_stripe_donation_session(req: "DonationCheckout", amount: float, monthly: bool):
+    _require_stripe()
     try:
         return stripe.checkout.Session.create(
             line_items=[{"price_data": _build_donation_price_data(amount, monthly), "quantity": 1}],
@@ -434,7 +450,6 @@ import time as _time
 from collections import deque, defaultdict
 import calendar
 
-_RATE_BUCKETS: dict = defaultdict(deque)
 
 
 _TRUSTED_PROXY_NETS = [ipaddress.ip_network(n) for n in (
@@ -464,29 +479,35 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _rate_limit(request: Request, bucket: str, max_hits: int, window_s: int):
-    """Gentle in-memory per-IP sliding-window limiter for public endpoints."""
+async def _rate_limit(request: Request, bucket: str, max_hits: int, window_s: int):
+    """Database-backed per-IP sliding-window limiter (survives restarts, shared across servers)."""
     ip = _client_ip(request)
     key = f"{bucket}:{ip}"
-    now = _time.monotonic()
-    dq = _RATE_BUCKETS[key]
-    while dq and dq[0] <= now - window_s:
-        dq.popleft()
-    if len(dq) >= max_hits:
-        retry = int(window_s - (now - dq[0])) + 1
-        raise HTTPException(
-            status_code=429,
-            detail="Too many requests. Please slow down and try again in a moment.",
-            headers={"Retry-After": str(retry)},
-        )
-    dq.append(now)
-    if not dq:
-        _RATE_BUCKETS.pop(key, None)
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(seconds=window_s)
+    try:
+        hits = await db.rate_hits.count_documents({"key": key, "at": {"$gt": since}})
+    except Exception as e:
+        logging.warning(f"Rate limit check failed: {e}")
+        return
+    if hits >= max_hits:
+        oldest = await db.rate_hits.find_one({"key": key, "at": {"$gt": since}}, {"_id": 0, "at": 1}, sort=[("at", 1)])
+        o = (oldest or {}).get("at") or now
+        if o.tzinfo is None:
+            o = o.replace(tzinfo=timezone.utc)
+        retry = max(1, int(window_s - (now - o).total_seconds()) + 1)
+        try:
+            await db.blocked_attempts.insert_one({"bucket": bucket.split(":")[0], "ip": ip, "path": request.url.path[:200],
+                                                  "ua": (request.headers.get("user-agent") or "")[:200], "at": now})
+        except Exception as e:
+            logging.warning(f"Blocked attempt log failed: {e}")
+        raise HTTPException(status_code=429, detail="Too many requests. Please slow down and try again in a moment.", headers={"Retry-After": str(retry)})
+    await db.rate_hits.insert_one({"key": key, "at": now})
 
 
 @api_router.post("/payments/checkout")
 async def create_donation_checkout(req: DonationCheckout, request: Request):
-    _rate_limit(request, "checkout", max_hits=6, window_s=300)
+    await _rate_limit(request, "checkout", max_hits=6, window_s=300)
     amount = _validate_donation_amount(req.amount)
     monthly = req.frequency == "monthly"
     session = _create_stripe_donation_session(req, amount, monthly)
@@ -717,7 +738,7 @@ async def _notify_staff(stype: str, data: dict):
 
 @api_router.post("/submissions")
 async def create_submission(payload: SubmissionCreate, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "submission", max_hits=5, window_s=60)
+    await _rate_limit(request, "submission", max_hits=5, window_s=60)
     data = payload.model_dump()
     stype = data.get("type")
     if stype not in PUBLIC_SUB_TYPES:
@@ -1635,7 +1656,7 @@ async def _dispatch_segment_appeal(seg: str, subject: str, message: str, sent_by
 async def track_appeal_click(appeal_id: str, request: Request):
     target = f"{PUBLIC_APP_URL}/donate"
     try:
-        _rate_limit(request, f"appeal-click:{appeal_id}", max_hits=3, window_s=600)
+        await _rate_limit(request, f"appeal-click:{appeal_id}", max_hits=3, window_s=600)
         res = await db.segment_emails.update_one({"id": appeal_id}, {"$inc": {"clicks": 1}})
         if res.matched_count:
             target = f"{target}?appeal={appeal_id}"
@@ -2192,7 +2213,7 @@ async def _open_event(eid: str) -> dict:
 
 @api_router.post("/events/{eid}/rsvp")
 async def create_rsvp(eid: str, payload: RsvpIn, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "rsvp", max_hits=5, window_s=60)
+    await _rate_limit(request, "rsvp", max_hits=5, window_s=60)
     name, email, guests = _validate_rsvp_input(payload)
     ev = await _open_event(eid)
     if await db.event_rsvps.find_one({"event_id": eid, "email": email}):
@@ -2213,7 +2234,7 @@ async def create_rsvp(eid: str, payload: RsvpIn, request: Request, background: B
 
 @api_router.post("/events/{eid}/waitlist")
 async def join_waitlist(eid: str, payload: RsvpIn, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "waitlist", max_hits=5, window_s=60)
+    await _rate_limit(request, "waitlist", max_hits=5, window_s=60)
     name, email, guests = _validate_rsvp_input(payload)
     ev = await _open_event(eid)
     if await db.event_rsvps.find_one({"event_id": eid, "email": email}):
@@ -2301,7 +2322,7 @@ def _claim_state(w: dict) -> str:
 
 @api_router.get("/events/token/{token}")
 async def event_token_info(token: str, request: Request):
-    _rate_limit(request, "rsvp-token", max_hits=20, window_s=60)
+    await _rate_limit(request, "rsvp-token", max_hits=20, window_s=60)
     kind, person, ev = await _resolve_token(token)
     if not kind or not ev:
         raise HTTPException(status_code=404, detail="This link is invalid or has already been used.")
@@ -2315,7 +2336,7 @@ async def event_token_info(token: str, request: Request):
 
 @api_router.post("/events/token/{token}")
 async def event_token_action(token: str, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "rsvp-token", max_hits=20, window_s=60)
+    await _rate_limit(request, "rsvp-token", max_hits=20, window_s=60)
     kind, person, ev = await _resolve_token(token)
     if not kind or not ev:
         raise HTTPException(status_code=404, detail="This link is invalid or has already been used.")
@@ -2399,7 +2420,7 @@ def _manage_link_email_html(name: str, url: str) -> str:
 
 @api_router.post("/donor/manage-link")
 async def donor_manage_link(payload: ManageLinkIn, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "manage-link", max_hits=3, window_s=300)
+    await _rate_limit(request, "manage-link", max_hits=3, window_s=300)
     email = (payload.email or "").strip().lower()
     if not _EMAIL_RE.match(email) or len(email) > 254:
         raise HTTPException(status_code=400, detail="Please enter a valid email address.")
@@ -2440,7 +2461,7 @@ async def _portal_configuration() -> str:
 
 @api_router.get("/donor/manage-token/{token}")
 async def donor_manage_token_info(token: str, request: Request):
-    _rate_limit(request, "manage-portal", max_hits=20, window_s=60)
+    await _rate_limit(request, "manage-portal", max_hits=20, window_s=60)
     t = await db.donor_manage_tokens.find_one({"token": token}, {"_id": 0})
     valid = bool(t and not t["used"] and t["expires_at"] > _now_iso())
     return {"valid": valid}
@@ -2448,10 +2469,11 @@ async def donor_manage_token_info(token: str, request: Request):
 
 @api_router.post("/donor/portal")
 async def donor_portal(payload: PortalIn, request: Request):
-    _rate_limit(request, "manage-portal", max_hits=10, window_s=60)
+    await _rate_limit(request, "manage-portal", max_hits=10, window_s=60)
     t = await db.donor_manage_tokens.find_one({"token": (payload.token or "")[:100]}, {"_id": 0})
     if not t or t["expires_at"] <= _now_iso() or t["used"]:
         raise HTTPException(status_code=410, detail="This link has expired or was already used. Please request a new one.")
+    _require_stripe()
     claimed = await db.donor_manage_tokens.update_one({"token": t["token"], "used": False}, {"$set": {"used": True, "used_at": _now_iso()}})
     if not claimed.modified_count:
         raise HTTPException(status_code=410, detail="This link has expired or was already used. Please request a new one.")
@@ -2684,7 +2706,7 @@ async def _find_cancellation(token: str):
 
 @api_router.get("/cancellations/token/{token}")
 async def cancellation_token_info(token: str, request: Request):
-    _rate_limit(request, "cancel-thanks", max_hits=20, window_s=60)
+    await _rate_limit(request, "cancel-thanks", max_hits=20, window_s=60)
     c = await _find_cancellation(token)
     return {"name": c["name"], "email": c["email"], "amount": c["amount"], "ends_on": c["ends_on"], "reason": c.get("reason"),
             "thanked": c["thanked"], "thanked_at": c.get("thanked_at"), **_default_thank_note(c["name"])}
@@ -2692,7 +2714,7 @@ async def cancellation_token_info(token: str, request: Request):
 
 @api_router.post("/cancellations/token/{token}")
 async def cancellation_send_thanks(token: str, payload: ThankNoteIn, request: Request):
-    _rate_limit(request, "cancel-thanks", max_hits=20, window_s=60)
+    await _rate_limit(request, "cancel-thanks", max_hits=20, window_s=60)
     c = await _find_cancellation(token)
     subject, message = payload.subject.strip()[:150], payload.message.strip()[:5000]
     if not subject or not message:
@@ -3176,7 +3198,7 @@ class StoryApproveIn(BaseModel):
 
 @api_router.post("/stories")
 async def submit_story(payload: StorySubmitIn, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "story", max_hits=3, window_s=600)
+    await _rate_limit(request, "story", max_hits=3, window_s=600)
     name, email = _validate_person({"name": payload.name, "email": payload.email})
     quote = payload.quote.strip()
     if len(quote) < 20:
@@ -3276,7 +3298,7 @@ async def _send_signup_confirm(email: str, name: str, prog: dict, waitlist: bool
 
 @api_router.post("/programs/{slug}/signup")
 async def program_signup(slug: str, payload: ProgramSignupIn, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "submission", max_hits=5, window_s=60)
+    await _rate_limit(request, "submission", max_hits=5, window_s=60)
     name, email = _validate_person({"name": payload.name, "email": payload.email, "message": payload.message})
     prog = await db.programs.find_one({"slug": slug[:100], "published": True}, {"_id": 0, "id": 1, "title": 1, "slug": 1, "capacity": 1, "priority_until": 1})
     if not prog:
@@ -3407,7 +3429,7 @@ class ClaimIn(BaseModel):
 
 
 async def _offer(token: str, request: Request):
-    _rate_limit(request, "claim", max_hits=20, window_s=60)
+    await _rate_limit(request, "claim", max_hits=20, window_s=60)
     sub = await db.submissions.find_one({"offer_token": token[:64], "type": "program_signup"}, {"_id": 0}) if token else None
     if not sub:
         raise HTTPException(status_code=404, detail="This link is invalid.")
@@ -3455,7 +3477,7 @@ async def _wl_position(sub: dict):
 
 @api_router.get("/waitlist/status")
 async def waitlist_status(token: str, request: Request):
-    _rate_limit(request, "claim", max_hits=20, window_s=60)
+    await _rate_limit(request, "claim", max_hits=20, window_s=60)
     sub = await db.submissions.find_one({"status_token": token[:64], "type": "program_signup"}, {"_id": 0}) if token else None
     if not sub:
         raise HTTPException(status_code=404, detail="This link is invalid.")
@@ -3758,7 +3780,7 @@ class HoursIn(BaseModel):
 
 @api_router.post("/volunteer-hours")
 async def log_hours(payload: HoursIn, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "hours", max_hits=10, window_s=600)
+    await _rate_limit(request, "hours", max_hits=10, window_s=600)
     name, email = _validate_person({"name": payload.name, "email": payload.email, "note": payload.note})
     if not 0.25 <= payload.hours <= 24:
         raise HTTPException(status_code=400, detail="Hours must be between 0.25 and 24 for a single day.")
@@ -3963,7 +3985,7 @@ def _cert_pdf(name: str, label: str, threshold: int, date: str, lines: tuple = N
 
 @api_router.get("/certificates/{token}.pdf")
 async def volunteer_certificate(token: str, request: Request):
-    _rate_limit(request, "cert", max_hits=30, window_s=60)
+    await _rate_limit(request, "cert", max_hits=30, window_s=60)
     m = await db.volunteer_milestones.find_one({"cert_token": token[:64]}, {"_id": 0}) if token else None
     if not m:
         raise HTTPException(status_code=404, detail="Certificate not found")
@@ -3997,7 +4019,7 @@ def _cert_list_html(name: str, certs: list) -> str:
 
 @api_router.post("/certificates/request")
 async def request_certificates(payload: CertRequestIn, request: Request):
-    _rate_limit(request, "cert-request", max_hits=3, window_s=600)
+    await _rate_limit(request, "cert-request", max_hits=3, window_s=600)
     em = payload.email.strip().lower()[:200]
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", em):
         raise HTTPException(status_code=400, detail="Please enter a valid email address.")
@@ -4487,7 +4509,7 @@ async def _badge(token: str) -> dict:
 
 @api_router.get("/badges/{token}")
 async def public_badge(token: str, request: Request):
-    _rate_limit(request, "badge", max_hits=60, window_s=60)
+    await _rate_limit(request, "badge", max_hits=60, window_s=60)
     return await _badge(token)
 
 
@@ -4554,7 +4576,7 @@ async def yir_email_click(year: int, source: str, request: Request, amount: int 
     amt = amount if 1 <= amount <= 100000 else 0
     if source == "email" and 2000 <= year <= 2100:
         try:
-            _rate_limit(request, f"yir-click:{year}:{source}", max_hits=3, window_s=600)
+            await _rate_limit(request, f"yir-click:{year}:{source}", max_hits=3, window_s=600)
             await db.yir_clicks.update_one({"year": year, "source": source}, {"$inc": {"clicks": 1}}, upsert=True)
         except HTTPException:
             pass
@@ -4566,7 +4588,7 @@ async def yir_email_click(year: int, source: str, request: Request, amount: int 
 async def yir_page_click(year: int, request: Request):
     if 2000 <= year <= 2100:
         try:
-            _rate_limit(request, f"yir-click:{year}:page", max_hits=3, window_s=600)
+            await _rate_limit(request, f"yir-click:{year}:page", max_hits=3, window_s=600)
             await db.yir_clicks.update_one({"year": year, "source": "page"}, {"$inc": {"clicks": 1}}, upsert=True)
         except HTTPException:
             pass
@@ -5053,7 +5075,7 @@ async def _send_anniversaries(today=None) -> int:
 
 @api_router.get("/certificates/anniversary/{token}.pdf")
 async def anniversary_certificate(token: str, request: Request):
-    _rate_limit(request, "cert", max_hits=30, window_s=60)
+    await _rate_limit(request, "cert", max_hits=30, window_s=60)
     a = await db.volunteer_anniversaries.find_one({"cert_token": token[:64]}, {"_id": 0}) if token else None
     if not a:
         raise HTTPException(status_code=404, detail="Certificate not found")
@@ -5222,7 +5244,7 @@ async def _send_session_feedback(today=None) -> int:
 
 @api_router.get("/feedback")
 async def get_feedback(token: str, request: Request):
-    _rate_limit(request, "feedback", max_hits=30, window_s=60)
+    await _rate_limit(request, "feedback", max_hits=30, window_s=60)
     f = await db.session_feedback.find_one({"token": token[:64]}, {"_id": 0}) if token else None
     if not f:
         raise HTTPException(status_code=404, detail="This feedback link is invalid.")
@@ -5240,7 +5262,7 @@ class FeedbackIn(BaseModel):
 
 @api_router.post("/feedback")
 async def submit_feedback(payload: FeedbackIn, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "feedback-post", max_hits=10, window_s=60)
+    await _rate_limit(request, "feedback-post", max_hits=10, window_s=60)
     if not 1 <= payload.rating <= 5:
         raise HTTPException(status_code=400, detail="Please choose a rating from 1 to 5.")
     res = await db.session_feedback.update_one({"token": payload.token[:64]}, {"$set": {"rating": payload.rating, "recommend": payload.recommend,
@@ -5413,7 +5435,7 @@ async def _release_sub(token: str):
 
 @api_router.get("/seat-release")
 async def seat_release_info(token: str, request: Request):
-    _rate_limit(request, "release", max_hits=20, window_s=60)
+    await _rate_limit(request, "release", max_hits=20, window_s=60)
     sub, prog = await _release_sub(token)
     return {"program": prog.get("title", sub["data"].get("program")), "start_date": prog.get("start_date"), "schedule": prog.get("schedule", ""),
             "name": (sub["data"].get("name") or "").split(" ")[0], "released": bool(sub.get("released"))}
@@ -5450,7 +5472,7 @@ async def _after_release(sub: dict, prog: dict):
 
 @api_router.post("/seat-release")
 async def seat_release(payload: ReleaseIn, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "release-post", max_hits=10, window_s=60)
+    await _rate_limit(request, "release-post", max_hits=10, window_s=60)
     sub, prog = await _release_sub(payload.token)
     if sub.get("released"):
         return {"released": True}
@@ -5718,7 +5740,7 @@ async def _sisterhood(token: str) -> dict:
 
 @api_router.get("/sisterhood/{token}")
 async def public_sisterhood(token: str, request: Request):
-    _rate_limit(request, "sisterhood", max_hits=60, window_s=60)
+    await _rate_limit(request, "sisterhood", max_hits=60, window_s=60)
     return await _sisterhood(token)
 
 
@@ -5822,7 +5844,7 @@ async def _send_review_request(f: dict):
 
 @api_router.get("/feature-consent")
 async def feature_consent_info(token: str, request: Request):
-    _rate_limit(request, "feedback", max_hits=30, window_s=60)
+    await _rate_limit(request, "feedback", max_hits=30, window_s=60)
     f = await db.session_feedback.find_one({"token": token[:64], "rating": 5}, {"_id": 0}) if token else None
     if f is None or not f.get("comment"):
         raise HTTPException(status_code=404, detail="This link is invalid.")
@@ -5837,7 +5859,7 @@ class ConsentIn(BaseModel):
 
 @api_router.post("/feature-consent")
 async def feature_consent(payload: ConsentIn, request: Request, background: BackgroundTasks):
-    _rate_limit(request, "feedback-post", max_hits=10, window_s=60)
+    await _rate_limit(request, "feedback-post", max_hits=10, window_s=60)
     photo = payload.photo_url.strip()
     if photo and not re.match(r"^/api/media/file/[A-Za-z0-9-]+$", photo):
         raise HTTPException(status_code=400, detail="Please upload your photo with the button.")
@@ -6216,6 +6238,9 @@ async def startup_indexes():
         await db.users.create_index("user_id", unique=True)
         await db.user_sessions.create_index("session_token")
         await db.media.create_index("category")
+        await db.rate_hits.create_index("at", expireAfterSeconds=3600)
+        await db.rate_hits.create_index([("key", 1), ("at", 1)])
+        await db.blocked_attempts.create_index("at", expireAfterSeconds=60 * 60 * 24 * 30)
     except Exception as e:
         logging.warning(f"Index creation warning: {e}")
 
@@ -6339,7 +6364,7 @@ class MemberApplication(BaseModel):
 
 @api_router.post("/members/apply")
 async def members_apply(payload: MemberApplication, request: Request, background: BackgroundTasks, user=Depends(get_current_user)):
-    _rate_limit(request, "member-apply", max_hits=5, window_s=600)
+    await _rate_limit(request, "member-apply", max_hits=5, window_s=600)
     if _is_member(user):
         return {"status": "active"}
     if not (payload.is_adult and payload.is_delaware and payload.agrees_bylaws):
@@ -6439,7 +6464,7 @@ def _author(user: dict) -> dict:
 
 @api_router.post("/members/threads")
 async def members_new_thread(payload: PostIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
+    await _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     title, body = payload.title.strip()[:140], payload.body.strip()[:5000]
     if not title or not body:
         raise HTTPException(status_code=400, detail="Please add a title and a message.")
@@ -6451,7 +6476,7 @@ async def members_new_thread(payload: PostIn, request: Request, user=Depends(req
 
 @api_router.post("/members/threads/{tid}/replies")
 async def members_reply(tid: str, payload: PostIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
+    await _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     body = payload.body.strip()[:3000]
     if not body:
         raise HTTPException(status_code=400, detail="Please write a reply.")
@@ -6718,7 +6743,7 @@ class DuesCheckout(BaseModel):
 
 @api_router.post("/members/dues/checkout")
 async def members_dues_checkout(payload: DuesCheckout, request: Request, user=Depends(require_member)):
-    _rate_limit(request, "dues-checkout", max_hits=6, window_s=300)
+    await _rate_limit(request, "dues-checkout", max_hits=6, window_s=300)
     year = _today_et().year
     st = await _member_standing(user, year)
     amount = round(float(payload.amount), 2)
@@ -6726,6 +6751,7 @@ async def members_dues_checkout(payload: DuesCheckout, request: Request, user=De
         raise HTTPException(status_code=400, detail="Please choose an amount between $1 and your balance due.")
     origin = (request.headers.get("origin") or "").rstrip("/")
     base = origin if origin in _ALLOWED_ORIGINS else PUBLIC_APP_URL
+    _require_stripe()
     try:
         s = stripe.checkout.Session.create(
             line_items=[{"price_data": {"currency": "usd", "product_data": {"name": f"Caring Sisters Club member dues {year}"},
@@ -6816,7 +6842,7 @@ class VoteIn(BaseModel):
 
 @api_router.post("/members/ballots/{bid}/vote")
 async def members_vote(bid: str, payload: VoteIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, "member-vote", max_hits=20, window_s=300)
+    await _rate_limit(request, "member-vote", max_hits=20, window_s=300)
     b = await db.member_ballots.find_one({"id": bid}, {"_id": 0})
     if b is None:
         raise HTTPException(status_code=404, detail="Ballot not found")
@@ -6851,7 +6877,7 @@ class WishIn(BaseModel):
 
 @api_router.post("/members/birthdays/{uid}/wish")
 async def members_birthday_wish(uid: str, payload: WishIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
+    await _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     msg = payload.message.strip()[:1000]
     if not msg:
         raise HTTPException(status_code=400, detail="Please write a birthday message.")
@@ -7191,7 +7217,7 @@ async def _send_dues_reminders(round_key: str, final: bool = False) -> int:
 
 @api_router.get("/members/pay/{token}")
 async def members_pay_link(token: str, request: Request):
-    _rate_limit(request, "dues-paylink", max_hits=10, window_s=300)
+    await _rate_limit(request, "dues-paylink", max_hits=10, window_s=300)
     t = await db.member_pay_tokens.find_one({"token": token}, {"_id": 0})
     if t is None or t["expires_at"] < _now_iso():
         return RedirectResponse(f"{PUBLIC_APP_URL}/members", status_code=303)
@@ -7201,6 +7227,7 @@ async def members_pay_link(token: str, request: Request):
     st = await _member_standing(u, t["year"])
     if st["balance"] < 1:
         return RedirectResponse(f"{PUBLIC_APP_URL}/members?paid=1", status_code=303)
+    _require_stripe()
     try:
         s = stripe.checkout.Session.create(
             line_items=[{"price_data": {"currency": "usd", "product_data": {"name": f"Caring Sisters Club member dues {t['year']}"},
@@ -7613,7 +7640,7 @@ class SuggestionIn(BaseModel):
 
 @api_router.post("/members/meetings/{mid}/suggestions")
 async def members_agenda_suggest(mid: str, payload: SuggestionIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
+    await _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     text = payload.text.strip()[:500]
     if not text:
         raise HTTPException(status_code=400, detail="Please write your suggestion.")
@@ -8315,7 +8342,7 @@ async def members_spotlight(user=Depends(require_member)):
 
 @api_router.post("/members/spotlight/photo")
 async def members_spotlight_photo(request: Request, file: UploadFile = File(...), user=Depends(require_member)):
-    _rate_limit(request, "spotlight-photo", max_hits=5, window_s=600)
+    await _rate_limit(request, "spotlight-photo", max_hits=5, window_s=600)
     if not await db.member_spotlights.find_one({"user_id": user["user_id"], "status": "invited"}, {"_id": 1}):
         raise HTTPException(status_code=403, detail="No spotlight invitation found.")
     doc = await _store_upload(file, "spotlight", "Spotlight photo", None, user["user_id"])
@@ -8552,7 +8579,7 @@ async def members_prayers(user=Depends(require_member)):
 
 @api_router.post("/members/prayers")
 async def members_prayer_new(payload: PrayerIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
+    await _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     body = payload.body.strip()[:2000]
     if payload.kind not in ("request", "praise") or not body:
         raise HTTPException(status_code=400, detail="Please write your prayer request or praise report.")
@@ -8581,7 +8608,7 @@ class EncourageIn(BaseModel):
 
 @api_router.post("/members/prayers/{pid}/encourage")
 async def members_prayer_encourage(pid: str, payload: EncourageIn, request: Request, user=Depends(require_member)):
-    _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
+    await _rate_limit(request, f"member-post:{user['user_id']}", max_hits=10, window_s=300)
     body = payload.body.strip()[:1000]
     if not body:
         raise HTTPException(status_code=400, detail="Please write a word of encouragement.")
@@ -8638,7 +8665,7 @@ async def _set_member_photo(uid: str, url: str):
 
 @api_router.post("/members/photo")
 async def members_photo_upload(request: Request, file: UploadFile = File(...), user=Depends(require_member)):
-    _rate_limit(request, "member-avatar", max_hits=6, window_s=600)
+    await _rate_limit(request, "member-avatar", max_hits=6, window_s=600)
     doc = await _store_upload(file, "avatar", "Profile photo", None, user["user_id"])
     await _set_member_photo(user["user_id"], doc["url"])
     return {"picture": doc["url"]}
@@ -8693,7 +8720,7 @@ async def members_album(mid: str, user=Depends(require_member)):
 
 @api_router.post("/members/albums/{mid}/photos")
 async def members_album_upload(mid: str, request: Request, file: UploadFile = File(...), caption: str = Form(""), user=Depends(require_member)):
-    _rate_limit(request, "gathering-photo", max_hits=30, window_s=600)
+    await _rate_limit(request, "gathering-photo", max_hits=30, window_s=600)
     m = await db.member_meetings.find_one({"id": mid, "kind": "in-person"}, {"_id": 0, "date": 1})
     if m is None:
         raise HTTPException(status_code=404, detail="Gathering not found")
@@ -9117,6 +9144,8 @@ async def _member_phase7_scheduled():
         await _send_wish_reminders(today, "day")
     if hour >= 10:
         await _auto_recaps(today)
+    if hour >= 8 and await _once(f"spam-digest:{today.isoformat()}"):
+        await _send_spam_digest()
 
 
 # ---------- Member Portal phase 9: wish reminders, captions, slideshow, gathering recaps ----------
@@ -9726,6 +9755,96 @@ async def admin_album_delete(aid: str, user=Depends(require_admin)):
         raise HTTPException(status_code=404, detail="Album not found")
     await db.media.update_many({"album_key": a["key"]}, {"$unset": {"album_key": ""}})
     return {"ok": True}
+
+
+# ---------- Spam alert digest ----------
+SPAM_LABELS = {"submission": "Contact / volunteer / program sign-up forms", "checkout": "Donation checkout", "rsvp": "Event RSVPs", "rsvp-token": "RSVP links",
+               "waitlist": "Event waitlist", "story": "Share-your-story form", "story-photo": "Story photo uploads", "feedback": "Feedback links", "feedback-post": "Feedback form",
+               "claim": "Waitlist claims", "release": "Seat release links", "release-post": "Seat release form", "member-apply": "Membership applications",
+               "manage-link": "Manage-my-gift requests", "manage-portal": "Manage-my-gift portal", "cert": "Certificates", "cert-request": "Certificate requests",
+               "hours": "Volunteer hours", "badge": "Badge pages", "sisterhood": "Sisterhood pages", "appeal-click": "Appeal links", "yir-click": "Year-in-review links",
+               "cancel-thanks": "Cancellation page", "dues-checkout": "Dues checkout", "dues-paylink": "Dues pay links", "member-post": "Member portal posts",
+               "member-vote": "Member votes", "member-avatar": "Profile photo uploads", "gathering-photo": "Gathering photo uploads", "spotlight-photo": "Spotlight photo uploads"}
+
+
+def _mask_ip(ip: str) -> str:
+    if ":" in ip:
+        return ":".join(ip.split(":")[:2]) + ":…"
+    p = ip.split(".")
+    return f"{p[0]}.{p[1]}.x.x" if len(p) == 4 else "unknown"
+
+
+async def _spam_summary(hours: int = 24) -> dict:
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    rows = await db.blocked_attempts.find({"at": {"$gte": since}}, {"_id": 0}).sort("at", -1).to_list(20000)
+    by_form, by_ip = defaultdict(int), defaultdict(int)
+    for r in rows:
+        by_form[r["bucket"]] += 1
+        by_ip[r["ip"]] += 1
+    return {"total": len(rows), "forms": sorted(({"bucket": k, "label": SPAM_LABELS.get(k, k), "count": v} for k, v in by_form.items()), key=lambda x: -x["count"]),
+            "sources": [{"ip": _mask_ip(k), "count": v} for k, v in sorted(by_ip.items(), key=lambda x: -x[1])[:5]],
+            "examples": [{"at": r["at"].isoformat() if hasattr(r["at"], "isoformat") else str(r["at"]), "form": SPAM_LABELS.get(r["bucket"], r["bucket"]), "ip": _mask_ip(r["ip"]),
+                          "path": r.get("path", ""), "ua": (r.get("ua") or "")[:80]} for r in rows[:5]]}
+
+
+async def _send_spam_digest() -> bool:
+    to = (await _get_settings()).get("staff_notify_email")
+    s = await _spam_summary()
+    if not to or not s["total"]:
+        return False
+    body = (f"In the last 24 hours our site blocked {s['total']} request{'s' if s['total'] != 1 else ''} that came in too fast (likely spam or bots).\n\n"
+            "By form:\n" + "\n".join(f"  {f['label']}: {f['count']}" for f in s["forms"])
+            + "\n\nTop repeat sources (partly hidden):\n" + "\n".join(f"  {x['ip']}: {x['count']}" for x in s["sources"])
+            + "\n\nRecent examples:\n" + "\n".join(f"  {datetime.fromisoformat(e['at']).astimezone(EVENT_TZ).strftime('%b %-d, %-I:%M %p')} ET · {e['form']} · {e['ip']}" for e in s["examples"])
+            + "\n\nNo action is needed: these requests were stopped automatically. If one source keeps appearing day after day, let your web team know.")
+    try:
+        await send_email(to=to, subject=f"Spam blocked: {s['total']} attempt{'s' if s['total'] != 1 else ''} in the last 24 hours",
+                         html=_member_email_html("Staff · Site security", "Daily spam summary", body, "Open admin", "/admin"))
+        return True
+    except Exception as e:
+        logging.warning(f"Spam digest failed: {e}")
+        return False
+
+
+@api_router.get("/admin/security/spam")
+async def admin_spam_summary(user=Depends(require_admin)):
+    return await _spam_summary()
+
+
+# ---------- Session attendance report ----------
+@api_router.get("/admin/programs/{pid}/session-report")
+async def admin_session_report(pid: str, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0, "title": 1})
+    if p is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    out, tot = [], defaultdict(int)
+    for s in await db.program_sessions.find({"program_id": pid}, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(500):
+        rows = await db.submissions.find({**_session_taken_q(s["id"]), "released": {"$ne": True}}, {"_id": 0, "attendance": 1}).to_list(2000)
+        c = {"signed_up": len(rows), "attended": sum(1 for r in rows if r.get("attendance") == "attended"), "no_show": sum(1 for r in rows if r.get("attendance") == "no_show")}
+        c["unmarked"] = c["signed_up"] - c["attended"] - c["no_show"]
+        for k, v in c.items():
+            tot[k] += v
+        out.append({"id": s["id"], "date": s["date"], "label": _session_label(s), "seats": s.get("seats", 0), **c,
+                    "attendance_pct": round(100 * c["attended"] / (c["attended"] + c["no_show"])) if c["attended"] + c["no_show"] else None})
+    tot = dict(tot) or {"signed_up": 0, "attended": 0, "no_show": 0, "unmarked": 0}
+    tot["attendance_pct"] = round(100 * tot["attended"] / (tot["attended"] + tot["no_show"])) if tot.get("attended", 0) + tot.get("no_show", 0) else None
+    return {"program": p["title"], "sessions": out, "totals": tot}
+
+
+@api_router.get("/admin/programs/{pid}/session-attendance.csv")
+async def admin_session_attendance_csv(pid: str, user=Depends(require_admin)):
+    p = await db.programs.find_one({"id": pid}, {"_id": 0, "title": 1, "slug": 1})
+    if p is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Program", "Session date", "Session", "Name", "Email", "Phone", "Attendance", "Signed up at"])
+    for s in await db.program_sessions.find({"program_id": pid}, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(500):
+        for r in await db.submissions.find({**_session_taken_q(s["id"]), "released": {"$ne": True}}, {"_id": 0, "data": 1, "attendance": 1, "created_at": 1}).sort("created_at", 1).to_list(2000):
+            d = r.get("data") or {}
+            w.writerow([_csv_safe(x) for x in (p["title"], s["date"], _session_label(s), d.get("name", ""), d.get("email", ""), d.get("phone", ""),
+                                                {"attended": "Attended", "no_show": "Absent"}.get(r.get("attendance"), "Unmarked"), (r.get("created_at") or "")[:10])])
+    return Response(content=buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{p["slug"][:50]}-session-attendance.csv"', "Cache-Control": "no-store"})
 
 
 # ---------- Dated session check-in ----------
