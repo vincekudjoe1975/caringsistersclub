@@ -297,3 +297,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Agendas on member_meetings.agenda (draft/published, time, location); members see "Next meeting" card on home + suggest items (meeting.suggestions, staff approve/decline). Day-before email (_send_agenda_reminders, once via agenda.reminder_sent_at).
 - Anniversaries: staff can set real join date (PUT /admin/members/{uid}/joined -> member_since; affects dues proration & 1-yr candidate rule). Home card "Celebrating X years"; email once per year (member_notices manniv:<uid>:<year>).
 - Referrers: users.member_referrer_id linked by staff (difflib suggestion from typed name); Jan 2 auto notices for previous year unpaid (active/suspended/ended), manual send; dedupe refnote keys.
+
+## 2026-06 Member Portal phase 5 (iteration 26 — 32/32 backend, all frontend flows pass)
+- Member import: CSV/XLSX (openpyxl) -> preview/validate (editable rows, errors/warnings, fuzzy referrer by name/email incl. same-file) -> commit creates placeholder users (role pending, member_status active, member_since, office, profile, referred_by) or updates existing by email; links member_referrer_id; optional invite email. Google sign-in with same email adopts the record (auth_session matches by email).
+- Gatherings: meetings kind 'in-person' get rsvp_deadline/details + rsvps{uid:{response,guests,dietary}}; portal home card; staff GatheringPanel with headcounts/dietary/no-reply; reminder 7 days before to non-responders (rsvp_reminder_sent_at).
+- Annual summary: _annual_data(year) membership/attendance/dues/support/votes; printable /annual-report?year= (admin) and shared snapshot member_annual_reports -> Minutes tab -> /annual-report/:id.
+- Spotlight (member_spotlights): staff-written or invite mode (member submits photo+story -> staff approve); one published per month shown on portal home; publish emails her. Spotlight photos excluded from public /api/media list.
