@@ -324,3 +324,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Album download: GET /members/albums/{mid}/download (ZIP of approved, built in thread, entries NNN_<uploader>.ext); single photo ?download=1.
 - Birthday opt-outs: member_profile.bday_notices / bday_card (My Profile checkboxes) respected by _send_birthday_emails.
 - Wishes wall: GET /members/birthdays/{uid}/wall; printable /birthday-wishes/:uid page; "View wishes" in birthdays card; MyWishes home card during her birthday month.
+
+## 2026-06 Member Portal phase 9 (iteration 30 — 19/19 backend + phase 7/8 regression; all frontend flows pass)
+- Wish reminders: _send_wish_reminders(day, 'eve'|'day') at >=6pm ET (tomorrow's + today's celebrants) to active members without a reply in birthday:<uid>:<year> and bday_notices != False; _once wishrem:<kind>:<uid>:<date>.
+- Captions: upload form field caption; PUT /members/gathering-photos/{pid}/caption (uploader while pending, admin any time); shown in grid/lightbox/slideshow; ZIP names + captions.txt.
+- Slideshow: Slideshow.jsx full-screen 6s fade, keys/taps; per album + GET /members/albums-slideshow (all approved).
+- Recaps: Admin > Members > Gathering photos > "Gathering recap emails" (pick <=6, note, preview iframe, send once); auto _auto_recaps at >=10am ET for gatherings 3-10 days old with approved photos; email images via tokenized public /api/recap-photo/{pid}?t=recap_token.
