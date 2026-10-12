@@ -10,6 +10,7 @@ import { Directory } from '../components/members/Directory';
 import { Bylaws } from '../components/members/Bylaws';
 import { SignInOptions } from '../components/EmailAuth';
 import { Welcome } from '../components/members/Welcome';
+import { WelcomeBack } from '../components/members/WelcomeBack';
 import { MyProfile } from '../components/members/MyProfile';
 import { Ballots } from '../components/members/Ballots';
 import { Standing } from '../components/members/Standing';
@@ -98,6 +99,7 @@ function Portal({ me, onChange }) {
           <button data-testid="portal-logout-btn" onClick={logout} className="rounded-full px-5 py-2.5 text-[13px] font-semibold text-[#F7EFE9] border border-white/25 flex items-center gap-1.5 hover:bg-white/10 transition-colors"><LogOut size={14} /> Sign out</button>
         </div>
       </div>
+      <WelcomeBack me={me} onGo={pick} />
       <InstallApp />
       <div data-testid="portal-tabbar" className="grid grid-cols-3 sm:grid-cols-4 md:flex md:flex-wrap md:w-fit gap-1.5 md:gap-1 p-1.5 rounded-3xl md:rounded-full mb-8 bg-white/10 backdrop-blur-md border border-white/15">
         {TABS.map(({ k, l, icon: Icon }) => (

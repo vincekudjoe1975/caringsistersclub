@@ -10,7 +10,11 @@ export default function Login() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (user) navigate('/admin');
+    if (user) {
+      const next = sessionStorage.getItem('csc_after_login');
+      sessionStorage.removeItem('csc_after_login');
+      navigate(next && next.startsWith('/admin') ? next : '/admin');
+    }
   }, [user, navigate]);
 
   const handleLogin = () => {

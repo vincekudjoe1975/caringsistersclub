@@ -319,6 +319,10 @@ async def _consume_auth_token(raw: str, kind: str) -> dict:
     t = await db.auth_tokens.find_one_and_update(
         {"token_hash": _hashlib.sha256((raw or "").encode()).hexdigest(), "kind": kind, "used": False, "expires_at": {"$gt": datetime.now(timezone.utc)}},
         {"$set": {"used": True, "used_at": datetime.now(timezone.utc)}})
+    if not t and kind == "verify":
+        used = await db.auth_tokens.find_one({"token_hash": _hashlib.sha256((raw or "").encode()).hexdigest(), "kind": "verify", "used": True}, {"_id": 0, "user_id": 1})
+        if used and (await db.users.find_one({"user_id": used["user_id"]}, {"_id": 0, "email_verified": 1}) or {}).get("email_verified"):
+            raise HTTPException(status_code=409, detail="Your email is already confirmed. Please log in with your email and password.")
     if not t:
         what = "verification" if kind == "verify" else "reset"
         raise HTTPException(status_code=400, detail=f"This {what} link is invalid or has expired. Please request a new one.")
@@ -381,6 +385,8 @@ async def auth_verify_email(payload: TokenIn, response: Response):
     if u.get("role") != "admin" and (em in ADMIN_OWNER_EMAILS or await db.allowed_emails.find_one({"email": em})):
         upd["role"] = "admin"
     await db.users.update_one({"user_id": u["user_id"]}, {"$set": upd})
+    if not _is_member(u) and upd.get("role") != "admin":
+        asyncio.create_task(_alert_staff_new_sister("confirmed", u))
     return await _start_session(u["user_id"], response)
 
 
@@ -6492,6 +6498,10 @@ async def startup_indexes():
         await db.rate_hits.create_index("at", expireAfterSeconds=3600)
         await db.rate_hits.create_index([("key", 1), ("at", 1)])
         await db.blocked_attempts.create_index("at", expireAfterSeconds=60 * 60 * 24 * 30)
+        if not await db.settings.find_one({"key": "welcome_note_migrated"}):
+            await db.users.update_many({"$or": [{"member_status": "active"}, {"role": "admin"}], "portal_welcome_seen_at": {"$exists": False}},
+                                       {"$set": {"portal_welcome_seen_at": _now_iso()}})
+            await db.settings.insert_one({"key": "welcome_note_migrated", "at": _now_iso()})
     except Exception as e:
         logging.warning(f"Index creation warning: {e}")
 
@@ -6601,7 +6611,13 @@ async def members_me(user=Depends(get_current_user)):
     return {"status": status, "user_id": user["user_id"], "is_admin": user.get("role") == "admin", "name": user.get("name"), "email": user.get("email"),
             "picture": user.get("picture"), "profile": user.get("member_profile") or {}, "application": user.get("member_application") or {},
             "member_since": user.get("member_since", ""), "leave_request": user.get("member_leave_request"), "ends_at": user.get("member_ends_at"),
-            "app_installed": bool(user.get("app_installed_at"))}
+            "app_installed": bool(user.get("app_installed_at")), "welcome_seen": bool(user.get("portal_welcome_seen_at"))}
+
+
+@api_router.post("/members/welcome-seen")
+async def members_welcome_seen(user=Depends(get_current_user)):
+    await db.users.update_one({"user_id": user["user_id"], "portal_welcome_seen_at": {"$exists": False}}, {"$set": {"portal_welcome_seen_at": _now_iso()}})
+    return {"ok": True}
 
 
 @api_router.post("/members/app-installed")
@@ -6633,8 +6649,38 @@ async def members_apply(payload: MemberApplication, request: Request, background
                "why": payload.why.strip()[:1500], "submitted_at": _now_iso()}
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_status": "applied", "member_application": app_doc,
                               "member_profile": {"city": app_doc["city"], "phone": app_doc["phone"], "bio": "", "show_contact": False}}})
-    background.add_task(_notify_staff, "member", {"name": user.get("name"), "email": user.get("email"), **{k: v for k, v in app_doc.items() if k != "submitted_at"}})
+    background.add_task(_alert_staff_new_sister, "applied", {**user, "member_application": app_doc})
     return {"status": "applied"}
+
+
+def _signup_method(u: dict) -> str:
+    p = u.get("auth_providers") or ["google"]
+    return "Google and email" if len(p) > 1 else "Email + password" if p == ["email"] else "Google"
+
+
+async def _alert_staff_new_sister(stage: str, u: dict):
+    try:
+        name, uid = u.get("name") or u.get("email") or "A new sister", u["user_id"]
+        first = name.split(" ")[0]
+        path = f"/admin?view=members&applicant={uid}"
+        app = u.get("member_application") or {}
+        if stage == "applied":
+            subj, title = f"New membership application from {name}", f"{name} applied to join"
+            lines = [f"Signed up with: {_signup_method(u)}", f"Email: {u.get('email', '')}", f"Phone: {app.get('phone') or 'not given'}",
+                     f"City: {app.get('city', '')}", f"Referred by: {app.get('referred_by', '')}"] + ([f"Why she'd like to join: {app['why']}"] if app.get("why") else [])
+            body, cta, push = "\n".join(lines), "Review & approve", f"{first} just applied. Tap to review and approve."
+        else:
+            subj, title = f"{name} confirmed her email", f"{name} just created an account"
+            body = "\n".join([f"Signed up with: {_signup_method(u)}", f"Email: {u.get('email', '')}",
+                              "She has confirmed her email but hasn't sent her membership application yet. You'll get another alert as soon as she applies."])
+            cta, push = "Open Members in Admin", f"{first} confirmed her email. Her application is next."
+        to = (await _get_settings()).get("staff_notify_email")
+        if to:
+            await send_email(to=to, subject=subj[:150], html=_member_email_html("New sister", title, body, cta, path), reply_to=u.get("email"))
+        admins = [a["user_id"] for a in await db.users.find({"role": "admin"}, {"_id": 0, "user_id": 1}).to_list(100)]
+        await _push_users(admins, subj[:80], push, path, "custom")
+    except Exception as e:
+        logging.error(f"New sister staff alert failed: {e}")
 
 
 class MemberProfile(BaseModel):

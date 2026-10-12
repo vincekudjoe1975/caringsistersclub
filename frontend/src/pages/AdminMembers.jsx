@@ -24,10 +24,11 @@ const Box = ({ title, children, testid }) => (
   </div>
 );
 
-function Applications({ rows, act }) {
+function Applications({ rows, act, focus }) {
+  useEffect(() => { if (focus) document.querySelector(`[data-testid="application-${focus}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, [focus, rows.length]);
   if (!rows.length) return <p className="text-[13.5px] text-[#241019]/50">No applications waiting.</p>;
   return rows.map((m) => (
-    <div key={m.user_id} data-testid={`application-${m.user_id}`} className="border border-[#3B0A2E]/8 rounded-xl p-4 mb-3">
+    <div key={m.user_id} data-testid={`application-${m.user_id}`} className={`border rounded-xl p-4 mb-3 transition-shadow ${focus === m.user_id ? 'border-[#B4247E] ring-4 ring-[#B4247E]/15' : 'border-[#3B0A2E]/8'}`}>
       <div className="flex flex-wrap justify-between gap-3">
         <div><p className="font-semibold text-[#3B0A2E]">{m.name}</p><p className="text-[12.5px] text-[#241019]/55">{m.email} · {m.phone || 'no phone'} · {m.city}</p></div>
         <div className="flex gap-2">
@@ -168,6 +169,7 @@ export default function AdminMembers() {
     catch (ex) { toast({ title: 'Failed', description: ex?.response?.data?.detail, variant: 'destructive' }); }
   };
   const [sub, setSub] = useState('people');
+  const [focus] = useState(() => new URLSearchParams(window.location.search).get('applicant') || '');
   const apps = d.members.filter((m) => m.status === 'applied');
   const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['treasurer', 'Treasurer report'], ['referrers', 'Referrers'], ['import', 'Import'], ['welcome', 'Welcome email'], ['annual', 'Annual summary'], ['spotlight', 'Spotlight'], ['photos', 'Gathering photos'], ['december', 'December renewal']];
   return (
@@ -175,7 +177,7 @@ export default function AdminMembers() {
     <div className="flex flex-wrap gap-1 mb-6">{tabs.map(([k, l]) => <button key={k} data-testid={`members-sub-${k}`} onClick={() => setSub(k)} className={`rounded-full px-4 py-2 text-[13px] font-semibold transition-colors ${sub === k ? 'bg-[#3B0A2E] text-white' : 'bg-white border border-[#3B0A2E]/15 text-[#3B0A2E]'}`}>{l}</button>)}</div>
     {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : sub === 'treasurer' ? <AdminTreasurer /> : sub === 'referrers' ? <AdminReferrers /> : sub === 'import' ? <AdminImport /> : sub === 'welcome' ? <AdminWelcome /> : sub === 'annual' ? <AdminAnnual /> : sub === 'spotlight' ? <AdminSpotlight /> : sub === 'photos' ? <><AdminGatheringPhotos /><AdminRecaps /></> : (
     <div className="grid lg:grid-cols-2 gap-6" data-testid="admin-members">
-      <Box title={`Applications (${apps.length})`} testid="admin-applications"><Applications rows={apps} act={act} /></Box>
+      <Box title={`Applications (${apps.length})`} testid="admin-applications"><Applications rows={apps} act={act} focus={focus} /></Box>
       <Box title="Invite members" testid="admin-invites"><Invites invites={d.invites} reload={load} toast={toast} /></Box>
       <Box title="Announcements" testid="admin-announcements"><AnnouncementForm toast={toast} /></Box>
       <Box title="Phone alert" testid="admin-push"><AdminPush toast={toast} /></Box>

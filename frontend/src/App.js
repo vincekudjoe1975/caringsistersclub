@@ -75,7 +75,10 @@ function ProtectedRoute({ children }) {
       </div>
     );
   }
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) {
+    sessionStorage.setItem('csc_after_login', window.location.pathname + window.location.search);
+    return <Navigate to="/login" replace />;
+  }
   return children;
 }
 
