@@ -449,3 +449,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Frontend: components/EmailAuth.jsx (SignInOptions/EmailAuth), pages/ResetPassword.jsx, pages/VerifyEmail.jsx; used on /members and /login.
 - No new env vars.
 - Backlog: still pending user confirmation of real-phone push delivery (see earlier notes).
+
+
+## 2026-06 — Password in My Profile, Welcome screen, Admin device list (iteration 48, agent-tested, not user-confirmed)
+- My Profile PasswordCard: Google-only members add a password inline (or "Email me a link instead"); members with a password change it (current + new); other sessions are signed out. APIs: GET /api/auth/password-status, POST /api/auth/set-password.
+- Welcome screen after email confirmation: /members?welcome=1 (components/members/Welcome.jsx), with 3 next steps and Start application / Go to portal buttons.
+- Admin > Members > Phone alert: Registered devices list (components/members/PushDevices.jsx) showing per-member device kind, registered time, last delivered/failed, plus per-member Send test. APIs: GET /api/admin/members/push/devices, POST /api/admin/members/push/test-member/{uid}. push_subs now record last_ok_at/last_fail_at.
+- Redeploy queued (not yet confirmed live). Pending user checks: real inbox delivery of confirm/reset emails; real Android + iPhone alert delivery.

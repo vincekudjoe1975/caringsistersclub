@@ -1,0 +1,25 @@
+{
+  "summary": "Iter 48 testing: password-status/set-password (add + change), verify-email welcome flow, and admin push devices + per-member test. Backend: 14/14 pytest pass. Frontend: My Profile password-card for a Google-only active member works (weak + mismatch show password-error, Enter in input does NOT submit profile form, successful add switches card to 'Change password' with password-current field, success toast fires). Welcome: /verify-email?token=<valid> redirects to /members?welcome=1 and shows welcome-card, welcome-title 'Welcome, Bea!', welcome-thanks, welcome-step-1..3, welcome-start-application-btn (for non-member) and welcome-go-portal-btn. Start -> URL /members, member-apply-form rendered. Visiting /members with no ?welcome shows no welcome-card. Admin > Members 'Phone alert' box shows push-devices-admin with summary/search, push-devices-row-<uid>, device kind text (Android / Chrome correctly inferred from fcm endpoint) and push-devices-test-<uid> button. Non-admin on /api/admin/members/push/devices -> 403. Fake-endpoint test_member returns 200 and sets last_fail_at on the sub.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter48_password_welcome_push.py",
+    "/app/test_reports/pytest/iter48.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is still growing (~12,400 lines). Previous iterations also flagged — consider splitting routers (auth, media, push, members, admin) once feature-complete.",
+    "GET /api/admin/members/push/devices only returns {active members} UNION {users with push_subs}. That matches the UX intent (we want to see every active member even if 0 devices), but pending/invited users with no device will not appear. Not a bug for this story; just confirming the behavior.",
+    "_uses_google() still infers Google via presence of picture or an existing session; works, but once Google users add a password that fallback becomes less relevant. Consider making auth_providers the authoritative field."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter48_password_welcome_push.py (new)"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% (all required flows verified)"},
+  "test_credentials": "No standing credentials left. Backend tests seed temp users (qa_iter48_*) and clean up in-fixture teardown. Frontend run used qa_mem_a/qa_mem_b (via qa_members.py) + qa_tok_123 (via qa_session.py) — all torn down with qa_members.py down / qa_session.py down + rate_hits cleared.",
+  "seed_data_creation": "Backend tests seed 3 users (qa_iter48_google, qa_iter48_pw, qa_iter48_admin) with sessions + credentials + push_subs; all deleted in module teardown. Frontend run minted auth_tokens verify row for qa_mem_b (consumed) and a fake push_subs row for qa_mem_a (deleted at cleanup).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Password + Welcome + Admin push devices are all working end-to-end. CSRF middleware requires `x-requested-with: XMLHttpRequest` on any state-changing request that carries a session_token cookie — tests include HDR for that. Rate-limits to clear if hit: db.rate_hits keys starting 'auth_setpw' (10/15min per user) and 'push-test-member' (20/10min per admin). Verify-email success unconditionally redirects to /members?welcome=1.",
+  "rca of the issue": "N/A — no bugs found."
+}
