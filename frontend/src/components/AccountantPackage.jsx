@@ -11,23 +11,24 @@ export const AccountantPackage = () => {
   const [c, setC] = useState(null);
   const [year, setYear] = useState(new Date().getFullYear() - 1);
   const [busy, setBusy] = useState(false);
+  const [q, setQ] = useState(0);
   const load = useCallback(() => api.get('/admin/accounting').then(({ data }) => setC({ ...data, emailsText: data.emails.join(', '), ccText: data.cc.join(', ') })).catch(() => {}), []);
   useEffect(() => { load(); }, [load]);
   if (!c) return null;
   const split = (t) => t.split(/[,\s]+/).filter(Boolean);
   const save = async () => {
-    try { await api.put('/admin/accounting', { name: c.name, emails: split(c.emailsText), cc: split(c.ccText), enabled: c.enabled }); toast({ title: 'Accountant settings saved' }); load(); }
+    try { await api.put('/admin/accounting', { name: c.name, emails: split(c.emailsText), cc: split(c.ccText), enabled: c.enabled, quarterly: c.quarterly }); toast({ title: 'Accountant settings saved' }); load(); }
     catch (ex) { toast({ title: 'Could not save', description: ex?.response?.data?.detail, variant: 'destructive' }); }
   };
   const send = async () => {
     setBusy(true);
-    try { const { data } = await api.post('/admin/accounting/send', { year: Number(year) }); toast({ title: `${data.year} package sent`, description: data.sent_to.join(', ') }); load(); }
+    try { const { data } = await api.post('/admin/accounting/send', { year: Number(year), quarter: Number(q) }); toast({ title: `${data.label} package sent`, description: data.sent_to.join(', ') }); load(); }
     catch (ex) { toast({ title: 'Could not send', description: ex?.response?.data?.detail, variant: 'destructive' }); }
     finally { setBusy(false); }
   };
   const dl = async (name) => {
-    const res = await api.get(`/admin/accounting/${year}/${name}`, { responseType: 'blob' });
-    const url = URL.createObjectURL(res.data); const a = document.createElement('a'); a.href = url; a.download = `caring-sisters-${year}-${name}`; a.click(); URL.revokeObjectURL(url);
+    const res = await api.get(`/admin/accounting/${year}/${name}`, { params: { quarter: Number(q) }, responseType: 'blob' });
+    const url = URL.createObjectURL(res.data); const a = document.createElement('a'); a.href = url; a.download = `caring-sisters-${year}${Number(q) ? `-q${q}` : ''}-${name}`; a.click(); URL.revokeObjectURL(url);
   };
   const years = Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - i);
   return (
@@ -41,15 +42,17 @@ export const AccountantPackage = () => {
       </div>
       <div className="flex flex-wrap items-center gap-3 mt-3">
         <label className="flex items-center gap-2 text-[13.5px] text-[#3B0A2E]"><input data-testid="acct-enabled" type="checkbox" checked={c.enabled} onChange={(e) => setC({ ...c, enabled: e.target.checked })} className="accent-[#B4247E] w-5 h-5" /> Send automatically every January 5</label>
+        <label className="flex items-center gap-2 text-[13.5px] text-[#3B0A2E]"><input data-testid="acct-quarterly" type="checkbox" checked={c.quarterly !== false} onChange={(e) => setC({ ...c, quarterly: e.target.checked })} className="accent-[#B4247E] w-5 h-5" /> Quarterly summary on April 5, July 5 and October 5</label>
         <button data-testid="acct-save" onClick={save} className="ml-auto rounded-full px-5 py-2 font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] hover:bg-[#F7EFE9]">Save</button>
       </div>
       <div className="flex flex-wrap items-center gap-2 mt-5 pt-4 border-t border-[#3B0A2E]/10">
-        <select data-testid="acct-year" value={year} onChange={(e) => setYear(e.target.value)} className={`${input} w-auto`}>{years.map((y) => <option key={y} value={y}>Tax year {y}</option>)}</select>
+        <select data-testid="acct-year" value={year} onChange={(e) => setYear(e.target.value)} className={`${input} w-auto`}>{years.map((y) => <option key={y} value={y}>{y}</option>)}</select>
+        <select data-testid="acct-quarter" value={q} onChange={(e) => setQ(e.target.value)} className={`${input} w-auto`}><option value={0}>Full year</option>{[1, 2, 3, 4].map((n) => <option key={n} value={n}>Q{n}</option>)}</select>
         <button data-testid="acct-send" disabled={busy} onClick={send} className="btn-magenta rounded-full px-5 py-2.5 font-semibold flex items-center gap-1.5 disabled:opacity-60">{busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Send now</button>
         <button data-testid="acct-dl-zip" onClick={() => dl('all.zip')} className="rounded-full px-4 py-2.5 font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] flex items-center gap-1.5"><Download size={14} /> ZIP</button>
         {FILES.map(([k, l]) => <button key={k} data-testid={`acct-dl-${k}`} onClick={() => dl(`${k}.csv`)} className="rounded-full px-3 py-2 text-[12.5px] font-semibold text-[#B4247E] hover:bg-[#faf2f7]">{l}</button>)}
       </div>
-      {c.history?.length > 0 && <p data-testid="acct-history" className="text-[12.5px] text-[#241019]/55 mt-3">Last sent: {c.history[0].year} package on {new Date(c.history[0].sent_at).toLocaleDateString()} to {c.history[0].sent_to.join(', ')}</p>}
+      {c.history?.length > 0 && <p data-testid="acct-history" className="text-[12.5px] text-[#241019]/55 mt-3">Last sent: {c.history[0].label || c.history[0].year} package on {new Date(c.history[0].sent_at).toLocaleDateString()} to {c.history[0].sent_to.join(', ')}</p>}
     </section>
   );
 };

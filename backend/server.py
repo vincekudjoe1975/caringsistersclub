@@ -404,6 +404,7 @@ class DonationCheckout(BaseModel):
     origin_url: str
     appeal_id: Optional[str] = None
     source: Optional[str] = None
+    gala_event_id: Optional[str] = None
 
 
 def _validate_donation_amount(amount: float) -> float:
@@ -521,7 +522,8 @@ async def create_donation_checkout(req: DonationCheckout, request: Request):
         "donor_email": req.donor_email or "",
         "anonymous": bool(req.anonymous),
         "appeal_id": (req.appeal_id or "")[:64] or None,
-        "source": req.source if req.source and re.match(r"^yir-(email|page)-\d{4}$", req.source) else None,
+        "source": req.source if req.source and re.match(r"^yir-(email|page)-\d{4}$", req.source) else ("gala" if req.gala_event_id else None),
+        "event_id": (await db.events.find_one({"id": (req.gala_event_id or "")[:64]}, {"_id": 0, "id": 1}) or {}).get("id") if req.gala_event_id else None,
         "status": "initiated",
         "payment_status": "pending",
         "created_at": now,
@@ -11085,6 +11087,7 @@ class TicketCheckoutIn(BaseModel):
     items: List[TicketItemIn]
     promo_code: str = ""
     gift: float = 0
+    guest_names: List[str] = []
 
 
 async def _promo_lookup(code: str, eid: str) -> dict:
@@ -11209,7 +11212,8 @@ async def event_tickets_checkout(eid: str, payload: TicketCheckoutIn, request: R
                                      "unit_amount": int(round(ticket_total * 100))}, "quantity": 1})
     if gift > 0:
         lines.append({"price_data": {"currency": "usd", "product_data": {"name": "Gift to The Caring Sisters Club", "description": "Tax-deductible donation"}, "unit_amount": int(round(gift * 100))}, "quantity": 1})
-    order_extra = {"subtotal": subtotal, "discount": discount, "promo_code": promo["code"] if promo else "", "gift": gift}
+    order_extra = {"subtotal": subtotal, "discount": discount, "promo_code": promo["code"] if promo else "", "gift": gift,
+                   "guest_names": [n.strip()[:60] for n in payload.guest_names[:200]]}
     if not lines:
         order_id = str(uuid.uuid4())
         sid = f"free_{order_id}"
@@ -11253,7 +11257,8 @@ async def _fulfil_ticket_order(session_id: str) -> Optional[dict]:
             group = str(uuid.uuid4())[:12]
             for _ in range(it["admits"]):
                 seat += 1
-                tickets.append({"code": _secrets.token_urlsafe(12), "order_id": o["id"], "event_id": o["event_id"], "type": it["name"], "seat": seat, "holder": o["name"],
+                gn = (o.get("guest_names") or [])[seat - 1] if seat <= len(o.get("guest_names") or []) else ""
+                tickets.append({"code": _secrets.token_urlsafe(12), "order_id": o["id"], "event_id": o["event_id"], "type": it["name"], "seat": seat, "holder": o["name"], "guest_name": gn,
                                 "group": group, "group_size": it["admits"], "table": None, "checked_in_at": None, "created_at": _now_iso()})
     if tickets:
         await db.tickets.insert_many([dict(t) for t in tickets])
@@ -11297,8 +11302,66 @@ async def ticket_order(token: str, request: Request):
     if not o:
         raise HTTPException(status_code=404, detail="Tickets not found")
     e = await db.events.find_one({"id": o["event_id"]}, {"_id": 0, "title": 1, "date": 1, "time": 1, "location": 1}) or {}
-    tickets = await db.tickets.find({"order_id": o["id"]}, {"_id": 0, "code": 1, "type": 1, "seat": 1, "checked_in_at": 1}).sort("seat", 1).to_list(500)
-    return {"name": o["name"], "event": e, "tickets": tickets}
+    tickets = await db.tickets.find({"order_id": o["id"]}, {"_id": 0, "code": 1, "type": 1, "seat": 1, "checked_in_at": 1, "guest_name": 1, "table": 1}).sort("seat", 1).to_list(500)
+    return {"name": o["name"], "event": e, "tickets": tickets, "can_edit": (e.get("date") or "") >= _today_et().isoformat()}
+
+
+class GuestNamesIn(BaseModel):
+    names: dict
+
+
+@api_router.put("/tickets/order/{token}/names")
+async def ticket_order_names(token: str, payload: GuestNamesIn, request: Request):
+    await _rate_limit(request, "ticket-names", max_hits=30, window_s=300)
+    o = await db.ticket_orders.find_one({"token": token[:100], "status": "paid"}, {"_id": 0, "id": 1, "event_id": 1})
+    if not o:
+        raise HTTPException(status_code=404, detail="Tickets not found")
+    e = await db.events.find_one({"id": o["event_id"]}, {"_id": 0, "date": 1}) or {}
+    if (e.get("date") or "") < _today_et().isoformat():
+        raise HTTPException(status_code=400, detail="Guest names can't be changed after the event.")
+    for code, name in list(payload.names.items())[:200]:
+        await db.tickets.update_one({"code": str(code)[:40], "order_id": o["id"]}, {"$set": {"guest_name": str(name).strip()[:60]}})
+    return {"ok": True}
+
+
+class StaffGuestNameIn(BaseModel):
+    code: str
+    name: str
+
+
+@api_router.put("/admin/events/{eid}/tickets/name")
+async def admin_ticket_name(eid: str, payload: StaffGuestNameIn, user=Depends(require_admin)):
+    res = await db.tickets.update_one({"code": payload.code[:40], "event_id": eid}, {"$set": {"guest_name": payload.name.strip()[:60]}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return {"ok": True}
+
+
+# --- Live gala giving screen ---
+class GalaIn(BaseModel):
+    goal: float
+
+
+@api_router.put("/admin/events/{eid}/gala")
+async def admin_gala_goal(eid: str, payload: GalaIn, user=Depends(require_admin)):
+    if not 0 <= payload.goal <= 10000000:
+        raise HTTPException(status_code=400, detail="Enter a goal amount.")
+    res = await db.events.update_one({"id": eid}, {"$set": {"gala_goal": round(payload.goal, 2)}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return {"gala_goal": round(payload.goal, 2)}
+
+
+@api_router.get("/gala/{eid}")
+async def gala_screen(eid: str, request: Request):
+    await _rate_limit(request, "gala-screen", max_hits=120, window_s=60)
+    e = await db.events.find_one({"id": eid[:64]}, {"_id": 0, "id": 1, "title": 1, "date": 1, "gala_goal": 1})
+    if not e:
+        raise HTTPException(status_code=404, detail="Event not found")
+    gifts = await db.payment_transactions.find({"event_id": e["id"], "payment_status": "paid"}, {"_id": 0, "amount": 1, "donor_name": 1, "anonymous": 1, "updated_at": 1}).sort("updated_at", -1).to_list(5000)
+    first = lambda g: "Anonymous" if g.get("anonymous") or not (g.get("donor_name") or "").strip() else g["donor_name"].strip().split(" ")[0][:20]  # noqa: E731
+    return {"title": e["title"], "date": e["date"], "goal": e.get("gala_goal") or 0, "raised": round(sum(float(g.get("amount", 0)) for g in gifts), 2),
+            "count": len(gifts), "recent": [{"name": first(g), "at": g.get("updated_at", "")} for g in gifts[:12]]}
 
 
 @api_router.get("/tickets/qr/{code}.png")
@@ -11323,8 +11386,8 @@ async def admin_ticket_checkin(eid: str, payload: TicketScanIn, user=Depends(req
         raise HTTPException(status_code=404, detail="This ticket isn't for this event.")
     res = await db.tickets.update_one({"code": code, "checked_in_at": None}, {"$set": {"checked_in_at": _now_iso(), "checked_in_by": user.get("email")}})
     if not res.modified_count:
-        return {"ok": False, "already": True, "holder": t["holder"], "type": t["type"], "seat": t["seat"], "at": t["checked_in_at"]}
-    return {"ok": True, "holder": t["holder"], "type": t["type"], "seat": t["seat"]}
+        return {"ok": False, "already": True, "holder": t.get("guest_name") or t["holder"], "type": t["type"], "seat": t["seat"], "at": t["checked_in_at"]}
+    return {"ok": True, "holder": t.get("guest_name") or t["holder"], "type": t["type"], "seat": t["seat"], "table": t.get("table")}
 
 
 @api_router.post("/admin/events/{eid}/tickets/undo")
@@ -11348,7 +11411,7 @@ async def admin_ticket_report(eid: str, user=Depends(require_admin)):
             b["revenue"] = round(b["revenue"] + it["qty"] * it["price"], 2)
     return {"event": {"id": e["id"], "title": e["title"], "date": e["date"]}, "types": list(by.values()), "orders": len(orders), "revenue": round(sum(o["total"] for o in orders), 2),
             "seats": len(tickets), "checked_in": sum(1 for t in tickets if t["checked_in_at"]),
-            "guests": [{"code": t["code"], "holder": t["holder"], "type": t["type"], "seat": t["seat"], "checked_in_at": t["checked_in_at"]} for t in tickets]}
+            "guests": [{"code": t["code"], "holder": t.get("guest_name") or t["holder"], "buyer": t["holder"], "type": t["type"], "seat": t["seat"], "table": t.get("table"), "checked_in_at": t["checked_in_at"]} for t in tickets]}
 
 
 @api_router.get("/admin/events/{eid}/tickets.csv")
@@ -11416,9 +11479,10 @@ async def admin_seating(eid: str, user=Depends(require_admin)):
     e, tickets = await _seating_state(eid)
     groups = {}
     for t in tickets:
-        g = groups.setdefault(_ticket_group(t), {"group": _ticket_group(t), "holder": t["holder"], "type": t["type"], "size": 0, "table": t.get("table"), "names": []})
+        g = groups.setdefault(_ticket_group(t), {"group": _ticket_group(t), "holder": t["holder"], "type": t["type"], "size": 0, "table": t.get("table"), "names": [], "seats": []})
         g["size"] += 1
         g["names"].append(t.get("guest_name") or t["holder"])
+        g["seats"].append({"code": t["code"], "guest_name": t.get("guest_name") or ""})
     return {"event": {k: e.get(k, "") for k in ("title", "date", "time", "location")}, "seating": e.get("seating") or {"tables": 0, "seats": 8, "names": {}},
             "groups": sorted(groups.values(), key=lambda g: (g["table"] or 999, g["holder"]))}
 
@@ -11457,7 +11521,7 @@ async def admin_seating_auto(eid: str, user=Depends(require_admin)):
 
 
 # --- Accountant year-end package ---
-ACCT_DEFAULT = {"name": "Divine Financial Group", "emails": ["devinetax1@gmail.com", "info@dfgbusiness.com"], "cc": ["caringsistersclub@gmail.com"], "enabled": True}
+ACCT_DEFAULT = {"name": "Divine Financial Group", "emails": ["devinetax1@gmail.com", "info@dfgbusiness.com"], "cc": ["caringsistersclub@gmail.com"], "enabled": True, "quarterly": True}
 ACCT_FILES = ("summary", "donations", "donor-totals", "tickets", "dues")
 
 
@@ -11475,11 +11539,20 @@ def _csv_text(header: list, rows: list) -> str:
     return buf.getvalue()
 
 
-async def _acct_files(year: int) -> dict:
-    y = str(year)
-    gifts = [g for g in await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).sort("updated_at", 1).to_list(50000) if (g.get("updated_at") or "").startswith(y)]
-    orders = [o for o in await db.ticket_orders.find({"status": "paid"}, {"_id": 0}).sort("paid_at", 1).to_list(20000) if (o.get("paid_at") or "").startswith(y)]
-    dues = await db.member_ledger.find({"direction": "payment", "created_at": {"$regex": f"^{y}"}}, {"_id": 0}).sort("created_at", 1).to_list(20000)
+def _period(year: int, q: int = 0) -> tuple:
+    if not q:
+        return f"{year}-01-01", f"{year + 1}-01-01", str(year)
+    m = (q - 1) * 3 + 1
+    end = f"{year + 1}-01-01" if q == 4 else f"{year}-{m + 3:02d}-01"
+    return f"{year}-{m:02d}-01", end, f"{year} Q{q}"
+
+
+async def _acct_files(year: int, q: int = 0) -> dict:
+    lo, hi, y = _period(year, q)
+    inp = lambda v: lo <= (v or "")[:10] < hi  # noqa: E731
+    gifts = [g for g in await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).sort("updated_at", 1).to_list(50000) if inp(g.get("updated_at"))]
+    orders = [o for o in await db.ticket_orders.find({"status": "paid"}, {"_id": 0}).sort("paid_at", 1).to_list(20000) if inp(o.get("paid_at"))]
+    dues = [d for d in await db.member_ledger.find({"direction": "payment", "created_at": {"$gte": lo, "$lt": hi}}, {"_id": 0}).sort("created_at", 1).to_list(20000)]
     names = {u["user_id"]: u async for u in db.users.find({"user_id": {"$in": list({d["user_id"] for d in dues})}}, {"_id": 0, "user_id": 1, "name": 1, "email": 1})}
     gtype = lambda g: "Ticket add-on gift" if g.get("source") == "ticket-gift" else "Monthly gift" if g.get("frequency") == "monthly" else "One-time gift"  # noqa: E731
     donations = _csv_text(["Date", "Donor name", "Donor email", "Amount (USD)", "Type", "Anonymous on wall", "Reference"],
@@ -11500,7 +11573,7 @@ async def _acct_files(year: int) -> dict:
     t_total = round(sum(o["total"] for o in orders), 2)
     d_total = round(sum(d["amount"] for d in dues), 2)
     summary = _csv_text(["Line", "Amount (USD)", "Count"], [
-        [f"Tax year {y} — The Caring Sisters Club, Inc. (501(c)(3))", "", ""], ["Charitable contributions (all gifts)", g_total, len(gifts)],
+        [f"{'Quarter' if q else 'Tax year'} {y} — The Caring Sisters Club, Inc. (501(c)(3))", "", ""], ["Charitable contributions (all gifts)", g_total, len(gifts)],
         ["  of which one-time gifts", round(sum(float(g.get("amount", 0)) for g in gifts if gtype(g) == "One-time gift"), 2), sum(1 for g in gifts if gtype(g) == "One-time gift")],
         ["  of which monthly gifts", round(sum(float(g.get("amount", 0)) for g in gifts if gtype(g) == "Monthly gift"), 2), sum(1 for g in gifts if gtype(g) == "Monthly gift")],
         ["  of which ticket add-on gifts", round(sum(float(g.get("amount", 0)) for g in gifts if gtype(g) == "Ticket add-on gift"), 2), sum(1 for g in gifts if gtype(g) == "Ticket add-on gift")],
@@ -11510,32 +11583,35 @@ async def _acct_files(year: int) -> dict:
     return {"summary": summary, "donations": donations, "donor-totals": donor_totals, "tickets": tickets, "dues": dues_csv}
 
 
-def _acct_zip(year: int, files: dict) -> bytes:
+def _acct_zip(label: str, files: dict) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for k, v in files.items():
-            z.writestr(f"caring-sisters-{year}-{k}.csv", v)
+            z.writestr(f"caring-sisters-{label}-{k}.csv", v)
     return buf.getvalue()
 
 
-async def _send_acct_package(year: int) -> dict:
+async def _send_acct_package(year: int, q: int = 0) -> dict:
     cfg = await _acct_cfg()
     tok = _secrets.token_urlsafe(32)
-    await db.acct_tokens.insert_one({"token": tok, "year": year, "expires_at": (datetime.now(timezone.utc) + timedelta(days=90)).isoformat(), "created_at": _now_iso()})
+    await db.acct_tokens.insert_one({"token": tok, "year": year, "quarter": q, "expires_at": (datetime.now(timezone.utc) + timedelta(days=90)).isoformat(), "created_at": _now_iso()})
     base = f"{PUBLIC_APP_URL}/api/accounting/{tok}"
-    files = await _acct_files(year)
+    files = await _acct_files(year, q)
+    label = _period(year, q)[2]
     summary_rows = list(csv.reader(io.StringIO(files["summary"])))[2:9]
     lines = "".join(f'<tr><td style="padding:6px 0;color:#241019;font-size:14px">{_esc(r[0])}</td><td style="padding:6px 0;text-align:right;font-size:14px;color:#3B0A2E;font-weight:bold">{"$" + format(float(r[1]), ",.2f") if r[1] else ""}</td></tr>' for r in summary_rows)
     links = "".join(f'<p style="margin:6px 0"><a href="{base}/{k}.csv" style="color:#B4247E;font-weight:bold">{k.replace("-", " ").title()} (CSV)</a></p>' for k in ACCT_FILES)
-    html = (_member_email_html("Year-end package", f"{year} tax year records", f"Hello {cfg['name']} team,\n\nHere are The Caring Sisters Club's records for the {year} tax year for 501(c)(3) tax preparation. Secure links below work for 90 days.",
+    intro = (f"Here is The Caring Sisters Club's {label} quarterly summary to help keep year-end 501(c)(3) tax preparation easy." if q else
+             f"Here are The Caring Sisters Club's records for the {year} tax year for 501(c)(3) tax preparation.")
+    html = (_member_email_html("Quarterly summary" if q else "Year-end package", f"{label} records", f"Hello {cfg['name']} team,\n\n{intro} Secure links below work for 90 days.",
                                "Download everything (ZIP)", f"{base}/all.zip")
             .replace("</table></td></tr></table>", f'<tr><td style="padding:0 32px 28px"><table width="100%" style="border-collapse:collapse">{lines}</table><div style="margin-top:18px">{links}</div></td></tr></table></td></tr></table>', 1))
     sent = []
     for em in list(dict.fromkeys([*cfg["emails"], *cfg["cc"]])):
-        await send_email(to=em, subject=f"The Caring Sisters Club: {year} year-end tax package", html=html)
+        await send_email(to=em, subject=f"The Caring Sisters Club: {label} {'quarterly summary' if q else 'year-end tax package'}", html=html)
         sent.append(em)
-    await db.acct_log.insert_one({"year": year, "sent_to": sent, "sent_at": _now_iso()})
-    return {"year": year, "sent_to": sent}
+    await db.acct_log.insert_one({"year": year, "quarter": q, "label": label, "sent_to": sent, "sent_at": _now_iso()})
+    return {"year": year, "quarter": q, "label": label, "sent_to": sent}
 
 
 @api_router.get("/accounting/{token}/{name}")
@@ -11544,22 +11620,25 @@ async def acct_download(token: str, name: str, request: Request):
     t = await db.acct_tokens.find_one({"token": token[:100]}, {"_id": 0})
     if not t or t["expires_at"] <= _now_iso():
         raise HTTPException(status_code=410, detail="This link has expired. Please ask the Club to resend the package.")
-    return await _acct_response(t["year"], name)
+    return await _acct_response(t["year"], name, t.get("quarter", 0))
 
 
-async def _acct_response(year: int, name: str):
-    files = await _acct_files(year)
+async def _acct_response(year: int, name: str, q: int = 0):
+    files = await _acct_files(year, q)
+    label = f"{year}-q{q}" if q else str(year)
     if name == "all.zip":
-        return Response(content=_acct_zip(year, files), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="caring-sisters-{year}-tax-package.zip"'})
+        return Response(content=_acct_zip(label, files), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="caring-sisters-{label}-tax-package.zip"'})
     key = name.removesuffix(".csv")
     if key not in files:
         raise HTTPException(status_code=404, detail="Not found")
-    return Response(content=files[key], media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="caring-sisters-{year}-{key}.csv"'})
+    return Response(content=files[key], media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="caring-sisters-{label}-{key}.csv"'})
 
 
 @api_router.get("/admin/accounting/{year}/{name}")
-async def admin_acct_download(year: int, name: str, user=Depends(require_admin)):
-    return await _acct_response(year, name)
+async def admin_acct_download(year: int, name: str, quarter: int = 0, user=Depends(require_admin)):
+    if quarter not in (0, 1, 2, 3, 4):
+        raise HTTPException(status_code=400, detail="Invalid quarter")
+    return await _acct_response(year, name, quarter)
 
 
 class AcctCfgIn(BaseModel):
@@ -11567,6 +11646,7 @@ class AcctCfgIn(BaseModel):
     emails: List[str]
     cc: List[str] = []
     enabled: bool = True
+    quarterly: bool = True
 
 
 @api_router.get("/admin/accounting")
@@ -11581,13 +11661,14 @@ async def admin_acct_cfg_set(payload: AcctCfgIn, user=Depends(require_admin)):
     cc = [e.strip().lower() for e in payload.cc if e.strip()]
     if not emails or any(not _EMAIL_RE.match(e) for e in emails + cc) or len(emails + cc) > 10:
         raise HTTPException(status_code=400, detail="Please enter valid email addresses (at least one accountant email).")
-    doc = {"name": payload.name.strip()[:80] or ACCT_DEFAULT["name"], "emails": emails, "cc": cc, "enabled": payload.enabled}
+    doc = {"name": payload.name.strip()[:80] or ACCT_DEFAULT["name"], "emails": emails, "cc": cc, "enabled": payload.enabled, "quarterly": payload.quarterly}
     await db.settings.update_one({"key": "accountant"}, {"$set": doc}, upsert=True)
     return doc
 
 
 class AcctSendIn(BaseModel):
     year: int
+    quarter: int = 0
 
 
 @api_router.post("/admin/accounting/send")
@@ -11595,17 +11676,24 @@ async def admin_acct_send(payload: AcctSendIn, request: Request, user=Depends(re
     await _rate_limit(request, f"acct-send:{user['user_id']}", max_hits=3, window_s=600)
     if not 2020 <= payload.year <= _today_et().year:
         raise HTTPException(status_code=400, detail="Pick a valid tax year.")
-    return await _send_acct_package(payload.year)
+    if payload.quarter not in (0, 1, 2, 3, 4):
+        raise HTTPException(status_code=400, detail="Invalid quarter")
+    return await _send_acct_package(payload.year, payload.quarter)
 
 
 async def _acct_scheduled(now=None):
     et = (now or datetime.now(timezone.utc)).astimezone(EVENT_TZ)
-    if et.month != 1 or et.day < 5 or et.day > 12 or et.hour < 9:
+    if et.month not in (1, 4, 7, 10) or et.day < 5 or et.day > 12 or et.hour < 9:
         return None
     cfg = await _acct_cfg()
-    if not cfg["enabled"] or not await _push_mark(f"acct:{et.year - 1}"):
+    if et.month == 1:
+        if not cfg["enabled"] or not await _push_mark(f"acct:{et.year - 1}"):
+            return None
+        return await _send_acct_package(et.year - 1)
+    q = (et.month - 1) // 3
+    if not cfg["quarterly"] or not await _push_mark(f"acct-q:{et.year}-Q{q}"):
         return None
-    return await _send_acct_package(et.year - 1)
+    return await _send_acct_package(et.year, q)
 
 # Include the router in the main app
 app.include_router(api_router)

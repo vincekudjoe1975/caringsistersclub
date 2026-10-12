@@ -31,6 +31,11 @@ export default function Donate() {
   }, []);
 
   const finalAmount = custom ? Number(custom) : amount;
+  const [gala, setGala] = useState(null);
+  useEffect(() => {
+    const g = new URLSearchParams(window.location.search).get('gala');
+    if (g) api.get(`/gala/${g}`).then(({ data }) => setGala({ id: g, title: data.title })).catch(() => {});
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -49,6 +54,7 @@ export default function Donate() {
         origin_url: window.location.origin,
         appeal_id: sessionStorage.getItem('csc_appeal') || undefined,
         source: sessionStorage.getItem('csc_source') || undefined,
+        gala_event_id: gala?.id || undefined,
       });
       if (data.checkout_url) {
         window.location.href = data.checkout_url;
@@ -63,6 +69,7 @@ export default function Donate() {
 
   return (
     <div>
+      {gala && <div data-testid="gala-donate-banner" className="bg-[#CBA24B] text-[#3B0A2E] text-center px-5 py-3 font-semibold text-[14.5px]">Giving at {gala.title}: your gift will light up the screen!</div>}
       <PageHero
         kicker="Support the Sisterhood"
         title="Your gift empowers women of the Diaspora"

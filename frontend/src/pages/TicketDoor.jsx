@@ -55,7 +55,7 @@ export default function TicketDoor() {
         <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 overflow-hidden">
           {!guests.length ? <p className="p-6 text-center text-[#241019]/55">No tickets sold yet.</p> : guests.map((g) => (
             <div key={g.code} data-testid={`ticket-guest-${g.code}`} className={`flex items-center gap-3 px-4 py-3 border-b border-[#3B0A2E]/8 ${g.checked_in_at ? 'bg-green-50' : ''}`}>
-              <div className="flex-1 min-w-0"><p className="font-semibold text-[#3B0A2E] truncate">{g.holder}</p><p className="text-[12.5px] text-[#241019]/55">{g.type} · seat {g.seat}{g.checked_in_at ? ' · checked in' : ''}</p></div>
+              <div className="flex-1 min-w-0"><p className="font-semibold text-[#3B0A2E] truncate">{g.holder}</p><p className="text-[12.5px] text-[#241019]/55">{g.type} · seat {g.seat}{g.table ? ` · table ${g.table}` : ''}{g.buyer && g.buyer !== g.holder ? ` · guest of ${g.buyer}` : ''}{g.checked_in_at ? ' · checked in' : ''}</p></div>
               {g.checked_in_at
                 ? <button data-testid={`ticket-undo-${g.code}`} onClick={() => undo(g.code)} aria-label="Undo" className="w-10 h-10 flex items-center justify-center text-[#241019]/50"><Undo2 size={17} /></button>
                 : <button data-testid={`ticket-checkin-${g.code}`} onClick={() => checkin(g.code)} className="btn-magenta rounded-full px-4 py-2 text-[13.5px] font-semibold">Check in</button>}

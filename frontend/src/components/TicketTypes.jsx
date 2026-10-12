@@ -8,6 +8,10 @@ const input = 'w-full rounded-xl border border-[#3B0A2E]/15 px-3 py-2.5 text-[14
 export const TicketTypesPanel = ({ ev, onClose, onSaved, toast }) => {
   const [rows, setRows] = useState(() => (ev.ticket_types || []).map((t) => ({ ...t })));
   const [busy, setBusy] = useState(false);
+  const [goal, setGoal] = useState(ev.gala_goal || '');
+  const saveGoal = async () => {
+    try { await api.put(`/admin/events/${ev.id}/gala`, { goal: Number(goal) || 0 }); toast({ title: 'Gala goal saved' }); } catch (ex) { toast({ title: 'Could not save goal', description: ex?.response?.data?.detail, variant: 'destructive' }); }
+  };
   const set = (i, k, v) => setRows(rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   const save = async () => {
     setBusy(true);
@@ -36,6 +40,11 @@ export const TicketTypesPanel = ({ ev, onClose, onSaved, toast }) => {
             </div>
           ))}
           <button data-testid="tt-add" onClick={() => setRows([...rows, { name: '', price: 75, qty: 100, admits: 1 }])} className="text-[13.5px] font-semibold text-[#B4247E] flex items-center gap-1.5"><Plus size={15} /> Add ticket type</button>
+        </div>
+        <div data-testid="gala-goal-box" className="mt-6 pt-4 border-t border-[#3B0A2E]/10 flex flex-wrap items-end gap-2">
+          <label className="text-[12px] font-semibold text-[#3B0A2E]">Live giving goal $<input data-testid="gala-goal-input" type="number" min="0" value={goal} onChange={(e) => setGoal(e.target.value)} className={`${input} w-36`} /></label>
+          <button data-testid="gala-goal-save" onClick={saveGoal} className="rounded-full px-4 py-2.5 font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] text-[13.5px]">Save goal</button>
+          <a data-testid="gala-screen-link" href={`/gala/${ev.id}`} target="_blank" rel="noopener noreferrer" className="rounded-full px-4 py-2.5 font-semibold text-[13.5px] text-[#B4247E] underline">Open big-screen giving page</a>
         </div>
         <div className="flex flex-wrap items-center gap-3 mt-6">
           <Link data-testid="ticket-door-link" to={`/admin/tickets/${ev.id}`} className="rounded-full px-5 py-2.5 font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] flex items-center gap-1.5"><QrCode size={15} /> Door check-in & sales</Link>

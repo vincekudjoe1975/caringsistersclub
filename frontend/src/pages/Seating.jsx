@@ -11,13 +11,17 @@ export default function Seating() {
   const [cfg, setCfg] = useState({ tables: 10, seats: 8 });
   const [pick, setPick] = useState(null);
   const [print, setPrint] = useState('');
-  const apply = (data) => { setD(data); if (data.seating.tables) setCfg({ tables: data.seating.tables, seats: data.seating.seats }); };
+  const [sponsors, setSponsors] = useState({});
+  const [editing, setEditing] = useState(null);
+  const apply = (data) => { setD(data); setSponsors(data.seating.names || {}); if (data.seating.tables) setCfg({ tables: data.seating.tables, seats: data.seating.seats }); };
   const load = useCallback(() => api.get(`/admin/events/${eid}/seating`).then(({ data }) => apply(data)).catch(() => setD(false)), [eid]);
   useEffect(() => { load(); }, [load]);
   const err = (ex) => toast({ title: 'Could not update', description: ex?.response?.data?.detail, variant: 'destructive' });
-  const saveCfg = () => api.put(`/admin/events/${eid}/seating`, { ...cfg, tables: Number(cfg.tables), seats: Number(cfg.seats), names: d?.seating?.names || {} }).then(({ data }) => { apply(data); toast({ title: 'Tables saved' }); }).catch(err);
+  const saveCfg = () => api.put(`/admin/events/${eid}/seating`, { ...cfg, tables: Number(cfg.tables), seats: Number(cfg.seats), names: sponsors }).then(({ data }) => { apply(data); toast({ title: 'Tables saved' }); }).catch(err);
   const auto = () => api.post(`/admin/events/${eid}/seating/auto`).then(({ data }) => { apply(data); toast({ title: `Seated ${data.seated} guest${data.seated === 1 ? '' : 's'}` }); }).catch(err);
   const assign = (table) => { if (!pick) return; api.post(`/admin/events/${eid}/seating/assign`, { group: pick, table }).then(({ data }) => { apply(data); setPick(null); }).catch(err); };
+  const sp = (t) => d.seating.names?.[String(t)] || '';
+  const saveGuest = (code, name) => api.put(`/admin/events/${eid}/tickets/name`, { code, name }).then(load).catch(err);
   const doPrint = (mode) => { setPrint(mode); setTimeout(() => { window.print(); setPrint(''); }, 150); };
   if (d === null) return <div className="py-24 flex justify-center"><Loader2 className="animate-spin text-[#B4247E]" /></div>;
   if (!d) return <p className="p-10 text-center">Event not found.</p>;
@@ -28,13 +32,13 @@ export default function Seating() {
   const cards = d.groups.flatMap((g) => g.names.map((n, i) => ({ k: `${g.group}${i}`, n, t: g.table }))).filter((c) => c.t).sort((a, b) => a.t - b.t);
   if (print === 'cards') return (
     <div data-testid="place-cards" className="grid grid-cols-2 gap-0 bg-white">
-      {cards.map((c) => <div key={c.k} className="h-[2.6in] border border-dashed border-gray-300 flex flex-col items-center justify-center text-center break-inside-avoid"><p className="font-serif text-[28px] text-[#3B0A2E]">{c.n}</p><p className="mt-2 text-[16px] tracking-[0.2em] uppercase text-[#B4247E]">Table {c.t}</p><p className="mt-4 text-[11px] text-gray-500">{d.event.title}</p></div>)}
+      {cards.map((c) => <div key={c.k} className="h-[2.6in] border border-dashed border-gray-300 flex flex-col items-center justify-center text-center break-inside-avoid"><p className="font-serif text-[28px] text-[#3B0A2E]">{c.n}</p><p className="mt-2 text-[16px] tracking-[0.2em] uppercase text-[#B4247E]">Table {c.t}{sp(c.t) ? ` · ${sp(c.t)}` : ''}</p><p className="mt-4 text-[11px] text-gray-500">{d.event.title}</p></div>)}
     </div>
   );
   if (print === 'chart') return (
     <div data-testid="seating-chart-print" className="bg-white p-8">
       <h1 className="font-serif text-[28px] text-[#3B0A2E]">{d.event.title}: Seating</h1><p className="text-gray-600 mb-6">{d.event.date}{d.event.location ? ` · ${d.event.location}` : ''}</p>
-      <div className="grid grid-cols-3 gap-4">{tables.map((t) => <div key={t} className="border border-gray-300 rounded-lg p-3 break-inside-avoid"><p className="font-bold text-[#3B0A2E]">Table {t}</p>{at(t).flatMap((g) => g.names).map((n, i) => <p key={i} className="text-[13px]">{n}</p>)}</div>)}</div>
+      <div className="grid grid-cols-3 gap-4">{tables.map((t) => <div key={t} className="border border-gray-300 rounded-lg p-3 break-inside-avoid"><p className="font-bold text-[#3B0A2E]">Table {t}</p>{sp(t) && <p className="text-[12px] italic text-[#B4247E] mb-1">Sponsored by {sp(t)}</p>}{at(t).flatMap((g) => g.names).map((n, i) => <p key={i} className="text-[13px]">{n}</p>)}</div>)}</div>
     </div>
   );
   return (
@@ -65,11 +69,18 @@ export default function Seating() {
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
             {tables.map((t) => (
               <div key={t} data-testid={`seat-table-${t}`} onClick={() => assign(t)} className={`bg-white rounded-2xl p-4 border-2 transition-colors ${pick ? 'cursor-pointer border-[#B4247E]/40 hover:border-[#B4247E]' : 'border-transparent'}`}>
+                <input data-testid={`seat-sponsor-${t}`} onClick={(e) => e.stopPropagation()} value={sponsors[String(t)] || ''} onChange={(e) => setSponsors({ ...sponsors, [String(t)]: e.target.value })} onBlur={() => (sponsors[String(t)] || '') !== sp(t) && saveCfg()} placeholder="Sponsor name (optional)" className="w-full mb-2 rounded-lg border border-[#3B0A2E]/10 px-2.5 py-1.5 text-[12.5px] italic text-[#B4247E]" />
                 <p className="font-semibold text-[#3B0A2E] flex items-center gap-2">Table {t}<span className={`ml-auto text-[12px] font-semibold flex items-center gap-1 ${used(t) >= d.seating.seats ? 'text-red-600' : 'text-[#241019]/55'}`}><Users size={12} /> {used(t)}/{d.seating.seats}</span></p>
                 {at(t).map((g) => (
                   <div key={g.group} className="flex items-center gap-2 mt-1.5 text-[13px]">
                     <span className="flex-1 min-w-0 truncate">{g.holder}{g.size > 1 ? ` (${g.size})` : ''}</span>
+                    <button data-testid={`seat-names-${g.group}`} onClick={(e) => { e.stopPropagation(); setEditing(editing === g.group ? null : g.group); }} className="text-[12px] text-[#B4247E] font-semibold">names</button>
                     <button data-testid={`seat-unassign-${g.group}`} onClick={(e) => { e.stopPropagation(); api.post(`/admin/events/${eid}/seating/assign`, { group: g.group, table: null }).then(({ data }) => apply(data)); }} className="text-[12px] text-[#241019]/45 hover:text-red-600">remove</button>
+                  </div>
+                ))}
+                {at(t).filter((g) => g.group === editing).map((g) => (
+                  <div key={`e${g.group}`} className="mt-2 space-y-1.5" onClick={(e) => e.stopPropagation()}>
+                    {g.seats.map((s2, i) => <input key={s2.code} data-testid={`seat-guestname-${s2.code}`} defaultValue={s2.guest_name} placeholder={`Guest ${i + 1} of ${g.holder}`} onBlur={(e) => e.target.value !== s2.guest_name && saveGuest(s2.code, e.target.value)} className="w-full rounded-lg border border-[#3B0A2E]/15 px-2.5 py-1.5 text-[13px]" />)}
                   </div>
                 ))}
               </div>

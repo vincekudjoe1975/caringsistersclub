@@ -15,11 +15,13 @@ export const TicketPicker = ({ ev, onDone }) => {
   const [promo, setPromo] = useState(null);
   const [gift, setGift] = useState(0);
   const [custom, setCustom] = useState('');
+  const [guests, setGuests] = useState([]);
   const types = ev.ticket_types || [];
   const subtotal = types.reduce((a, t) => a + (qty[t.id] || 0) * t.price, 0);
   const discount = promo ? Math.min(subtotal, promo.kind === 'percent' ? Math.round(subtotal * promo.value) / 100 : promo.value) : 0;
   const giftAmt = gift === 'custom' ? Number(custom) || 0 : gift;
   const total = subtotal - discount + giftAmt;
+  const seats = Math.min(40, types.reduce((a, t) => a + (qty[t.id] || 0) * t.admits, 0));
   const applyCode = async () => {
     setErr('');
     try { const { data } = await api.post(`/events/${ev.id}/tickets/promo`, { code }); setPromo(data); } catch (ex) { setPromo(null); setErr(ex?.response?.data?.detail || 'Invalid code'); }
@@ -28,7 +30,7 @@ export const TicketPicker = ({ ev, onDone }) => {
   const pay = async (e) => {
     e.preventDefault(); setBusy(true); setErr('');
     try {
-      const { data } = await api.post(`/events/${ev.id}/tickets/checkout`, { ...f, promo_code: promo?.code || '', gift: giftAmt, items: types.map((t) => ({ type_id: t.id, qty: qty[t.id] || 0 })).filter((i) => i.qty) });
+      const { data } = await api.post(`/events/${ev.id}/tickets/checkout`, { ...f, promo_code: promo?.code || '', gift: giftAmt, guest_names: Array.from({ length: seats }, (_, i) => guests[i] || ''), items: types.map((t) => ({ type_id: t.id, qty: qty[t.id] || 0 })).filter((i) => i.qty) });
       window.location.href = data.url;
     } catch (ex) { setErr(ex?.response?.data?.detail || 'Could not start checkout.'); setBusy(false); }
   };
@@ -68,6 +70,14 @@ export const TicketPicker = ({ ev, onDone }) => {
           <p className="flex justify-between font-semibold text-[#3B0A2E] pt-1 border-t border-[#3B0A2E]/10"><span>Total</span><span data-testid="ticket-total">{money(total)}</span></p>
         </div>
       )}
+      {seats > 0 && (
+        <details data-testid="ticket-guest-names" className="rounded-2xl border border-[#3B0A2E]/10 px-4 py-3">
+          <summary className="text-[13px] font-semibold text-[#3B0A2E] cursor-pointer">Guest names for place cards <span className="font-normal text-[#241019]/55">(optional, you can add them later)</span></summary>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
+            {Array.from({ length: seats }, (_, i) => <input key={i} data-testid={`ticket-guest-${i}`} placeholder={`Seat ${i + 1} guest name`} value={guests[i] || ''} onChange={(e) => { const g = [...guests]; g[i] = e.target.value; setGuests(g); }} className={input} />)}
+          </div>
+        </details>
+      )}
       <input data-testid="ticket-name" required placeholder="Your name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} className={input} />
       <input data-testid="ticket-email" required type="email" inputMode="email" placeholder="Email for your tickets" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className={input} />
       {err && <p data-testid="ticket-error" className="text-[13px] text-red-600">{err}</p>}
@@ -104,7 +114,10 @@ export function TicketSuccess() {
 export default function MyTickets() {
   const { token } = useParams();
   const [d, setD] = useState(null);
-  useEffect(() => { api.get(`/tickets/order/${token}`).then(({ data }) => setD(data)).catch(() => setD(false)); }, [token]);
+  const [names, setNames] = useState({});
+  const [saved, setSaved] = useState('');
+  useEffect(() => { api.get(`/tickets/order/${token}`).then(({ data }) => { setD(data); setNames(Object.fromEntries(data.tickets.map((t) => [t.code, t.guest_name || '']))); }).catch(() => setD(false)); }, [token]);
+  const saveNames = async () => { try { await api.put(`/tickets/order/${token}/names`, { names }); setSaved('Guest names saved!'); } catch (ex) { setSaved(ex?.response?.data?.detail || 'Could not save.'); } };
   if (d === null) return <div className="py-24 flex justify-center"><Loader2 className="animate-spin text-[#B4247E]" /></div>;
   if (!d) return <p className="py-24 text-center text-[#241019]/70" data-testid="tickets-not-found">Tickets not found.</p>;
   return (
@@ -113,11 +126,13 @@ export default function MyTickets() {
         <p className="eyebrow text-[#B4247E]">Tickets for {d.name}</p>
         <h1 className="font-serif text-[30px] sm:text-[36px] text-[#3B0A2E] font-semibold mt-1">{d.event.title}</h1>
         <p className="text-[14px] text-[#241019]/70 mt-2 flex flex-wrap gap-x-5 gap-y-1"><span className="flex items-center gap-1.5"><CalendarDays size={14} /> {d.event.date}{d.event.time ? ` · ${d.event.time}` : ''}</span>{d.event.location && <span className="flex items-center gap-1.5"><MapPin size={14} /> {d.event.location}</span>}</p>
+        {d.can_edit && <div className="mt-5 flex items-center gap-3"><button data-testid="ticket-names-save" onClick={saveNames} className="btn-magenta rounded-full px-6 py-2.5 font-semibold">Save guest names</button>{saved && <span data-testid="ticket-names-msg" className="text-[13.5px] text-[#3B0A2E]">{saved}</span>}</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-7">
           {d.tickets.map((t) => (
             <div key={t.code} data-testid={`ticket-${t.seat}`} className="bg-white rounded-3xl p-6 text-center border border-[#3B0A2E]/8">
               <QRCodeSVG value={`CSCT:${t.code}`} size={200} fgColor="#3B0A2E" className="mx-auto" />
-              <p className="font-semibold text-[#3B0A2E] mt-3">{t.type} · Seat {t.seat}</p>
+              <p className="font-semibold text-[#3B0A2E] mt-3">{t.type} · Seat {t.seat}{t.table ? ` · Table ${t.table}` : ''}</p>
+              {d.can_edit ? <input data-testid={`ticket-guestname-${t.seat}`} value={names[t.code] || ''} onChange={(e) => setNames({ ...names, [t.code]: e.target.value })} placeholder="Guest name for place card" className="mt-2 w-full rounded-xl border border-[#3B0A2E]/15 px-3 py-2 text-[14px] text-center" /> : t.guest_name && <p className="text-[14px] mt-1">{t.guest_name}</p>}
               <p className={`text-[12.5px] mt-1 ${t.checked_in_at ? 'text-emerald-700' : 'text-[#241019]/55'}`}>{t.checked_in_at ? 'Checked in' : 'Show at the door'}</p>
             </div>
           ))}

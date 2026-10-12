@@ -48,6 +48,7 @@ import GivingStatement from './pages/GivingStatement';
 import MyTickets, { TicketSuccess } from './pages/Tickets';
 import TicketDoor from './pages/TicketDoor';
 import Seating from './pages/Seating';
+import GalaScreen from './pages/GalaScreen';
 import SessionSheet from './pages/SessionSheet';
 import SaveSpot from './pages/SaveSpot';
 import { Loader2 } from 'lucide-react';
@@ -81,7 +82,7 @@ function Shell() {
     return <AuthCallback />;
   }
 
-  const bare = location.pathname.startsWith('/admin') || location.pathname.startsWith('/vote-record') || location.pathname.startsWith('/treasurer-report') || location.pathname.startsWith('/annual-report') || location.pathname === '/checkin' || location.pathname.startsWith('/birthday-wishes') || location.pathname.startsWith('/session-checkin') || location.pathname.startsWith('/session-sheet') || location.pathname === '/login';
+  const bare = location.pathname.startsWith('/admin') || location.pathname.startsWith('/vote-record') || location.pathname.startsWith('/treasurer-report') || location.pathname.startsWith('/annual-report') || location.pathname === '/checkin' || location.pathname.startsWith('/birthday-wishes') || location.pathname.startsWith('/session-checkin') || location.pathname.startsWith('/session-sheet') || location.pathname === '/login' || location.pathname.startsWith('/gala/');
 
   return (
     <>
@@ -124,6 +125,7 @@ function Shell() {
           <Route path="/transparency" element={<Transparency />} />
           <Route path="/donate" element={<Donate />} />
           <Route path="/giving-statement" element={<GivingStatement />} />
+          <Route path="/gala/:eid" element={<GalaScreen />} />
           <Route path="/tickets/success" element={<TicketSuccess />} />
           <Route path="/tickets/:token" element={<MyTickets />} />
           <Route path="/payment/success" element={<PaymentSuccess />} />
