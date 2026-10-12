@@ -18,6 +18,8 @@ import Volunteer from './pages/Volunteer';
 import Contact from './pages/Contact';
 import Legal from './pages/Legal';
 import Login from './pages/Login';
+import ResetPassword from './pages/ResetPassword';
+import VerifyEmail from './pages/VerifyEmail';
 import Admin from './pages/Admin';
 import AuthCallback from './pages/AuthCallback';
 import PaymentSuccess from './pages/PaymentSuccess';
@@ -145,6 +147,8 @@ function Shell() {
           <Route path="/accessibility" element={<Legal type="accessibility" />} />
           <Route path="/donor-privacy" element={<Legal type="donor" />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
           <Route path="/admin/tickets/:eid" element={<ProtectedRoute><TicketDoor /></ProtectedRoute>} />
           <Route path="/admin/tickets/:eid/seating" element={<ProtectedRoute><Seating /></ProtectedRoute>} />

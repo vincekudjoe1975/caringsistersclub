@@ -186,7 +186,8 @@ async def auth_session(payload: SessionRequest, response: Response):
         update = {"name": data.get("name")} if existing.get("picture_custom") else {"name": data.get("name"), "picture": data.get("picture")}
         if email.lower() in ADMIN_OWNER_EMAILS and existing.get("role") != "admin":
             update["role"] = "admin"
-        await db.users.update_one({"user_id": user_id}, {"$set": update})
+        update["email_verified"] = True
+        await db.users.update_one({"user_id": user_id}, {"$set": update, "$addToSet": {"auth_providers": "google"}})
     else:
         # Owner emails (ADMIN_OWNER_EMAILS) or admin-approved emails become admin; everyone else is pending.
         preapproved = email.lower() in ADMIN_OWNER_EMAILS or await db.allowed_emails.find_one({"email": email.lower()})
@@ -198,6 +199,8 @@ async def auth_session(payload: SessionRequest, response: Response):
             "name": data.get("name"),
             "picture": data.get("picture"),
             "role": role,
+            "auth_providers": ["google"],
+            "email_verified": True,
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
     session_token = data.get("session_token")
@@ -237,6 +240,213 @@ async def auth_logout(request: Request, response: Response):
         await db.user_sessions.delete_one({"session_token": token})
     response.delete_cookie("session_token", path="/")
     return {"message": "Logged out"}
+
+# ---------- Email + password auth (shares users + user_sessions with Google auth) ----------
+import bcrypt
+import hashlib as _hashlib
+import secrets as _asec
+
+_PW_RE = re.compile(r"^(?=.*[A-Za-z])(?=.*\d).{8,128}$")
+_SIGNUP_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$")
+_LOCK_MAX, _LOCK_MIN = 5, 15
+_GOOGLE_MSG = "This email is already registered with Google. Use \"Continue with Google\", or tap \"Forgot Password?\" to add a password."
+
+
+class SignupIn(BaseModel):
+    name: str = ""
+    email: str
+    password: str
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class EmailOnlyIn(BaseModel):
+    email: str
+
+
+class TokenIn(BaseModel):
+    token: str
+
+
+class ResetIn(BaseModel):
+    token: str
+    password: str
+
+
+def _hash_pw(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+
+
+def _check_pw(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode(), hashed.encode())
+    except ValueError:
+        return False
+
+
+def _norm_email(raw: str) -> str:
+    email = (raw or "").strip().lower()
+    if len(email) > 254 or not _SIGNUP_EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Please enter a valid email address (like name@example.com).")
+    return email
+
+
+def _check_strength(pw: str):
+    if not _PW_RE.match(pw or ""):
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters and include at least 1 letter and 1 number.")
+
+
+async def _user_by_email(email: str):
+    return await db.users.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0})
+
+
+async def _uses_google(u: dict) -> bool:
+    return "google" in (u.get("auth_providers") or []) or bool(u.get("picture")) or bool(await db.user_sessions.find_one({"user_id": u["user_id"]}, {"_id": 1}))
+
+
+async def _issue_auth_token(user_id: str, kind: str, hours: int) -> str:
+    raw = _asec.token_urlsafe(32)
+    await db.auth_tokens.delete_many({"user_id": user_id, "kind": kind, "used": False})
+    await db.auth_tokens.insert_one({"token_hash": _hashlib.sha256(raw.encode()).hexdigest(), "user_id": user_id, "kind": kind, "used": False,
+                                     "expires_at": datetime.now(timezone.utc) + timedelta(hours=hours), "created_at": datetime.now(timezone.utc)})
+    return raw
+
+
+async def _consume_auth_token(raw: str, kind: str) -> dict:
+    t = await db.auth_tokens.find_one_and_update(
+        {"token_hash": _hashlib.sha256((raw or "").encode()).hexdigest(), "kind": kind, "used": False, "expires_at": {"$gt": datetime.now(timezone.utc)}},
+        {"$set": {"used": True, "used_at": datetime.now(timezone.utc)}})
+    if not t:
+        what = "verification" if kind == "verify" else "reset"
+        raise HTTPException(status_code=400, detail=f"This {what} link is invalid or has expired. Please request a new one.")
+    return t
+
+
+async def _start_session(user_id: str, response: Response) -> dict:
+    token = _asec.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    await db.user_sessions.insert_one({"user_id": user_id, "session_token": token, "expires_at": (now + timedelta(days=7)).isoformat(), "created_at": now.isoformat()})
+    response.set_cookie(key="session_token", value=token, httponly=True, secure=True, samesite="none", max_age=7 * 24 * 60 * 60, path="/")
+    return await db.users.find_one({"user_id": user_id}, {"_id": 0})
+
+
+async def _send_verify(user: dict):
+    raw = await _issue_auth_token(user["user_id"], "verify", 24)
+    first = (user.get("name") or "Sister").split(" ")[0]
+    await send_email(to=user["email"], subject="Confirm your Caring Sisters Club account",
+                     html=_member_email_html("Confirm your email", f"Hello {first},",
+                                             "Thanks for creating your Caring Sisters Club account. Please confirm your email address to finish signing up. This link expires in 24 hours.\nIf you didn't create this account, you can ignore this email.",
+                                             "Confirm my email", f"/verify-email?token={raw}"))
+
+
+@api_router.post("/auth/signup")
+async def auth_signup(payload: SignupIn, request: Request, background: BackgroundTasks):
+    await _rate_limit(request, "auth_signup", 10, 3600)
+    email = _norm_email(payload.email)
+    _check_strength(payload.password)
+    name = re.sub(r"\s+", " ", payload.name or "").strip()[:80]
+    existing = await _user_by_email(email)
+    if existing:
+        cred = await db.user_credentials.find_one({"user_id": existing["user_id"]}, {"_id": 0})
+        if cred and existing.get("email_verified"):
+            raise HTTPException(status_code=409, detail="An account with this email already exists. Please log in, or tap \"Forgot Password?\".")
+        if not cred and await _uses_google(existing):
+            raise HTTPException(status_code=409, detail=_GOOGLE_MSG)
+        uid = existing["user_id"]
+        await db.user_credentials.update_one({"user_id": uid}, {"$set": {"user_id": uid, "password_hash": _hash_pw(payload.password), "updated_at": _now_iso()}}, upsert=True)
+        await db.users.update_one({"user_id": uid}, {"$set": {"email_verified": False, **({"name": name} if name and not existing.get("name") else {})}, "$addToSet": {"auth_providers": "email"}})
+    else:
+        uid = f"user_{uuid.uuid4().hex[:12]}"
+        try:
+            await db.users.insert_one({"user_id": uid, "email": email, "name": name or email.split("@")[0], "picture": "", "role": "pending",
+                                       "auth_providers": ["email"], "email_verified": False, "created_at": _now_iso()})
+        except DuplicateKeyError:
+            raise HTTPException(status_code=409, detail="An account with this email already exists. Please log in.")
+        await db.user_credentials.insert_one({"user_id": uid, "password_hash": _hash_pw(payload.password), "updated_at": _now_iso()})
+    background.add_task(_send_verify, await db.users.find_one({"user_id": uid}, {"_id": 0}))
+    return {"ok": True, "message": "Almost there! We sent a confirmation link to your email. Please click it to activate your account."}
+
+
+@api_router.post("/auth/verify-email")
+async def auth_verify_email(payload: TokenIn, response: Response):
+    t = await _consume_auth_token(payload.token, "verify")
+    u = await db.users.find_one({"user_id": t["user_id"]}, {"_id": 0})
+    if not u:
+        raise HTTPException(status_code=400, detail="This account no longer exists.")
+    upd = {"email_verified": True, "email_verified_at": _now_iso()}
+    em = (u.get("email") or "").lower()
+    if u.get("role") != "admin" and (em in ADMIN_OWNER_EMAILS or await db.allowed_emails.find_one({"email": em})):
+        upd["role"] = "admin"
+    await db.users.update_one({"user_id": u["user_id"]}, {"$set": upd})
+    return await _start_session(u["user_id"], response)
+
+
+@api_router.post("/auth/resend-verification")
+async def auth_resend_verification(payload: EmailOnlyIn, request: Request, background: BackgroundTasks):
+    await _rate_limit(request, "auth_resend", 5, 3600)
+    u = await _user_by_email(_norm_email(payload.email))
+    if u and not u.get("email_verified") and await db.user_credentials.find_one({"user_id": u["user_id"]}, {"_id": 1}):
+        background.add_task(_send_verify, u)
+    return {"ok": True, "message": "If that account is waiting for confirmation, we've sent a new link."}
+
+
+@api_router.post("/auth/login")
+async def auth_login(payload: LoginIn, request: Request, response: Response):
+    await _rate_limit(request, "auth_login", 30, 900)
+    email = _norm_email(payload.email)
+    ident = f"{_client_ip(request)}:{email}"
+    now = datetime.now(timezone.utc)
+    att = await db.login_attempts.find_one({"identifier": ident}, {"_id": 0})
+    if att and att.get("count", 0) >= _LOCK_MAX and att["last"].replace(tzinfo=timezone.utc) > now - timedelta(minutes=_LOCK_MIN):
+        raise HTTPException(status_code=429, detail=f"Too many failed attempts. Please wait {_LOCK_MIN} minutes or reset your password.")
+    u = await _user_by_email(email)
+    cred = await db.user_credentials.find_one({"user_id": u["user_id"]}, {"_id": 0}) if u else None
+    if u and not cred and await _uses_google(u):
+        raise HTTPException(status_code=400, detail=_GOOGLE_MSG)
+    if not cred or not _check_pw(payload.password, cred["password_hash"]):
+        await db.login_attempts.update_one({"identifier": ident}, {"$inc": {"count": 1}, "$set": {"last": now}}, upsert=True)
+        raise HTTPException(status_code=401, detail="Incorrect email or password.")
+    await db.login_attempts.delete_one({"identifier": ident})
+    if not u.get("email_verified"):
+        raise HTTPException(status_code=403, detail="Please confirm your email first. Check your inbox for the link we sent, or resend it below.")
+    return await _start_session(u["user_id"], response)
+
+
+@api_router.post("/auth/reset-password-request")
+async def auth_reset_request(payload: EmailOnlyIn, request: Request, background: BackgroundTasks):
+    await _rate_limit(request, "auth_reset", 5, 3600)
+    u = await _user_by_email(_norm_email(payload.email))
+    if u:
+        async def _go(user=u):
+            raw = await _issue_auth_token(user["user_id"], "reset", 1)
+            first = (user.get("name") or "Sister").split(" ")[0]
+            await send_email(to=user["email"], subject="Reset your Caring Sisters Club password",
+                             html=_member_email_html("Password reset", f"Hello {first},",
+                                                     "We received a request to set a new password for your Caring Sisters Club account. This link works once and expires in 1 hour.\nIf you didn't ask for this, you can safely ignore this email.",
+                                                     "Choose a new password", f"/reset-password?token={raw}"))
+        background.add_task(_go)
+    return {"ok": True, "message": "If an account exists for that email, we've sent a password reset link. It expires in 1 hour."}
+
+
+@api_router.post("/auth/reset-password")
+async def auth_reset_password(payload: ResetIn):
+    _check_strength(payload.password)
+    t = await _consume_auth_token(payload.token, "reset")
+    uid = t["user_id"]
+    u = await db.users.find_one({"user_id": uid}, {"_id": 0, "email": 1})
+    if not u:
+        raise HTTPException(status_code=400, detail="This account no longer exists.")
+    await db.user_credentials.update_one({"user_id": uid}, {"$set": {"user_id": uid, "password_hash": _hash_pw(payload.password), "updated_at": _now_iso()}}, upsert=True)
+    await db.users.update_one({"user_id": uid}, {"$set": {"email_verified": True}, "$addToSet": {"auth_providers": "email"}})
+    await db.user_sessions.delete_many({"user_id": uid})
+    await db.auth_tokens.update_many({"user_id": uid, "used": False}, {"$set": {"used": True}})
+    await db.login_attempts.delete_many({"identifier": {"$regex": f":{re.escape(u['email'].lower())}$"}})
+    return {"ok": True, "message": "Your password has been updated. You can now log in with your email and new password."}
+
+
 
 
 def _media_url(item_id: str) -> str:
@@ -6244,6 +6454,11 @@ async def startup_indexes():
         await db.volunteer_milestones.create_index([("email", 1), ("scope", 1), ("threshold", 1)], unique=True)
         await db.users.create_index("user_id", unique=True)
         await db.user_sessions.create_index("session_token")
+        await db.user_credentials.create_index("user_id", unique=True)
+        await db.auth_tokens.create_index("token_hash", unique=True)
+        await db.auth_tokens.create_index("expires_at", expireAfterSeconds=0)
+        await db.login_attempts.create_index("identifier", unique=True)
+        await db.login_attempts.create_index("last", expireAfterSeconds=60 * 60 * 24)
         await db.media.create_index("category")
         await db.rate_hits.create_index("at", expireAfterSeconds=3600)
         await db.rate_hits.create_index([("key", 1), ("at", 1)])
@@ -6324,7 +6539,7 @@ def _member_email_html(eyebrow: str, heading: str, body: str, cta_label: str, ct
         f'<p style="font-size:15px;line-height:1.7;color:#4a3340;margin:0 0 22px">{_esc(body).replace(chr(10), "<br/>")}</p>'
         + _btn(f"{PUBLIC_APP_URL}{cta_path}", _esc(cta_label), primary=True) +
         '</td></tr><tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif">'
-        '<p style="font-size:11px;color:#b79aae;margin:0">Sign in with your Google account. We never ask for your password by email.</p></td></tr>'
+        '<p style="font-size:11px;color:#b79aae;margin:0">Sign in with Google or your email and password. We will never ask for your password by email.</p></td></tr>'
         '</table></td></tr></table>'
     )
 
@@ -6590,7 +6805,7 @@ async def admin_member_invite(payload: InviteIn, background: BackgroundTasks, us
     first = payload.name.strip().split(" ")[0] if payload.name.strip() else "Sister"
     background.add_task(send_email, to=email, subject="You're invited to the Caring Sisters Club member portal",
                         html=_member_email_html("Member Invitation", f"Hello {first},",
-                                                "You've been invited to join the Caring Sisters Club member portal. Sign in with the Google account for this email address to get started.",
+                                                "You've been invited to join the Caring Sisters Club member portal. Sign in with Google, or create an email and password account, using this email address to get started.",
                                                 "Join the member portal", "/members"))
     return {"ok": True}
 

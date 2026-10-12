@@ -2,7 +2,8 @@ import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Logo from '../components/Logo';
-import { LogIn, ShieldCheck, Loader2 } from 'lucide-react';
+import { SignInOptions } from '../components/EmailAuth';
+import { ShieldCheck, Loader2 } from 'lucide-react';
 
 export default function Login() {
   const { user } = useAuth();
@@ -41,9 +42,7 @@ export default function Login() {
         <p className="text-[#241019]/65 text-[14.5px] mb-8">
           Sign in to manage gallery photos, leadership, events, and financial documents.
         </p>
-        <button onClick={handleLogin} className="btn-magenta rounded-full w-full py-3.5 font-semibold flex items-center justify-center gap-2">
-          <LogIn size={18} /> Continue with Google
-        </button>
+        <SignInOptions onGoogle={handleLogin} googleTestid="admin-google-login-btn" />
         <p className="text-[12px] text-[#241019]/45 mt-6">Secure sign-in powered by Emergent.</p>
       </div>
     </div>

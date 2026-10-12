@@ -75,3 +75,13 @@ curl -X DELETE http://localhost:8001/api/media/<ITEM_ID> -H "Authorization: Bear
 ```
 mongosh --eval "use('test_database'); db.users.deleteMany({email:/test\\.admin\\./}); db.user_sessions.deleteMany({session_token:/test_session/}); db.media.deleteMany({uploaded_by:/test\\.admin\\./});"
 ```
+
+
+## Email + password auth (added)
+Endpoints (/api/auth): signup, verify-email, resend-verification, login, reset-password-request, reset-password (plus me/logout).
+- Same `session_token` cookie + `user_sessions` as Google. bcrypt hash lives in `user_credentials` {user_id, password_hash}, never in `users`.
+- `users.auth_providers` (["google"], ["email"], both) and `users.email_verified`.
+- Verify/reset tokens in `auth_tokens` (sha256 of raw token, kind verify|reset, single use; verify 24h, reset 1h).
+- Lockout: `login_attempts` keyed "ip:email", 5 fails => 15 min (429).
+- Raw tokens only go by email. To test, insert {token_hash: sha256('mytoken'), user_id, kind, used:false, expires_at:<future Date>} into auth_tokens, then open /verify-email?token=mytoken or /reset-password?token=mytoken.
+- Clean up QA users from users, user_credentials, auth_tokens, user_sessions, login_attempts afterwards.

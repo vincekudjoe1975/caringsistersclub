@@ -8,6 +8,7 @@ import { Announcements } from '../components/members/Announcements';
 import { Discussion } from '../components/members/Discussion';
 import { Directory } from '../components/members/Directory';
 import { Bylaws } from '../components/members/Bylaws';
+import { SignInOptions } from '../components/EmailAuth';
 import { MyProfile } from '../components/members/MyProfile';
 import { Ballots } from '../components/members/Ballots';
 import { Standing } from '../components/members/Standing';
@@ -62,7 +63,7 @@ function MemberLogin() {
   return (
     <Card icon={LogIn} title="Member Portal" testid="member-login-card">
       <p className="text-[#241019]/65 text-[14.5px] mb-8">Sign in to read our bylaws, meet your sisters, and join the conversation.</p>
-      <button data-testid="member-login-btn" onClick={login} className="btn-magenta rounded-full w-full py-3.5 font-semibold flex items-center justify-center gap-2"><LogIn size={18} /> Continue with Google</button>
+      <SignInOptions onGoogle={login} googleTestid="member-login-btn" />
       <p className="text-[13px] text-[#241019]/55 mt-6">Not a member yet? <Link to="/membership" data-testid="member-learn-link" className="text-[#B4247E] font-semibold">Learn how to join</Link></p>
     </Card>
   );
