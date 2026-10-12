@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 import { fmtDate, eventImg } from './Events';
 import { TicketTypesPanel } from '../components/TicketTypes';
+import { PromoCodes } from '../components/PromoCodes';
 import { Loader2, Plus, Pencil, Trash2, Users, Download, X, UploadCloud, CalendarDays, MapPin, Clock, BellRing, Ticket } from 'lucide-react';
 
 const EMPTY = { title: '', date: '', time: '', location: '', category: '', description: '', image_url: '', capacity: 50, waitlist_mode: 'auto' };
@@ -229,6 +230,7 @@ export default function AdminEvents() {
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [ticketing, setTicketing] = useState(null);
+  const [promos, setPromos] = useState(false);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
@@ -250,8 +252,12 @@ export default function AdminEvents() {
           <h2 className="font-serif text-[24px] text-[#3B0A2E] font-semibold">Events</h2>
           <p className="text-[#241019]/60 text-[13.5px]">Upcoming events appear on the public Events page. Guests get a confirmation email and a reminder the day before.</p>
         </div>
+        <div className="flex flex-wrap gap-2">
+        <button onClick={() => setPromos(true)} data-testid="promo-codes-btn" className="rounded-full px-5 py-2.5 text-[13.5px] font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] flex items-center gap-2 hover:bg-[#F7EFE9] transition-colors"><Ticket size={15} /> Promo codes</button>
         <button onClick={() => setEditing({})} data-testid="new-event-btn" className="btn-magenta rounded-full px-5 py-2.5 text-[13.5px] font-semibold flex items-center gap-2"><Plus size={16} /> New Event</button>
+        </div>
       </div>
+      {promos && <PromoCodes events={events} toast={toast} onClose={() => setPromos(false)} />}
       {events === null ? <div className="flex justify-center py-16"><Loader2 className="animate-spin text-[#B4247E]" size={30} /></div>
         : events.length === 0 ? (
           <div className="bg-white rounded-2xl p-12 text-center border border-[#3B0A2E]/8 text-[#241019]/55 text-[14px]">No events yet. Click "New Event" to publish your first one.</div>

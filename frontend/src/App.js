@@ -47,6 +47,7 @@ import SessionCheckIn from './pages/SessionCheckIn';
 import GivingStatement from './pages/GivingStatement';
 import MyTickets, { TicketSuccess } from './pages/Tickets';
 import TicketDoor from './pages/TicketDoor';
+import Seating from './pages/Seating';
 import SessionSheet from './pages/SessionSheet';
 import SaveSpot from './pages/SaveSpot';
 import { Loader2 } from 'lucide-react';
@@ -137,6 +138,7 @@ function Shell() {
           <Route path="/login" element={<Login />} />
           <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
           <Route path="/admin/tickets/:eid" element={<ProtectedRoute><TicketDoor /></ProtectedRoute>} />
+          <Route path="/admin/tickets/:eid/seating" element={<ProtectedRoute><Seating /></ProtectedRoute>} />
         </Routes>
       </main>
       {!bare && <Footer />}

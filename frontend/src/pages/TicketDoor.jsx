@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { QrCode, Download, Undo2, ArrowLeft, Search, Loader2 } from 'lucide-react';
+import { QrCode, Download, Undo2, ArrowLeft, Search, Loader2, LayoutGrid } from 'lucide-react';
 import { api } from '../lib/api';
 import { Scanner } from './CheckIn';
 
@@ -36,6 +36,7 @@ export default function TicketDoor() {
         <p data-testid="ticket-door-summary" className="text-[14px] text-[#F7EFE9]/80 mt-1">{r.checked_in} of {r.seats} guests checked in · {r.orders} orders · ${r.revenue.toLocaleString('en-US')} in ticket sales</p>
         <div className="flex flex-wrap gap-2 mt-4">
           <button data-testid="ticket-door-scan" onClick={() => setScan(true)} className="rounded-full px-6 py-3 font-semibold bg-[#CBA24B] text-[#3B0A2E] flex items-center gap-2"><QrCode size={17} /> Scan tickets</button>
+          <Link data-testid="ticket-door-seating" to={`/admin/tickets/${eid}/seating`} className="rounded-full px-5 py-3 font-semibold border border-white/25 flex items-center gap-2"><LayoutGrid size={15} /> Seating</Link>
           <button data-testid="ticket-door-csv" onClick={csv} className="rounded-full px-5 py-3 font-semibold border border-white/25 flex items-center gap-2"><Download size={15} /> CSV</button>
         </div>
       </div>

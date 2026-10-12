@@ -11,13 +11,24 @@ export const TicketPicker = ({ ev, onDone }) => {
   const [f, setF] = useState({ name: '', email: '' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [code, setCode] = useState('');
+  const [promo, setPromo] = useState(null);
+  const [gift, setGift] = useState(0);
+  const [custom, setCustom] = useState('');
   const types = ev.ticket_types || [];
-  const total = types.reduce((a, t) => a + (qty[t.id] || 0) * t.price, 0);
+  const subtotal = types.reduce((a, t) => a + (qty[t.id] || 0) * t.price, 0);
+  const discount = promo ? Math.min(subtotal, promo.kind === 'percent' ? Math.round(subtotal * promo.value) / 100 : promo.value) : 0;
+  const giftAmt = gift === 'custom' ? Number(custom) || 0 : gift;
+  const total = subtotal - discount + giftAmt;
+  const applyCode = async () => {
+    setErr('');
+    try { const { data } = await api.post(`/events/${ev.id}/tickets/promo`, { code }); setPromo(data); } catch (ex) { setPromo(null); setErr(ex?.response?.data?.detail || 'Invalid code'); }
+  };
   const step = (t, d) => setQty({ ...qty, [t.id]: Math.max(0, Math.min(Math.min(t.remaining, 20), (qty[t.id] || 0) + d)) });
   const pay = async (e) => {
     e.preventDefault(); setBusy(true); setErr('');
     try {
-      const { data } = await api.post(`/events/${ev.id}/tickets/checkout`, { ...f, items: types.map((t) => ({ type_id: t.id, qty: qty[t.id] || 0 })).filter((i) => i.qty) });
+      const { data } = await api.post(`/events/${ev.id}/tickets/checkout`, { ...f, promo_code: promo?.code || '', gift: giftAmt, items: types.map((t) => ({ type_id: t.id, qty: qty[t.id] || 0 })).filter((i) => i.qty) });
       window.location.href = data.url;
     } catch (ex) { setErr(ex?.response?.data?.detail || 'Could not start checkout.'); setBusy(false); }
   };
@@ -35,10 +46,32 @@ export const TicketPicker = ({ ev, onDone }) => {
           <button type="button" data-testid={`ticket-plus-${t.id}`} disabled={t.remaining <= (qty[t.id] || 0)} onClick={() => step(t, 1)} className="w-10 h-10 rounded-full border border-[#3B0A2E]/15 flex items-center justify-center disabled:opacity-40" aria-label="More"><Plus size={15} /></button>
         </div>
       ))}
+      <div className="flex gap-2">
+        <input data-testid="ticket-promo-input" placeholder="Promo code" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} className={`${input} flex-1 min-w-0`} />
+        <button type="button" data-testid="ticket-promo-apply" disabled={!code} onClick={applyCode} className="rounded-xl px-4 font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] disabled:opacity-50">Apply</button>
+      </div>
+      {promo && <p data-testid="ticket-promo-applied" className="text-[13px] text-emerald-700 font-semibold -mt-2">{promo.code}: {promo.label} applied</p>}
+      <div data-testid="ticket-gift">
+        <p className="text-[13px] font-semibold text-[#3B0A2E] mb-1.5">Add a tax-deductible gift? <span className="font-normal text-[#241019]/55">(optional)</span></p>
+        <div className="flex flex-wrap gap-2">
+          {[0, 25, 50, 100, 'custom'].map((g) => (
+            <button type="button" key={g} data-testid={`ticket-gift-${g}`} onClick={() => setGift(g)} className={`rounded-full px-4 py-2 text-[13px] font-semibold transition-colors ${gift === g ? 'bg-[#3B0A2E] text-white' : 'border border-[#3B0A2E]/15 text-[#3B0A2E]'}`}>{g === 0 ? 'No thanks' : g === 'custom' ? 'Other' : `$${g}`}</button>
+          ))}
+          {gift === 'custom' && <input data-testid="ticket-gift-custom" type="number" min="1" placeholder="$" value={custom} onChange={(e) => setCustom(e.target.value)} className={`${input} w-28`} />}
+        </div>
+      </div>
+      {subtotal > 0 && (
+        <div data-testid="ticket-summary" className="rounded-2xl bg-[#faf2f7] px-4 py-3 text-[13.5px] space-y-1">
+          <p className="flex justify-between"><span>Tickets</span><span>{money(subtotal)}</span></p>
+          {discount > 0 && <p className="flex justify-between text-emerald-700"><span>Promo {promo.code}</span><span>-{money(discount)}</span></p>}
+          {giftAmt > 0 && <p className="flex justify-between"><span>Gift</span><span>{money(giftAmt)}</span></p>}
+          <p className="flex justify-between font-semibold text-[#3B0A2E] pt-1 border-t border-[#3B0A2E]/10"><span>Total</span><span data-testid="ticket-total">{money(total)}</span></p>
+        </div>
+      )}
       <input data-testid="ticket-name" required placeholder="Your name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} className={input} />
       <input data-testid="ticket-email" required type="email" inputMode="email" placeholder="Email for your tickets" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className={input} />
       {err && <p data-testid="ticket-error" className="text-[13px] text-red-600">{err}</p>}
-      <button data-testid="ticket-pay-btn" disabled={busy || !total} className="btn-magenta rounded-full w-full py-3.5 font-semibold flex items-center justify-center gap-2 disabled:opacity-50">{busy ? <Loader2 size={16} className="animate-spin" /> : <Ticket size={16} />} {total ? `Pay ${money(total)}` : 'Choose tickets'}</button>
+      <button data-testid="ticket-pay-btn" disabled={busy || !subtotal} className="btn-magenta rounded-full w-full py-3.5 font-semibold flex items-center justify-center gap-2 disabled:opacity-50">{busy ? <Loader2 size={16} className="animate-spin" /> : <Ticket size={16} />} {!subtotal ? 'Choose tickets' : total > 0 ? `Pay ${money(total)}` : 'Get free tickets'}</button>
       <p className="text-[12px] text-[#241019]/50 text-center">Secure payment by Stripe. Your QR tickets arrive by email.</p>
     </form>
   );

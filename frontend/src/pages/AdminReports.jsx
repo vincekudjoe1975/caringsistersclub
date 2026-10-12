@@ -11,6 +11,7 @@ import { SessionFeedback } from '../components/SessionFeedback';
 import { AttendanceReport } from '../components/Attendance';
 import { WaitlistSpeed } from '../components/WaitlistSpeed';
 import { ComebackReport } from '../components/ComebackReport';
+import { AccountantPackage } from '../components/AccountantPackage';
 
 const monthLabel = (k) => new Date(`${k}-01T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 const csvCell = (v) => { let t = String(v ?? ''); if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`; return `"${t.replace(/"/g, '""')}"`; };
@@ -313,6 +314,7 @@ export default function AdminReports() {
   return (
     <div data-testid="admin-reports">
       <h2 className="font-serif text-[24px] text-[#3B0A2E] font-semibold mb-5">Reports</h2>
+      <AccountantPackage />
       <YearInReviewAdmin />
       <ProgramForecast />
       <ForecastHistory />
