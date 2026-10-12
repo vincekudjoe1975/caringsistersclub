@@ -419,3 +419,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Thermometer: components/Thermometer.jsx (HomeThermometer on Home, ShareCampaign also in DonorWall); 30s polling.
 - Statements: /api/donor/statement-link (24h token, db.donor_statement_tokens), /api/donor/statements/{t}, /{year}.pdf (reportlab); page /giving-statement; form on Donate.
 - Ticketing: events.ticket_types; db.ticket_orders, db.tickets (code unique); checkout via Stripe metadata kind=tickets; webhook + /tickets/session poll fulfil; QR PNG /api/tickets/qr/{code}.png (qrcode lib); /tickets/:token, /admin/tickets/:eid door page (Scanner exported from CheckIn.jsx); report + CSV.
+
+## 2026-06 — Promo codes, ticket gifts, seating, campaign milestone alerts, accountant package (iteration_44: backend 33/33; frontend verified + self-screenshots)
+- db.promo_codes (percent|amount, event_id or all, max_uses, expires, active); /api/events/{eid}/tickets/promo; admin CRUD /api/admin/promo-codes. 100%-off orders fulfil without Stripe (session_id free_*).
+- Ticket gift -> payment_transactions tkt_{order_id} source ticket-gift (in statements/milestones); ticket revenue excludes gift (orders: subtotal, discount, total, gift).
+- Seating: events.seating {tables, seats, names}; tickets.group/table; _auto_seat on fulfilment; /admin/tickets/:eid/seating page with print chart/place cards.
+- MILESTONES [25,50,75,100]: staff email incl. caringsistersclub@gmail.com + push kind campaign.
+- Accountant (settings key accountant; defaults Divine Financial Group, devinetax1@gmail.com + info@dfgbusiness.com, cc caringsistersclub@gmail.com): _acct_scheduled Jan 5-12 >=9am ET (mark acct:{year}); email w/ 90-day token links /api/accounting/{token}/*.csv|all.zip; Admin > Reports panel (send now/download/edit). Email provider has no attachments -> links.
