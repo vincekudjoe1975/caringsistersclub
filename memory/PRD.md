@@ -432,3 +432,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - tickets.guest_name: checkout guest_names, buyer edit PUT /api/tickets/order/{token}/names (until event date), staff PUT /api/admin/events/{eid}/tickets/name; door list uses guest name.
 - Accountant quarterly (settings accountant.quarterly, default on): Apr/Jul/Oct 5-12 >=9am ET previous quarter (mark acct-q:{y}-Q{n}); _period(year,q); downloads ?quarter=N.
 - Gala: events.gala_goal (PUT /api/admin/events/{eid}/gala); public /gala/:eid (GalaScreen.jsx, 5s poll of GET /api/gala/{eid}); /donate?gala= sets gala_event_id -> txn event_id, source gala.
+
+## 2026-06 — Paddle raise, gala thank-you, sponsor logos, silent auction (iteration_46: 100%)
+- Paddle: events.paddle_level; db.paddle_pledges; emcee page /admin/gala/:eid/emcee; gala screen overlay + tally; pledges added to gala raised (_gala_total).
+- Gala thank-you: _gala_thanks in _push_loop (day after event, >=9am ET, mark gala-thanks:{eid}, events.gala_thanks toggle); preview GET /api/admin/events/{eid}/gala-thanks.
+- Sponsors: events.sponsors [{id,name,logo,table}] via multipart upload (_store_upload category sponsor); marquee on gala screen; seating page/chart.
+- Auction: db.auction_items/bids/bidders/wins; events.auction_closes_at/closed; public /auction/:eid, pay /auction/pay/:token (Stripe kind auction), admin /admin/auction/:eid; _auction_loop_close in push loop; outbid + winner emails.
+- Not yet: auction proceeds/paddle pledges in accountant CSV package.
