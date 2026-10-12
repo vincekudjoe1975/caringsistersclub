@@ -9,6 +9,7 @@ import { Discussion } from '../components/members/Discussion';
 import { Directory } from '../components/members/Directory';
 import { Bylaws } from '../components/members/Bylaws';
 import { SignInOptions } from '../components/EmailAuth';
+import { Welcome } from '../components/members/Welcome';
 import { MyProfile } from '../components/members/MyProfile';
 import { Ballots } from '../components/members/Ballots';
 import { Standing } from '../components/members/Standing';
@@ -114,6 +115,8 @@ function Portal({ me, onChange }) {
 export default function Members() {
   const { user } = useAuth();
   const [me, setMe] = useState(null);
+  const [welcome, setWelcome] = useState(() => new URLSearchParams(window.location.search).has('welcome'));
+  const closeWelcome = () => { window.history.replaceState(null, '', '/members'); setWelcome(false); };
   const load = useCallback(async () => {
     try { const { data } = await api.get('/members/me'); setMe(data); } catch { setMe(false); }
   }, []);
@@ -121,6 +124,7 @@ export default function Members() {
 
   if (user === null || (user && me === null)) return <Shell><div className="flex justify-center py-32"><Loader2 className="animate-spin text-[#CBA24B]" size={36} /></div></Shell>;
   if (!user || me === false) return <Shell><MemberLogin /><OfflinePass /></Shell>;
+  if (welcome) return <Shell><Welcome me={me} onStart={closeWelcome} onPortal={closeWelcome} /></Shell>;
   if (me.status === 'active') return <Shell><Portal me={me} onChange={load} /></Shell>;
   if (me.status === 'applied') return <Shell><Card icon={Clock} title="Application received" testid="member-pending-card"><p className="text-[#241019]/65 text-[14.5px]">Thank you, {(me.name || '').split(' ')[0]}. Our membership team will review your application and email you once you're approved.</p></Card></Shell>;
   if (me.status === 'declined' || me.status === 'suspended' || me.status === 'ended') return <Shell><Card icon={Clock} title="Portal access paused" testid="member-paused-card"><p className="text-[#241019]/65 text-[14.5px]">Your member access isn't active right now. Please <Link to="/contact" className="text-[#B4247E] font-semibold">contact us</Link> if you have questions.</p></Card></Shell>;

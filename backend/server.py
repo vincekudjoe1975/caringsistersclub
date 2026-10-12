@@ -431,6 +431,35 @@ async def auth_reset_request(payload: EmailOnlyIn, request: Request, background:
     return {"ok": True, "message": "If an account exists for that email, we've sent a password reset link. It expires in 1 hour."}
 
 
+class SetPwIn(BaseModel):
+    password: str
+    current_password: str = ""
+
+
+@api_router.get("/auth/password-status")
+async def auth_password_status(user=Depends(get_current_user)):
+    return {"has_password": bool(await db.user_credentials.find_one({"user_id": user["user_id"]}, {"_id": 1})),
+            "providers": user.get("auth_providers") or ["google"], "email": user.get("email")}
+
+
+@api_router.post("/auth/set-password")
+async def auth_set_password(payload: SetPwIn, request: Request, user=Depends(get_current_user)):
+    await _rate_limit(request, f"auth_setpw:{user['user_id']}", 10, 900)
+    _check_strength(payload.password)
+    uid = user["user_id"]
+    cred = await db.user_credentials.find_one({"user_id": uid}, {"_id": 0})
+    if cred:
+        if not _check_pw(payload.current_password or "", cred["password_hash"]):
+            raise HTTPException(status_code=400, detail="Your current password is incorrect.")
+        if _check_pw(payload.password, cred["password_hash"]):
+            raise HTTPException(status_code=400, detail="Your new password must be different from your current one.")
+    await db.user_credentials.update_one({"user_id": uid}, {"$set": {"user_id": uid, "password_hash": _hash_pw(payload.password), "updated_at": _now_iso()}}, upsert=True)
+    await db.users.update_one({"user_id": uid}, {"$set": {"email_verified": True}, "$addToSet": {"auth_providers": "email"}})
+    token = request.cookies.get("session_token") or request.headers.get("Authorization", "")[7:]
+    await db.user_sessions.delete_many({"user_id": uid, "session_token": {"$ne": token}})
+    return {"ok": True, "message": "Password changed. Other devices have been signed out." if cred else "Password added. You can now also log in with your email and password."}
+
+
 @api_router.post("/auth/reset-password")
 async def auth_reset_password(payload: ResetIn):
     _check_strength(payload.password)
@@ -10429,8 +10458,10 @@ async def _deliver(uid: str, data: str) -> tuple:
             await db.push_subs.delete_one({"endpoint": sub["endpoint"]})
         elif ok:
             sent += 1
+            await db.push_subs.update_one({"endpoint": sub["endpoint"]}, {"$set": {"last_ok_at": _now_iso()}})
         else:
             failed += 1
+            await db.push_subs.update_one({"endpoint": sub["endpoint"]}, {"$set": {"last_fail_at": _now_iso()}})
     return sent, failed, removed
 
 
@@ -10599,6 +10630,30 @@ class AdminPushIn(BaseModel):
 @api_router.get("/admin/members/push")
 async def admin_push_stats(user=Depends(require_admin)):
     return {"devices": await db.push_subs.count_documents({}), "members": len(await db.push_subs.distinct("user_id"))}
+
+
+@api_router.get("/admin/members/push/devices")
+async def admin_push_devices(user=Depends(require_admin)):
+    subs = await db.push_subs.find({}, {"_id": 0, "keys": 0}).to_list(5000)
+    by = defaultdict(list)
+    for x in subs:
+        by[x.get("user_id")].append({"kind": _push_device_kind(x["endpoint"]), "updated_at": x.get("updated_at", ""),
+                                     "last_ok_at": x.get("last_ok_at", ""), "last_fail_at": x.get("last_fail_at", "")})
+    users = await db.users.find({"$or": [{"member_status": "active"}, {"user_id": {"$in": list(by)}}]},
+                                {"_id": 0, "user_id": 1, "name": 1, "email": 1, "member_status": 1, "role": 1}).to_list(5000)
+    rows = [{"user_id": u["user_id"], "name": u.get("name") or "", "email": u.get("email") or "", "devices": by.get(u["user_id"], [])} for u in users]
+    rows.sort(key=lambda r: (-len(r["devices"]), r["name"].lower()))
+    return {"rows": rows}
+
+
+@api_router.post("/admin/members/push/test-member/{uid}")
+async def admin_push_test_member(uid: str, request: Request, user=Depends(require_admin)):
+    await _rate_limit(request, f"push-test-member:{user['user_id']}", max_hits=20, window_s=600)
+    devices = await db.push_subs.count_documents({"user_id": uid})
+    if not devices:
+        raise HTTPException(status_code=400, detail="This member has no registered devices yet. They need to tap 'Turn on phone alerts' on their phone.")
+    sent = await _push_users([uid], "Test alert from Caring Sisters Club", "This is a test from our staff. Your phone alerts are working!", "/members", "test")
+    return {"sent": sent, "devices": devices}
 
 
 @api_router.post("/admin/members/push")

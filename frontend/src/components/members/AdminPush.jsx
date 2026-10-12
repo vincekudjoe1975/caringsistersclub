@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 import { PushHistory } from './PushHistory';
 import { ScheduledAlerts, WeeklySummaryAdmin } from './ScheduledAlerts';
 import { BestTimes, useBestTimes, bestLabel } from './BestTimes';
+import { PushDevices } from './PushDevices';
 
 const inputCls = 'w-full rounded-xl border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] bg-white focus:outline-none focus:border-[#B4247E] transition-colors';
 const DEST = [['/members', 'Member portal'], ['/members?tab=week', 'This Week'], ['/members?tab=news', 'Announcements'], ['/members?tab=prayer', 'Prayer board'], ['/members?tab=votes', 'Votes'], ['/members?tab=photos', 'Photos'], ['/sessions', 'Sessions'], ['/events', 'Events']];
@@ -75,6 +76,7 @@ export const AdminPush = ({ toast }) => {
         <button data-testid="admin-push-send" disabled={busy} className="btn-magenta rounded-full px-5 py-2 font-semibold flex items-center gap-1.5 disabled:opacity-60">{busy ? <Loader2 size={14} className="animate-spin" /> : later ? <CalendarClock size={14} /> : <BellRing size={14} />} {editId ? 'Save changes' : later ? 'Schedule alert' : 'Send alert'}</button>
       </div>
     </form>
+    <PushDevices toast={toast} />
     <ScheduledAlerts toast={toast} refresh={tick} onEdit={edit} />
     <WeeklySummaryAdmin toast={toast} />
     <PushHistory refresh={tick} />

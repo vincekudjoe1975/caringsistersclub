@@ -17,7 +17,7 @@ export default function VerifyEmail() {
     if (ran.current) return;
     ran.current = true;
     api.post('/auth/verify-email', { token: params.get('token') || '' })
-      .then(({ data }) => { setUser(data); navigate('/members', { replace: true }); })
+      .then(({ data }) => { setUser(data); navigate('/members?welcome=1', { replace: true }); })
       .catch((e) => setErr(apiError(e)));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

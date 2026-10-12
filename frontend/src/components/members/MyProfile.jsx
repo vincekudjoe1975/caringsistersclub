@@ -6,6 +6,7 @@ import { Avatar } from './Avatar';
 import { LeaveRequest } from './LeaveRequest';
 import { CheckinCode } from './Phase6';
 import { PushSettings } from './PushSettings';
+import { PasswordCard } from './PasswordCard';
 
 const inputCls = 'w-full mt-1.5 rounded-xl border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] bg-white focus:outline-none focus:border-[#B4247E] transition-colors';
 
@@ -87,6 +88,7 @@ export function MyProfile({ me, onChange }) {
         {busy ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save profile
       </button>
     <CheckinCode />
+    <PasswordCard />
     <LeaveRequest me={me} onChange={onChange} />
     </form>
   );
