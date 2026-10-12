@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Printer, Wand2, Loader2, Users } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, mediaSrc } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 
 export default function Seating() {
@@ -38,7 +38,8 @@ export default function Seating() {
   if (print === 'chart') return (
     <div data-testid="seating-chart-print" className="bg-white p-8">
       <h1 className="font-serif text-[28px] text-[#3B0A2E]">{d.event.title}: Seating</h1><p className="text-gray-600 mb-6">{d.event.date}{d.event.location ? ` · ${d.event.location}` : ''}</p>
-      <div className="grid grid-cols-3 gap-4">{tables.map((t) => <div key={t} className="border border-gray-300 rounded-lg p-3 break-inside-avoid"><p className="font-bold text-[#3B0A2E]">Table {t}</p>{sp(t) && <p className="text-[12px] italic text-[#B4247E] mb-1">Sponsored by {sp(t)}</p>}{at(t).flatMap((g) => g.names).map((n, i) => <p key={i} className="text-[13px]">{n}</p>)}</div>)}</div>
+      {(d.sponsors || []).length > 0 && <div data-testid="seating-print-sponsors" className="mt-8 pt-4 border-t border-gray-300 order-last"><p className="font-serif text-[18px] text-[#3B0A2E] mb-3">Thank you to our sponsors</p><div className="flex flex-wrap items-center gap-8">{d.sponsors.map((s) => <img key={s.id} src={mediaSrc(s.logo)} alt={s.name} className="h-12 w-auto object-contain" />)}</div></div>}
+      <div className="grid grid-cols-3 gap-4">{tables.map((t) => <div key={t} className="border border-gray-300 rounded-lg p-3 break-inside-avoid"><p className="font-bold text-[#3B0A2E]">Table {t}</p>{sp(t) && <p className="text-[12px] italic text-[#B4247E] mb-1">Sponsored by {sp(t)}</p>}{(d.sponsors || []).filter((s) => s.table === t).map((s) => <img key={s.id} src={mediaSrc(s.logo)} alt={s.name} className="h-8 w-auto mb-1 object-contain" />)}{at(t).flatMap((g) => g.names).map((n, i) => <p key={i} className="text-[13px]">{n}</p>)}</div>)}</div>
     </div>
   );
   return (

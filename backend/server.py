@@ -124,7 +124,7 @@ def get_object(path: str):
 
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 ADMIN_OWNER_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_OWNER_EMAILS", "").split(",") if e.strip()}
-ALLOWED_CATEGORIES = {"gallery", "board", "document", "event", "report", "program", "share"}
+ALLOWED_CATEGORIES = {"gallery", "board", "document", "event", "report", "program", "share", "sponsor", "auction"}
 
 
 class SessionRequest(BaseModel):
@@ -627,6 +627,8 @@ async def stripe_webhook(request: Request):
             await _record_member_payment(obj["id"])
         if (obj.get("metadata") or {}).get("kind") == "tickets" and obj.get("payment_status") == "paid":
             await _fulfil_ticket_order(obj["id"])
+        if (obj.get("metadata") or {}).get("kind") == "auction" and obj.get("payment_status") == "paid":
+            await _auction_paid(obj["id"])
     elif t == "checkout.session.expired":
         await db.payment_transactions.update_one(
             {"session_id": obj["id"]},
@@ -10350,6 +10352,8 @@ async def _push_loop():
             await _send_scheduled()
             await _push_weekly()
             await _acct_scheduled()
+            await _auction_loop_close()
+            await _gala_thanks()
         except Exception as e:
             logging.error(f"Push loop error: {e}")
         await asyncio.sleep(300)
@@ -11360,8 +11364,13 @@ async def gala_screen(eid: str, request: Request):
         raise HTTPException(status_code=404, detail="Event not found")
     gifts = await db.payment_transactions.find({"event_id": e["id"], "payment_status": "paid"}, {"_id": 0, "amount": 1, "donor_name": 1, "anonymous": 1, "updated_at": 1}).sort("updated_at", -1).to_list(5000)
     first = lambda g: "Anonymous" if g.get("anonymous") or not (g.get("donor_name") or "").strip() else g["donor_name"].strip().split(" ")[0][:20]  # noqa: E731
-    return {"title": e["title"], "date": e["date"], "goal": e.get("gala_goal") or 0, "raised": round(sum(float(g.get("amount", 0)) for g in gifts), 2),
-            "count": len(gifts), "recent": [{"name": first(g), "at": g.get("updated_at", "")} for g in gifts[:12]]}
+    pledges = await db.paddle_pledges.find({"event_id": e["id"]}, {"_id": 0}).to_list(5000)
+    ev = await db.events.find_one({"id": e["id"]}, {"_id": 0, "paddle_level": 1, "sponsors": 1, "auction_closes_at": 1, "auction_closed": 1})
+    return {"title": e["title"], "date": e["date"], "goal": e.get("gala_goal") or 0, "raised": round(sum(float(g.get("amount", 0)) for g in gifts) + sum(p["level"] for p in pledges), 2),
+            "count": len(gifts) + len(pledges), "recent": [{"name": first(g), "at": g.get("updated_at", "")} for g in gifts[:12]],
+            "paddle": {"level": ev.get("paddle_level"), "tally": _paddle_tally(pledges), "total": round(sum(p["level"] for p in pledges), 2)},
+            "sponsors": [{"name": x["name"], "logo": x["logo"], "table": x.get("table", 0)} for x in ev.get("sponsors") or []],
+            "auction": bool(ev.get("auction_closes_at")) and not ev.get("auction_closed")}
 
 
 @api_router.get("/tickets/qr/{code}.png")
@@ -11443,7 +11452,7 @@ def _ticket_group(t: dict) -> str:
 
 
 async def _seating_state(eid: str) -> tuple:
-    e = await db.events.find_one({"id": eid}, {"_id": 0, "seating": 1, "title": 1, "date": 1, "time": 1, "location": 1})
+    e = await db.events.find_one({"id": eid}, {"_id": 0, "seating": 1, "title": 1, "date": 1, "time": 1, "location": 1, "sponsors": 1})
     if e is None:
         raise HTTPException(status_code=404, detail="Event not found")
     tickets = await db.tickets.find({"event_id": eid}, {"_id": 0}).sort([("holder", 1), ("seat", 1)]).to_list(20000)
@@ -11483,7 +11492,7 @@ async def admin_seating(eid: str, user=Depends(require_admin)):
         g["size"] += 1
         g["names"].append(t.get("guest_name") or t["holder"])
         g["seats"].append({"code": t["code"], "guest_name": t.get("guest_name") or ""})
-    return {"event": {k: e.get(k, "") for k in ("title", "date", "time", "location")}, "seating": e.get("seating") or {"tables": 0, "seats": 8, "names": {}},
+    return {"event": {k: e.get(k, "") for k in ("title", "date", "time", "location")}, "sponsors": e.get("sponsors") or [], "seating": e.get("seating") or {"tables": 0, "seats": 8, "names": {}},
             "groups": sorted(groups.values(), key=lambda g: (g["table"] or 999, g["holder"]))}
 
 
@@ -11694,6 +11703,385 @@ async def _acct_scheduled(now=None):
     if not cfg["quarterly"] or not await _push_mark(f"acct-q:{et.year}-Q{q}"):
         return None
     return await _send_acct_package(et.year, q)
+
+
+# --- Gala: paddle raise, sponsors, thank-yous ---
+class PaddleLevelIn(BaseModel):
+    level: Optional[float] = None
+
+
+class PledgeIn(BaseModel):
+    level: float
+    name: str = ""
+    email: str = ""
+    number: str = ""
+
+
+async def _gala_event(eid: str) -> dict:
+    e = await db.events.find_one({"id": eid[:64]}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return e
+
+
+@api_router.put("/admin/events/{eid}/paddle")
+async def admin_paddle_level(eid: str, payload: PaddleLevelIn, user=Depends(require_admin)):
+    await _gala_event(eid)
+    if payload.level is not None and not 1 <= payload.level <= 1000000:
+        raise HTTPException(status_code=400, detail="Pick a valid amount.")
+    await db.events.update_one({"id": eid}, {"$set": {"paddle_level": payload.level}})
+    return await admin_paddle(eid, user)
+
+
+@api_router.get("/admin/events/{eid}/paddle")
+async def admin_paddle(eid: str, user=Depends(require_admin)):
+    e = await _gala_event(eid)
+    pledges = await db.paddle_pledges.find({"event_id": eid}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    return {"title": e["title"], "level": e.get("paddle_level"), "pledges": pledges, "tally": _paddle_tally(pledges), "total": round(sum(p["level"] for p in pledges), 2)}
+
+
+def _paddle_tally(pledges: list) -> list:
+    t = {}
+    for p in pledges:
+        t[p["level"]] = t.get(p["level"], 0) + 1
+    return [{"level": k, "count": v} for k, v in sorted(t.items(), key=lambda kv: -kv[0])]
+
+
+@api_router.post("/admin/events/{eid}/paddle/pledge")
+async def admin_paddle_pledge(eid: str, payload: PledgeIn, user=Depends(require_admin)):
+    await _gala_event(eid)
+    email = payload.email.strip().lower()
+    if not 1 <= payload.level <= 1000000 or (email and not _EMAIL_RE.match(email)):
+        raise HTTPException(status_code=400, detail="Check the amount and email.")
+    await db.paddle_pledges.insert_one({"id": str(uuid.uuid4()), "event_id": eid, "level": round(payload.level, 2), "name": payload.name.strip()[:80], "email": email,
+                                        "number": payload.number.strip()[:20], "collected": False, "created_at": _now_iso(), "by": user.get("email")})
+    return await admin_paddle(eid, user)
+
+
+@api_router.delete("/admin/events/{eid}/paddle/pledge/{pid}")
+async def admin_paddle_undo(eid: str, pid: str, user=Depends(require_admin)):
+    await db.paddle_pledges.delete_one({"id": pid, "event_id": eid})
+    return await admin_paddle(eid, user)
+
+
+@api_router.post("/admin/events/{eid}/paddle/pledge/{pid}/collected")
+async def admin_paddle_collected(eid: str, pid: str, user=Depends(require_admin)):
+    p = await db.paddle_pledges.find_one({"id": pid, "event_id": eid}, {"_id": 0, "collected": 1})
+    if not p:
+        raise HTTPException(status_code=404, detail="Pledge not found")
+    await db.paddle_pledges.update_one({"id": pid}, {"$set": {"collected": not p["collected"]}})
+    return await admin_paddle(eid, user)
+
+
+@api_router.post("/admin/events/{eid}/sponsors")
+async def admin_sponsor_add(eid: str, name: str = Form(...), table: int = Form(0), file: UploadFile = File(...), user=Depends(require_admin)):
+    await _gala_event(eid)
+    m = await _store_upload(file, "sponsor", name.strip()[:80], "", user.get("email"))
+    sp = {"id": str(uuid.uuid4())[:8], "name": name.strip()[:80], "logo": m["url"], "table": table if 0 < table <= 200 else 0}
+    await db.events.update_one({"id": eid}, {"$push": {"sponsors": sp}})
+    return sp
+
+
+@api_router.delete("/admin/events/{eid}/sponsors/{sid}")
+async def admin_sponsor_del(eid: str, sid: str, user=Depends(require_admin)):
+    await db.events.update_one({"id": eid}, {"$pull": {"sponsors": {"id": sid}}})
+    return {"ok": True}
+
+
+async def _gala_recipients(e: dict) -> dict:
+    people = {}
+    def add(email, name, line):
+        email = (email or "").strip().lower()
+        if not email:
+            return
+        p = people.setdefault(email, {"name": (name or "").split(" ")[0] or "friend", "lines": []})
+        p["lines"].append(line)
+    for o in await db.ticket_orders.find({"event_id": e["id"], "status": "paid"}, {"_id": 0}).to_list(5000):
+        n = sum(i["qty"] * i["admits"] for i in o["items"])
+        add(o["email"], o["name"], f"joining us with {n} seat{'s' if n != 1 else ''}")
+    for g in await db.payment_transactions.find({"event_id": e["id"], "payment_status": "paid"}, {"_id": 0}).to_list(5000):
+        add(g.get("donor_email"), g.get("donor_name"), f"your gift of ${float(g['amount']):,.2f}")
+    for p in await db.paddle_pledges.find({"event_id": e["id"]}, {"_id": 0}).to_list(5000):
+        add(p.get("email"), p.get("name"), f"raising your paddle at ${p['level']:,.0f}")
+    for w in await db.auction_wins.find({"event_id": e["id"]}, {"_id": 0}).to_list(2000):
+        add(w["email"], w["name"], f"winning \"{w['title']}\" in the silent auction")
+    return people
+
+
+async def _gala_total(eid: str) -> float:
+    gifts = sum(float(g.get("amount", 0)) for g in await db.payment_transactions.find({"event_id": eid, "payment_status": "paid"}, {"_id": 0, "amount": 1}).to_list(5000))
+    pledges = sum(p["level"] for p in await db.paddle_pledges.find({"event_id": eid}, {"_id": 0, "level": 1}).to_list(5000))
+    return round(gifts + pledges, 2)
+
+
+def _gala_thanks_html(e: dict, p: dict, total: float) -> str:
+    did = "; ".join(dict.fromkeys(p["lines"]))
+    return _member_email_html("Thank you", f"Thank you, {p['name']}!", f"What a night! Thank you for {did} at {e['title']}.\n\nTogether we raised ${total:,.0f} for women of the Diaspora. Every seat, gift and paddle makes our programs possible.\n\nWith love and gratitude,\nThe Caring Sisters Club", "See what your support makes possible", "/donate")
+
+
+@api_router.get("/admin/events/{eid}/gala-thanks")
+async def admin_gala_thanks_preview(eid: str, user=Depends(require_admin)):
+    e = await _gala_event(eid)
+    people = await _gala_recipients(e)
+    sample = next(iter(people.values()), {"name": "Ann", "lines": ["joining us with 2 seats"]})
+    return {"enabled": e.get("gala_thanks", True), "recipients": len(people), "sent_at": e.get("gala_thanks_sent_at"), "html": _gala_thanks_html(e, sample, await _gala_total(eid))}
+
+
+class ThanksToggleIn(BaseModel):
+    enabled: bool
+
+
+@api_router.put("/admin/events/{eid}/gala-thanks")
+async def admin_gala_thanks_toggle(eid: str, payload: ThanksToggleIn, user=Depends(require_admin)):
+    await db.events.update_one({"id": eid}, {"$set": {"gala_thanks": payload.enabled}})
+    return {"enabled": payload.enabled}
+
+
+async def _gala_thanks(now=None) -> int:
+    et = (now or datetime.now(timezone.utc)).astimezone(EVENT_TZ)
+    if et.hour < 9:
+        return 0
+    y, n = (et.date() - timedelta(days=1)).isoformat(), 0
+    for e in await db.events.find({"date": y, "gala_thanks": {"$ne": False}}, {"_id": 0}).to_list(20):
+        people = await _gala_recipients(e)
+        if not people or not await _push_mark(f"gala-thanks:{e['id']}"):
+            continue
+        total = await _gala_total(e["id"])
+        for email, p in people.items():
+            await send_email(to=email, subject=f"Thank you for an unforgettable {e['title']}", html=_gala_thanks_html(e, p, total))
+            n += 1
+        await db.events.update_one({"id": e["id"]}, {"$set": {"gala_thanks_sent_at": _now_iso()}})
+    return n
+
+
+# --- Silent auction ---
+class AuctionItemIn(BaseModel):
+    title: str
+    description: str = ""
+    value: float = 0
+    start_bid: float
+    min_raise: float = 5
+    photo: str = ""
+
+
+class AuctionCfgIn(BaseModel):
+    closes_at: str
+
+
+class BidderIn(BaseModel):
+    name: str
+    email: str
+    phone: str
+
+
+class BidIn(BaseModel):
+    token: str
+    amount: float
+
+
+def _auction_state(e: dict) -> str:
+    if e.get("auction_closed"):
+        return "closed"
+    return "open" if e.get("auction_closes_at") else "draft"
+
+
+def _item_view(i: dict, bidder_id: str = "") -> dict:
+    nxt = round(i["high_bid"] + i["min_raise"], 2) if i.get("high_bid") else i["start_bid"]
+    return {k: i.get(k) for k in ("id", "title", "description", "value", "start_bid", "min_raise", "photo", "high_bid", "bid_count")} | {
+        "next_min": nxt, "mine": bool(bidder_id) and i.get("high_bidder_id") == bidder_id}
+
+
+@api_router.get("/auction/{eid}")
+async def auction_public(eid: str, token: str = "", request: Request = None):
+    await _rate_limit(request, "auction-view", max_hits=240, window_s=60)
+    e = await _gala_event(eid)
+    b = await db.auction_bidders.find_one({"token": token[:60], "event_id": eid}, {"_id": 0}) if token else None
+    items = await db.auction_items.find({"event_id": eid}, {"_id": 0}).sort("created_at", 1).to_list(300)
+    my = set(await db.auction_bids.distinct("item_id", {"bidder_id": b["id"]})) if b else set()
+    return {"title": e["title"], "state": _auction_state(e), "closes_at": e.get("auction_closes_at"), "me": {"name": b["name"]} if b else None,
+            "items": [_item_view(i, b["id"] if b else "") | {"outbid": i["id"] in my and i.get("high_bidder_id") != b["id"]} for i in items]}
+
+
+@api_router.post("/auction/{eid}/register")
+async def auction_register(eid: str, payload: BidderIn, request: Request):
+    await _rate_limit(request, "auction-register", max_hits=10, window_s=300)
+    await _gala_event(eid)
+    email = payload.email.strip().lower()
+    phone = re.sub(r"[^\d+]", "", payload.phone)[:20]
+    if not payload.name.strip() or not _EMAIL_RE.match(email) or len(phone) < 7:
+        raise HTTPException(status_code=400, detail="Please enter your name, email and phone number.")
+    b = await db.auction_bidders.find_one({"event_id": eid, "email": email}, {"_id": 0})
+    if b:
+        await db.auction_bidders.update_one({"id": b["id"]}, {"$set": {"name": payload.name.strip()[:80], "phone": phone}})
+        return {"token": b["token"]}
+    b = {"id": str(uuid.uuid4()), "token": _secrets.token_urlsafe(24), "event_id": eid, "name": payload.name.strip()[:80], "email": email, "phone": phone, "created_at": _now_iso()}
+    await db.auction_bidders.insert_one(dict(b))
+    return {"token": b["token"]}
+
+
+async def _email_outbid(prev_id: str, item: dict, eid: str):
+    b = await db.auction_bidders.find_one({"id": prev_id}, {"_id": 0})
+    if b:
+        await send_email(to=b["email"], subject=f"You've been outbid on {item['title']}", html=_member_email_html(
+            "Silent auction", f"Someone outbid you, {b['name'].split(' ')[0]}!", f"The bid on \"{item['title']}\" is now ${item['high_bid']:,.2f}. There's still time to win it back.", "Bid again", f"/auction/{eid}"))
+
+
+@api_router.post("/auction/{eid}/items/{iid}/bid")
+async def auction_bid(eid: str, iid: str, payload: BidIn, request: Request, background: BackgroundTasks):
+    await _rate_limit(request, "auction-bid", max_hits=30, window_s=60)
+    e = await _gala_event(eid)
+    if _auction_state(e) != "open" or e["auction_closes_at"] <= _now_iso():
+        raise HTTPException(status_code=400, detail="Bidding is closed.")
+    b = await db.auction_bidders.find_one({"token": payload.token[:60], "event_id": eid}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=401, detail="Please enter your details first.")
+    i = await db.auction_items.find_one({"id": iid, "event_id": eid}, {"_id": 0})
+    if not i:
+        raise HTTPException(status_code=404, detail="Item not found")
+    amt = round(payload.amount, 2)
+    nxt = _item_view(i)["next_min"]
+    if amt < nxt or amt > 1000000:
+        raise HTTPException(status_code=400, detail=f"Bids must be at least ${nxt:,.2f}.")
+    if i.get("high_bidder_id") == b["id"]:
+        raise HTTPException(status_code=400, detail="You're already the highest bidder.")
+    res = await db.auction_items.update_one({"id": iid, "high_bid": i.get("high_bid")}, {"$set": {"high_bid": amt, "high_bidder_id": b["id"]}, "$inc": {"bid_count": 1}})
+    if not res.modified_count:
+        raise HTTPException(status_code=409, detail="Someone just bid. Please check the new amount and try again.")
+    await db.auction_bids.insert_one({"item_id": iid, "event_id": eid, "bidder_id": b["id"], "amount": amt, "at": _now_iso()})
+    if i.get("high_bidder_id"):
+        background.add_task(_email_outbid, i["high_bidder_id"], {**i, "high_bid": amt}, eid)
+    return _item_view({**i, "high_bid": amt, "high_bidder_id": b["id"], "bid_count": (i.get("bid_count") or 0) + 1}, b["id"])
+
+
+@api_router.get("/admin/events/{eid}/auction")
+async def admin_auction(eid: str, user=Depends(require_admin)):
+    e = await _gala_event(eid)
+    items = await db.auction_items.find({"event_id": eid}, {"_id": 0}).sort("created_at", 1).to_list(300)
+    bidders = {b["id"]: b async for b in db.auction_bidders.find({"event_id": eid}, {"_id": 0, "token": 0})}
+    wins = {w["item_id"]: w async for w in db.auction_wins.find({"event_id": eid}, {"_id": 0, "token": 0})}
+    out = []
+    for i in items:
+        hb = bidders.get(i.get("high_bidder_id") or "", {})
+        out.append({**i, "high_bidder": {"name": hb.get("name", ""), "email": hb.get("email", ""), "phone": hb.get("phone", "")} if hb else None, "win": wins.get(i["id"])})
+    return {"title": e["title"], "state": _auction_state(e), "closes_at": e.get("auction_closes_at"), "closes_local": e.get("auction_closes_local", ""), "items": out, "bidders": len(bidders),
+            "total_bids": round(sum(i.get("high_bid") or 0 for i in items), 2)}
+
+
+@api_router.post("/admin/events/{eid}/auction/items")
+async def admin_auction_item_add(eid: str, payload: AuctionItemIn, user=Depends(require_admin)):
+    await _gala_event(eid)
+    if not payload.title.strip() or not 1 <= payload.start_bid <= 1000000 or not 1 <= payload.min_raise <= 100000:
+        raise HTTPException(status_code=400, detail="Add a title, a starting bid and a minimum raise.")
+    it = {"id": str(uuid.uuid4())[:10], "event_id": eid, "title": payload.title.strip()[:100], "description": payload.description.strip()[:800], "value": round(payload.value, 2),
+          "start_bid": round(payload.start_bid, 2), "min_raise": round(payload.min_raise, 2), "photo": payload.photo if payload.photo.startswith("/api/media/file/") else "",
+          "high_bid": None, "high_bidder_id": None, "bid_count": 0, "created_at": _now_iso()}
+    await db.auction_items.insert_one(dict(it))
+    it.pop("_id", None)
+    return it
+
+
+@api_router.delete("/admin/events/{eid}/auction/items/{iid}")
+async def admin_auction_item_del(eid: str, iid: str, user=Depends(require_admin)):
+    if await db.auction_bids.find_one({"item_id": iid}, {"_id": 1}):
+        raise HTTPException(status_code=400, detail="This item already has bids.")
+    await db.auction_items.delete_one({"id": iid, "event_id": eid})
+    return {"ok": True}
+
+
+@api_router.post("/admin/auction/photo")
+async def admin_auction_photo(file: UploadFile = File(...), user=Depends(require_admin)):
+    m = await _store_upload(file, "auction", "Auction item", "", user.get("email"))
+    return {"url": m["url"]}
+
+
+@api_router.put("/admin/events/{eid}/auction")
+async def admin_auction_cfg(eid: str, payload: AuctionCfgIn, user=Depends(require_admin)):
+    e = await _gala_event(eid)
+    if e.get("auction_closed"):
+        raise HTTPException(status_code=400, detail="This auction has already closed.")
+    try:
+        at = datetime.strptime(payload.closes_at, "%Y-%m-%dT%H:%M").replace(tzinfo=EVENT_TZ).astimezone(timezone.utc)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Pick a valid closing time.")
+    if at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="The closing time must be in the future.")
+    await db.events.update_one({"id": eid}, {"$set": {"auction_closes_at": at.isoformat(), "auction_closes_local": payload.closes_at}})
+    return await admin_auction(eid, user)
+
+
+async def _close_auction(e: dict) -> int:
+    res = await db.events.update_one({"id": e["id"], "auction_closed": {"$ne": True}}, {"$set": {"auction_closed": True, "auction_closed_at": _now_iso()}})
+    if not res.modified_count:
+        return 0
+    n = 0
+    for i in await db.auction_items.find({"event_id": e["id"], "high_bidder_id": {"$ne": None}}, {"_id": 0}).to_list(300):
+        b = await db.auction_bidders.find_one({"id": i["high_bidder_id"]}, {"_id": 0})
+        w = {"token": _secrets.token_urlsafe(24), "event_id": e["id"], "item_id": i["id"], "title": i["title"], "amount": i["high_bid"], "name": b["name"], "email": b["email"],
+             "status": "unpaid", "created_at": _now_iso()}
+        await db.auction_wins.insert_one(dict(w))
+        await send_email(to=b["email"], subject=f"You won {i['title']}!", html=_member_email_html(
+            "Silent auction", f"Congratulations, {b['name'].split(' ')[0]}!", f"You won \"{i['title']}\" with a bid of ${i['high_bid']:,.2f} at {e['title']}. Thank you for supporting our sisters! Tap below to pay securely.", "Pay for my item", f"/auction/pay/{w['token']}"))
+        n += 1
+    return n
+
+
+@api_router.post("/admin/events/{eid}/auction/close")
+async def admin_auction_close(eid: str, user=Depends(require_admin)):
+    return {"winners": await _close_auction(await _gala_event(eid))}
+
+
+async def _auction_loop_close():
+    for e in await db.events.find({"auction_closes_at": {"$lte": _now_iso()}, "auction_closed": {"$ne": True}}, {"_id": 0}).to_list(20):
+        await _close_auction(e)
+
+
+@api_router.get("/auction/pay/{token}")
+async def auction_win(token: str):
+    w = await db.auction_wins.find_one({"token": token[:60]}, {"_id": 0})
+    if not w:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {k: w[k] for k in ("title", "amount", "name", "status")}
+
+
+@api_router.post("/auction/pay/{token}")
+async def auction_pay(token: str, request: Request):
+    await _rate_limit(request, "auction-pay", max_hits=10, window_s=300)
+    w = await db.auction_wins.find_one({"token": token[:60]}, {"_id": 0})
+    if not w or w["status"] == "paid":
+        raise HTTPException(status_code=400, detail="This item is already paid.")
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    base = origin if origin in _ALLOWED_ORIGINS else PUBLIC_APP_URL
+    _require_stripe()
+    sess = stripe.checkout.Session.create(mode="payment", customer_email=w["email"], line_items=[{"price_data": {"currency": "usd", "product_data": {"name": f"Silent auction: {w['title']}"},
+                                          "unit_amount": int(round(w["amount"] * 100))}, "quantity": 1}], metadata={"kind": "auction", "win_token": token},
+                                          success_url=f"{base}/auction/pay/{token}?paid=1&session_id={{CHECKOUT_SESSION_ID}}", cancel_url=f"{base}/auction/pay/{token}")
+    await db.auction_wins.update_one({"token": token}, {"$set": {"session_id": sess.id}})
+    return {"url": sess.url}
+
+
+async def _auction_paid(session_id: str):
+    await db.auction_wins.update_one({"session_id": session_id, "status": "unpaid"}, {"$set": {"status": "paid", "paid_at": _now_iso()}})
+
+
+@api_router.post("/auction/pay/{token}/confirm")
+async def auction_pay_confirm(token: str):
+    w = await db.auction_wins.find_one({"token": token[:60]}, {"_id": 0})
+    if w and w.get("session_id") and w["status"] != "paid":
+        try:
+            if stripe.checkout.Session.retrieve(w["session_id"]).payment_status == "paid":
+                await _auction_paid(w["session_id"])
+        except Exception as ex:
+            logging.warning(f"Auction confirm failed: {ex}")
+    return await auction_win(token)
+
+
+@api_router.get("/admin/events/{eid}/auction.csv")
+async def admin_auction_csv(eid: str, user=Depends(require_admin)):
+    d = await admin_auction(eid, user)
+    rows = [[i["title"], i.get("value") or "", i["start_bid"], i.get("high_bid") or "", i.get("bid_count", 0), (i.get("high_bidder") or {}).get("name", ""),
+             (i.get("high_bidder") or {}).get("email", ""), (i.get("high_bidder") or {}).get("phone", ""), (i.get("win") or {}).get("status", "")] for i in d["items"]]
+    return Response(content=_csv_text(["Item", "Value", "Starting bid", "Winning bid", "Bids", "Winner", "Email", "Phone", "Payment"], rows), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="auction-{eid[:8]}.csv"'})
 
 # Include the router in the main app
 app.include_router(api_router)

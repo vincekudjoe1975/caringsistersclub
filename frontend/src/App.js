@@ -49,6 +49,9 @@ import MyTickets, { TicketSuccess } from './pages/Tickets';
 import TicketDoor from './pages/TicketDoor';
 import Seating from './pages/Seating';
 import GalaScreen from './pages/GalaScreen';
+import EmceeControl from './pages/EmceeControl';
+import Auction, { AuctionPay } from './pages/Auction';
+import AuctionAdmin from './pages/AuctionAdmin';
 import SessionSheet from './pages/SessionSheet';
 import SaveSpot from './pages/SaveSpot';
 import { Loader2 } from 'lucide-react';
@@ -126,6 +129,10 @@ function Shell() {
           <Route path="/donate" element={<Donate />} />
           <Route path="/giving-statement" element={<GivingStatement />} />
           <Route path="/gala/:eid" element={<GalaScreen />} />
+          <Route path="/auction/pay/:token" element={<AuctionPay />} />
+          <Route path="/auction/:eid" element={<Auction />} />
+          <Route path="/admin/gala/:eid/emcee" element={<ProtectedRoute><EmceeControl /></ProtectedRoute>} />
+          <Route path="/admin/auction/:eid" element={<ProtectedRoute><AuctionAdmin /></ProtectedRoute>} />
           <Route path="/tickets/success" element={<TicketSuccess />} />
           <Route path="/tickets/:token" element={<MyTickets />} />
           <Route path="/payment/success" element={<PaymentSuccess />} />

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { Heart, Maximize } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, mediaSrc } from '../lib/api';
 import logoImg from '../assets/team/logo.png';
 
 const fmt = (n) => `$${Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
@@ -28,6 +28,13 @@ export default function GalaScreen() {
         <p className="font-serif text-2xl lg:text-3xl font-semibold">{d.title}</p>
         <button data-testid="gala-fullscreen" onClick={() => document.documentElement.requestFullscreen?.()} aria-label="Full screen" className="ml-auto w-11 h-11 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10"><Maximize size={18} /></button>
       </div>
+      {d.paddle?.level && (
+        <div data-testid="gala-paddle" className="mt-6 rounded-[32px] bg-[#CBA24B] text-[#3B0A2E] px-8 py-6 flex flex-wrap items-center gap-x-10 gap-y-3 csc-splash-pop">
+          <p data-testid="gala-paddle-level" className="font-serif font-bold text-[56px] lg:text-[96px] leading-none">{fmt(d.paddle.level)} hands!</p>
+          <p data-testid="gala-paddle-count" className="text-2xl lg:text-4xl font-bold">{(d.paddle.tally.find((t) => t.level === d.paddle.level) || { count: 0 }).count} paddles</p>
+          <div className="flex flex-wrap gap-2 ml-auto">{d.paddle.tally.map((t) => <span key={t.level} className="rounded-full bg-[#3B0A2E]/10 px-4 py-1.5 text-lg font-semibold">{fmt(t.level)} × {t.count}</span>)}</div>
+        </div>
+      )}
       <div className="flex-1 grid lg:grid-cols-[1fr_auto] gap-10 lg:gap-16 items-center mt-8">
         <div className="min-w-0">
           <p className="uppercase tracking-[0.3em] text-[#CBA24B] text-sm lg:text-base font-semibold">Tonight we've raised</p>
@@ -48,8 +55,16 @@ export default function GalaScreen() {
           <QRCodeSVG data-testid="gala-qr" value={giveUrl} size={260} fgColor="#3B0A2E" />
           <p className="font-serif text-2xl font-semibold mt-4">Scan to give</p>
           <p className="text-sm text-[#241019]/60 mt-1">Every gift lights up this screen</p>
+          {d.auction && <div data-testid="gala-auction-qr" className="mt-5 pt-4 border-t border-[#3B0A2E]/10"><QRCodeSVG value={`${window.location.origin}/auction/${eid}`} size={110} fgColor="#B4247E" className="mx-auto" /><p className="text-sm font-semibold mt-2">Silent auction: scan to bid</p></div>}
         </div>
       </div>
+      {d.sponsors?.length > 0 && (
+        <div data-testid="gala-sponsors" className="mt-8 overflow-hidden rounded-2xl bg-white/95 py-3">
+          <div className="flex items-center gap-12 w-max csc-marquee">
+            {[...d.sponsors, ...d.sponsors].map((s, i) => <img key={i} src={mediaSrc(s.logo)} alt={s.name} className="h-14 lg:h-16 w-auto max-w-[200px] object-contain" />)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

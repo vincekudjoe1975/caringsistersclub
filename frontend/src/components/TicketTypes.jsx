@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Trash2, Loader2, X, QrCode } from 'lucide-react';
 import { api } from '../lib/api';
+import { GalaExtras } from './GalaExtras';
 
 const input = 'w-full rounded-xl border border-[#3B0A2E]/15 px-3 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]';
 
@@ -46,6 +47,7 @@ export const TicketTypesPanel = ({ ev, onClose, onSaved, toast }) => {
           <button data-testid="gala-goal-save" onClick={saveGoal} className="rounded-full px-4 py-2.5 font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] text-[13.5px]">Save goal</button>
           <a data-testid="gala-screen-link" href={`/gala/${ev.id}`} target="_blank" rel="noopener noreferrer" className="rounded-full px-4 py-2.5 font-semibold text-[13.5px] text-[#B4247E] underline">Open big-screen giving page</a>
         </div>
+        <GalaExtras ev={ev} toast={toast} />
         <div className="flex flex-wrap items-center gap-3 mt-6">
           <Link data-testid="ticket-door-link" to={`/admin/tickets/${ev.id}`} className="rounded-full px-5 py-2.5 font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] flex items-center gap-1.5"><QrCode size={15} /> Door check-in & sales</Link>
           <button data-testid="ticket-types-save" disabled={busy} onClick={save} className="btn-magenta rounded-full px-6 py-2.5 font-semibold ml-auto flex items-center gap-2 disabled:opacity-60">{busy && <Loader2 size={14} className="animate-spin" />} Save tickets</button>
