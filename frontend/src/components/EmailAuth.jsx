@@ -44,7 +44,7 @@ export const Notice = ({ kind, children, testid }) => (
 
 const TITLES = { login: 'Log in with Email', signup: 'Sign up with Email', forgot: 'Forgot Password?' };
 
-export function EmailAuth({ onBack }) {
+export function EmailAuth({ onBack, allowSignup = true }) {
   const { setUser } = useAuth();
   const [mode, setMode] = useState('login');
   const [f, setF] = useState({ name: '', email: '', password: '', confirm: '' });
@@ -102,7 +102,7 @@ export function EmailAuth({ onBack }) {
         {mode === 'login' ? 'Log in' : mode === 'signup' ? 'Create account' : 'Send reset link'}
       </button>
       <div className="text-center text-[13px] text-[#241019]/60 space-y-1.5">
-        {mode === 'login' && <p>New here? <button type="button" data-testid="email-auth-to-signup" onClick={() => go('signup')} className="font-semibold text-[#B4247E] hover:underline">Sign up with Email</button></p>}
+        {mode === 'login' && allowSignup && <p>New here? <button type="button" data-testid="email-auth-to-signup" onClick={() => go('signup')} className="font-semibold text-[#B4247E] hover:underline">Sign up with Email</button></p>}
         {mode !== 'login' && <p>Already have an account? <button type="button" data-testid="email-auth-to-login" onClick={() => go('login')} className="font-semibold text-[#B4247E] hover:underline">Log in with Email</button></p>}
         <p><button type="button" data-testid="email-auth-back" onClick={onBack} className="font-semibold text-[#3B0A2E]/70 hover:text-[#B4247E]">Back to all sign-in options</button></p>
       </div>
@@ -110,9 +110,9 @@ export function EmailAuth({ onBack }) {
   );
 }
 
-export function SignInOptions({ onGoogle, googleTestid }) {
+export function SignInOptions({ onGoogle, googleTestid, allowSignup = true }) {
   const [email, setEmail] = useState(false);
-  if (email) return <EmailAuth onBack={() => setEmail(false)} />;
+  if (email) return <EmailAuth onBack={() => setEmail(false)} allowSignup={allowSignup} />;
   return (
     <div className="space-y-3">
       <button data-testid={googleTestid} onClick={onGoogle} className="btn-magenta rounded-full w-full py-3.5 font-semibold flex items-center justify-center gap-2">
@@ -121,9 +121,9 @@ export function SignInOptions({ onGoogle, googleTestid }) {
       </button>
       <div className="flex items-center gap-3 py-1 text-[11.5px] uppercase tracking-[0.14em] text-[#241019]/40"><span className="h-px flex-1 bg-[#241019]/10" />or<span className="h-px flex-1 bg-[#241019]/10" /></div>
       <button data-testid="email-login-open-btn" onClick={() => setEmail(true)} className="rounded-full w-full py-3.5 font-semibold flex items-center justify-center gap-2 border-2 border-[#3B0A2E]/15 text-[#3B0A2E] hover:border-[#B4247E] hover:text-[#B4247E] transition-colors">
-        <Mail size={18} /> Log in or Sign up with Email
+        <Mail size={18} /> {allowSignup ? 'Log in or Sign up with Email' : 'Log in with Email'}
       </button>
-      <p className="text-[12px] text-[#241019]/50 pt-1">No Google account? No problem: use any email address.</p>
+      {allowSignup && <p className="text-[12px] text-[#241019]/50 pt-1">No Google account? No problem: use any email address.</p>}
     </div>
   );
 }

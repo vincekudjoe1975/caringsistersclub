@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api, mediaSrc } from '../lib/api';
 import Logo from '../components/Logo';
@@ -23,7 +23,7 @@ import AdminOverview from './AdminOverview';
 import { SiteUrlBanner } from '../components/SiteUrlBanner';
 import { InstallApp } from '../components/InstallApp';
 import { useToast } from '../hooks/use-toast';
-import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Clock, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote, BarChart3, HeartHandshake } from 'lucide-react';
+import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote, BarChart3, HeartHandshake } from 'lucide-react';
 
 const TABS = [
   { key: 'event', label: 'Event Images', icon: CalendarDays, accept: 'image/*', titleLabel: 'Event Name', subLabel: 'Date / Location' },
@@ -99,25 +99,7 @@ export default function Admin() {
     return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#B4247E]" size={36} /></div>;
   }
 
-  if (user && user.role !== 'admin') {
-    return (
-      <div className="csc-hero-gradient min-h-screen flex items-center justify-center px-5">
-        <div className="bg-white rounded-3xl p-10 max-w-md text-center" style={{ boxShadow: '0 40px 80px -30px rgba(0,0,0,0.5)' }}>
-          <span className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }}>
-            <Clock size={30} className="text-white" />
-          </span>
-          <h1 className="font-serif text-[26px] text-[#3B0A2E] font-semibold mb-3">Access pending approval</h1>
-          <p className="text-[#241019]/65 text-[14.5px] mb-7">
-            Thanks for signing in{user?.name ? `, ${user.name}` : ''}. Your account needs to be approved by an existing administrator before you can access the dashboard.
-          </p>
-          <div className="flex justify-center gap-3">
-            <button onClick={() => navigate('/')} className="rounded-full px-6 py-2.5 font-semibold text-[14px]" style={{ border: '1px solid rgba(59,10,46,0.2)', color: '#3B0A2E' }}>View Site</button>
-            <button onClick={logout} className="btn-magenta rounded-full px-6 py-2.5 font-semibold text-[14px] flex items-center gap-2"><LogOut size={14} /> Sign Out</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (user && user.role !== 'admin') return <Navigate to="/members" replace />;
 
   return (
     <div className="min-h-screen" style={{ background: '#F7EFE9' }}>

@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Logo from '../components/Logo';
 import { SignInOptions } from '../components/EmailAuth';
@@ -13,7 +13,8 @@ export default function Login() {
     if (user) {
       const next = sessionStorage.getItem('csc_after_login');
       sessionStorage.removeItem('csc_after_login');
-      navigate(next && next.startsWith('/admin') ? next : '/admin');
+      if (user.role !== 'admin') navigate('/members', { replace: true });
+      else navigate(next && next.startsWith('/admin') ? next : '/admin');
     }
   }, [user, navigate]);
 
@@ -44,9 +45,10 @@ export default function Login() {
         </span>
         <h1 className="font-serif text-[28px] text-[#3B0A2E] font-semibold mb-2">Admin Portal</h1>
         <p className="text-[#241019]/65 text-[14.5px] mb-8">
-          Sign in to manage gallery photos, leadership, events, and financial documents.
+          For Caring Sisters Club team members only. Sign in to manage the website, programs, events, and members.
         </p>
-        <SignInOptions onGoogle={handleLogin} googleTestid="admin-google-login-btn" />
+        <SignInOptions onGoogle={handleLogin} googleTestid="admin-google-login-btn" allowSignup={false} />
+        <p data-testid="staff-login-member-note" className="text-[13px] text-[#241019]/60 mt-6">Joining the sisterhood? <Link to="/members" data-testid="staff-login-member-link" className="font-semibold text-[#B4247E]">Go to the Member Portal</Link></p>
         <p className="text-[12px] text-[#241019]/45 mt-6">Secure sign-in powered by Emergent.</p>
       </div>
     </div>

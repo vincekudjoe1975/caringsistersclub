@@ -303,6 +303,10 @@ async def _user_by_email(email: str):
     return await db.users.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0})
 
 
+async def _is_team_email(email: str) -> bool:
+    return email in ADMIN_OWNER_EMAILS or bool(await db.allowed_emails.find_one({"email": email}))
+
+
 async def _uses_google(u: dict) -> bool:
     return "google" in (u.get("auth_providers") or []) or bool(u.get("picture")) or bool(await db.user_sessions.find_one({"user_id": u["user_id"]}, {"_id": 1}))
 
@@ -340,9 +344,9 @@ async def _start_session(user_id: str, response: Response) -> dict:
 async def _send_verify(user: dict):
     raw = await _issue_auth_token(user["user_id"], "verify", 24)
     first = (user.get("name") or "Sister").split(" ")[0]
-    await send_email(to=user["email"], subject="Confirm your Caring Sisters Club account",
+    await send_email(to=user["email"], subject="Confirm your Caring Sisters Club member portal account",
                      html=_member_email_html("Confirm your email", f"Hello {first},",
-                                             "Thanks for creating your Caring Sisters Club account. Please confirm your email address to finish signing up. This link expires in 24 hours.\nIf you didn't create this account, you can ignore this email.",
+                                             "Thanks for creating your Caring Sisters Club member portal account. Please confirm your email address to finish signing up. This link expires in 24 hours.\nIf you didn't create this account, you can ignore this email.",
                                              "Confirm my email", f"/verify-email?token={raw}"))
 
 
@@ -356,6 +360,8 @@ async def auth_signup(payload: SignupIn, request: Request, background: Backgroun
     email = _norm_email(payload.email)
     _check_strength(payload.password)
     name = re.sub(r"\s+", " ", payload.name or "").strip()[:80]
+    if await _is_team_email(email):
+        raise HTTPException(status_code=409, detail="This email belongs to our staff team. Please use the Staff login and tap \"Forgot Password?\" to set your password.")
     existing = await _user_by_email(email)
     if existing:
         cred = await db.user_credentials.find_one({"user_id": existing["user_id"]}, {"_id": 0})
@@ -384,12 +390,8 @@ async def auth_verify_email(payload: TokenIn, response: Response):
     u = await db.users.find_one({"user_id": t["user_id"]}, {"_id": 0})
     if not u:
         raise HTTPException(status_code=400, detail="This account no longer exists.")
-    upd = {"email_verified": True, "email_verified_at": _now_iso()}
-    em = (u.get("email") or "").lower()
-    if u.get("role") != "admin" and (em in ADMIN_OWNER_EMAILS or await db.allowed_emails.find_one({"email": em})):
-        upd["role"] = "admin"
-    await db.users.update_one({"user_id": u["user_id"]}, {"$set": upd})
-    if not _is_member(u) and upd.get("role") != "admin":
+    await db.users.update_one({"user_id": u["user_id"]}, {"$set": {"email_verified": True, "email_verified_at": _now_iso()}})
+    if not _is_member(u):
         asyncio.create_task(_alert_staff_new_sister("confirmed", u))
     return await _start_session(u["user_id"], response)
 
@@ -436,7 +438,14 @@ async def auth_reset_request(payload: EmailOnlyIn, request: Request, background:
         await _detect_site_url(request)
     except Exception as e:
         logging.error(f"Site URL detection failed: {e}")
-    u = await _user_by_email(_norm_email(payload.email))
+    email = _norm_email(payload.email)
+    u = await _user_by_email(email)
+    if not u and await _is_team_email(email):
+        # Staff on the Team list who never signed in yet: create their staff account so they can set a password.
+        uid = f"user_{uuid.uuid4().hex[:12]}"
+        await db.users.insert_one({"user_id": uid, "email": email, "name": email.split("@")[0], "picture": "", "role": "admin",
+                                   "auth_providers": [], "email_verified": False, "created_at": _now_iso()})
+        u = await db.users.find_one({"user_id": uid}, {"_id": 0})
     if u:
         async def _go(user=u):
             raw = await _issue_auth_token(user["user_id"], "reset", 1)
