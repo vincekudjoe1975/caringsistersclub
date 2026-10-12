@@ -439,3 +439,13 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Sponsors: events.sponsors [{id,name,logo,table}] via multipart upload (_store_upload category sponsor); marquee on gala screen; seating page/chart.
 - Auction: db.auction_items/bids/bidders/wins; events.auction_closes_at/closed; public /auction/:eid, pay /auction/pay/:token (Stripe kind auction), admin /admin/auction/:eid; _auction_loop_close in push loop; outbid + winner emails.
 - Not yet: auction proceeds/paddle pledges in accountant CSV package.
+
+
+## 2026-06 — Email + password sign-in (iteration 47, agent-tested, not user-confirmed)
+- Added email+password auth alongside Emergent Google OAuth; both create the same `session_token` cookie / `user_sessions` row.
+- Backend (server.py, block after /auth/logout): POST /api/auth/signup, /verify-email, /resend-verification, /login, /reset-password-request, /reset-password.
+- Data: users.auth_providers ["google"|"email"], users.email_verified; bcrypt hash in separate `user_credentials` (never leaks via user listings); `auth_tokens` (sha256, single-use, verify 24h / reset 1h, TTL); `login_attempts` (5 fails -> 15 min lock).
+- Rules: one account per email; Google-registered email signup blocked (use Google or Forgot Password to add a password); verification required; new signups pending staff approval like Google; password 8+ chars with letter + number.
+- Frontend: components/EmailAuth.jsx (SignInOptions/EmailAuth), pages/ResetPassword.jsx, pages/VerifyEmail.jsx; used on /members and /login.
+- No new env vars.
+- Backlog: still pending user confirmation of real-phone push delivery (see earlier notes).
