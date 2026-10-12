@@ -426,3 +426,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Seating: events.seating {tables, seats, names}; tickets.group/table; _auto_seat on fulfilment; /admin/tickets/:eid/seating page with print chart/place cards.
 - MILESTONES [25,50,75,100]: staff email incl. caringsistersclub@gmail.com + push kind campaign.
 - Accountant (settings key accountant; defaults Divine Financial Group, devinetax1@gmail.com + info@dfgbusiness.com, cc caringsistersclub@gmail.com): _acct_scheduled Jan 5-12 >=9am ET (mark acct:{year}); email w/ 90-day token links /api/accounting/{token}/*.csv|all.zip; Admin > Reports panel (send now/download/edit). Email provider has no attachments -> links.
+
+## 2026-06 — Sponsors, guest names, quarterly accountant, live gala screen (iteration_45: 100%)
+- Table sponsors in events.seating.names; shown on seating page/chart/place cards.
+- tickets.guest_name: checkout guest_names, buyer edit PUT /api/tickets/order/{token}/names (until event date), staff PUT /api/admin/events/{eid}/tickets/name; door list uses guest name.
+- Accountant quarterly (settings accountant.quarterly, default on): Apr/Jul/Oct 5-12 >=9am ET previous quarter (mark acct-q:{y}-Q{n}); _period(year,q); downloads ?quarter=N.
+- Gala: events.gala_goal (PUT /api/admin/events/{eid}/gala); public /gala/:eid (GalaScreen.jsx, 5s poll of GET /api/gala/{eid}); /donate?gala= sets gala_event_id -> txn event_id, source gala.
