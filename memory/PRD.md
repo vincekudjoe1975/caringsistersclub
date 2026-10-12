@@ -465,3 +465,11 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - One-time "You're in, {first}!" modal for approved members (users.portal_welcome_seen_at; POST /api/members/welcome-seen; existing members migrated as seen via settings key welcome_note_migrated).
 - Push RCA: server delivery succeeds (no failures, last_ok_at set). The Android sub belongs to vinnykudjoe@gmail.com; vincekudjoe@gmail.com (the other admin) has only a desktop sub. These are duplicate accounts. Remaining phone issue is client/OS side or a wrong-account sign-in.
 - Redeploy queued.
+
+
+## 2026-06 — Member vs staff sign-up separation (iteration 50, agent-tested, not user-confirmed)
+- Sign-up exists ONLY on /members (sisterhood membership). /login (staff) = Google + "Log in with Email" + Forgot Password; no sign-up; it links to the Member Portal.
+- Sign-up never grants admin: verify-email no longer promotes. Admin only comes from the Team list (owner emails / allowed_emails).
+- Team emails are blocked from member sign-up (409). They use Forgot Password on the staff login; if a team email has no account yet, the reset request creates a role=admin account.
+- Non-admins on /login or /admin are redirected to /members (the old "Access pending approval" screen was removed).
+- Not yet redeployed in this step.

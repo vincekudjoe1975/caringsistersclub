@@ -1,0 +1,15 @@
+{
+  "summary": "Tested member/staff signup separation. Backend: 3/3 pytest passed (team email signup blocked with 409, reset-password-request for unknown team email creates admin user with auth_providers=[], then mint-reset+login+/auth/me returns role=admin; regular member signup+verify stays role=pending). Frontend: /login shows admin-google-login-btn and email-login-open-btn (text 'Log in with Email'); after opening, email-auth-forgot-link visible and email-auth-to-signup does NOT exist; staff-login-member-note + link -> /members. /members email panel still exposes email-auth-to-signup. Non-admin (mem_tok_a) visiting /admin -> redirected to /members with no 'Access pending' text. Admin (qa_tok_123) visiting /admin loads dashboard; deep link /admin?view=members works (Members tab active).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iter50_staff_signup_separation.py", "/app/test_reports/pytest/iter50.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": ["/app/backend/tests/test_iter50_staff_signup_separation.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "QA admin cookie qa_tok_123 and member cookie mem_tok_a (both torn down after test). test_iter50 uses randomized qa.*@example.com emails and cleans up users/credentials/tokens/sessions/allowed_emails after module.",
+  "seed_data_creation": "Module-scoped: inserts QA emails into allowed_emails; cleans up fully in teardown. Also cleared auth_* rate_hits.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_iter50_staff_signup_separation.py covers the auth separation. If running with pytest, include -o addopts=\"\" to bypass xdist loadscope default from /app/backend/pytest.ini. Do not run against real admin emails."
+}
