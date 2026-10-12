@@ -349,6 +349,10 @@ async def _send_verify(user: dict):
 @api_router.post("/auth/signup")
 async def auth_signup(payload: SignupIn, request: Request, background: BackgroundTasks):
     await _rate_limit(request, "auth_signup", 10, 3600)
+    try:
+        await _detect_site_url(request)
+    except Exception as e:
+        logging.error(f"Site URL detection failed: {e}")
     email = _norm_email(payload.email)
     _check_strength(payload.password)
     name = re.sub(r"\s+", " ", payload.name or "").strip()[:80]
@@ -393,6 +397,10 @@ async def auth_verify_email(payload: TokenIn, response: Response):
 @api_router.post("/auth/resend-verification")
 async def auth_resend_verification(payload: EmailOnlyIn, request: Request, background: BackgroundTasks):
     await _rate_limit(request, "auth_resend", 5, 3600)
+    try:
+        await _detect_site_url(request)
+    except Exception as e:
+        logging.error(f"Site URL detection failed: {e}")
     u = await _user_by_email(_norm_email(payload.email))
     if u and not u.get("email_verified") and await db.user_credentials.find_one({"user_id": u["user_id"]}, {"_id": 1}):
         background.add_task(_send_verify, u)
@@ -424,6 +432,10 @@ async def auth_login(payload: LoginIn, request: Request, response: Response):
 @api_router.post("/auth/reset-password-request")
 async def auth_reset_request(payload: EmailOnlyIn, request: Request, background: BackgroundTasks):
     await _rate_limit(request, "auth_reset", 5, 3600)
+    try:
+        await _detect_site_url(request)
+    except Exception as e:
+        logging.error(f"Site URL detection failed: {e}")
     u = await _user_by_email(_norm_email(payload.email))
     if u:
         async def _go(user=u):
@@ -1172,10 +1184,10 @@ def _clean_site_url(url: str) -> str:
 
 
 async def _refresh_site_url():
-    """Email links use the admin-set site_url only (detected host is just a suggestion in Admin)."""
+    """Email links use the admin-set site_url, else the host this deployment was last reached on."""
     global PUBLIC_APP_URL
     doc = await db.settings.find_one({"key": "site"}, {"_id": 0}) or {}
-    PUBLIC_APP_URL = (doc.get("site_url") or _SITE_URL_FALLBACK).rstrip("/")
+    PUBLIC_APP_URL = (doc.get("site_url") or doc.get("detected_site_url") or _SITE_URL_FALLBACK).rstrip("/")
 
 
 async def _detect_site_url(request: Request):
@@ -1186,6 +1198,7 @@ async def _detect_site_url(request: Request):
     doc = await db.settings.find_one({"key": "site"}, {"_id": 0, "detected_site_url": 1}) or {}
     if doc.get("detected_site_url") != url:
         await db.settings.update_one({"key": "site"}, {"$set": {"detected_site_url": url}}, upsert=True)
+        await _refresh_site_url()
 
 
 def _brand_header(eyebrow: str) -> str:

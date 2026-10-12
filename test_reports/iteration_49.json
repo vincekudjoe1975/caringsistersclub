@@ -1,0 +1,26 @@
+{
+  "summary": "Iter 49: verify-email tap-to-confirm + 409 reuse + 400 invalid, members/apply alert path, /members/me welcome_seen + /members/welcome-seen, startup welcome_note_migrated marker, admin deep-link /admin?view=members&applicant=<uid>, ProtectedRoute redirect-after-login all PASS. Backend pytest 7/7. Frontend 13/13 flows pass (incl. 10 original + 3 follow-up for mem_b no-overlay + tip-1 My Profile).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter49_verify_welcome_applicant.py",
+    "/app/test_reports/pytest/iter49.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py now ~12,443 lines (grew ~40 lines this iteration). Previous iterations flagged size; splitting into routers (auth/members/admin/push) is still deferred but increasingly worthwhile.",
+    "VerifyEmail: on 409 the FE sets `done=true` and renders Notice as kind='ok' + hides the 'request a new link' hint — nice. The signin link routes to /members (which is members portal), not /login — intentional since Members page shows a login card for logged-out users; still, /login would be more canonical.",
+    "_alert_staff_new_sister catches all exceptions and only logs. Good for not blocking apply, but any mail-provider failure is silent beyond log line. Consider sentry-ing it, or at least a counter.",
+    "members_welcome_seen is correctly idempotent via the `portal_welcome_seen_at: {\"$exists\": False}` filter."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter49_verify_welcome_applicant.py (new)"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (13/13 flows)"},
+  "test_credentials": "No standing creds. Backend tests self-seed+cleanup. Frontend run used qa_tok_123 (qa_session.py) + mem_tok_a/mem_tok_b (qa_members.py) + ephemeral verify-email token for user_id qa_verify_fe_user — all torn down after run.",
+  "seed_data_creation": "Backend module seeded 3 users (user_iter49_*, user_iter49m_*, user_iter49a_*) with sessions/credentials/auth_tokens, all deleted in fixture teardown. Frontend seeded qa_verify_fe_user + one verify auth_token, deleted after run. rate_hits auth_*/member-apply cleared.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 features (verify-email tap-to-confirm, Welcome Back modal, member-apply staff alerts path, admin deep-link + ProtectedRoute stash) work end-to-end. Observations: (1) /auth/verify-email returns 200 + sets session cookie + logs user in via _start_session; FE then navigates to /members?welcome=1 which shows the Welcome card (new-member) — this is iter 48 behavior and still works. (2) 409 reuse message exactly 'Your email is already confirmed. Please log in with your email and password.' and FE shows it as a non-error notice (kind='ok'). (3) VerifyEmail does NOT auto-POST — token row still used:false after page load, confirmed via Mongo check. (4) /members with mem_b (migrated/welcome_seen set) shows portal with no overlay, confirming migration. (5) Admin deep link selector [data-testid=application-<uid>] gets ring-4 ring-[#B4247E]/15 + border-[#B4247E] classes when focused. (6) ProtectedRoute sets sessionStorage csc_after_login = pathname+search and both /login and /auth-callback honor it when path starts with /admin.",
+  "rca of the issue": "N/A — no bugs found."
+}

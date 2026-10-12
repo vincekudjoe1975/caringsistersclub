@@ -456,3 +456,12 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Welcome screen after email confirmation: /members?welcome=1 (components/members/Welcome.jsx), with 3 next steps and Start application / Go to portal buttons.
 - Admin > Members > Phone alert: Registered devices list (components/members/PushDevices.jsx) showing per-member device kind, registered time, last delivered/failed, plus per-member Send test. APIs: GET /api/admin/members/push/devices, POST /api/admin/members/push/test-member/{uid}. push_subs now record last_ok_at/last_fail_at.
 - Redeploy queued (not yet confirmed live). Pending user checks: real inbox delivery of confirm/reset emails; real Android + iPhone alert delivery.
+
+
+## 2026-06 — New-sister staff alerts, Welcome Back note, verify-link fix (iteration 49, agent-tested, not user-confirmed)
+- ROOT CAUSE (prod RCA): all prod email links pointed to the PREVIEW domain because settings.site_url was empty and the fallback was the hardcoded preview URL. Fix: PUBLIC_APP_URL = site_url, else detected_site_url (auto-detected host), else env/fallback; detection also runs on signup/resend/reset-request.
+- /verify-email now needs a tap on "Confirm my email" (so link scanners can't use it up); a reused link returns 409 "already confirmed".
+- Staff email + admin phone push when a sister confirms her email, and again when she applies (shows signup method; "Review & approve" deep link /admin?view=members&applicant=uid, which highlights the application). Post-login redirect back to the /admin target.
+- One-time "You're in, {first}!" modal for approved members (users.portal_welcome_seen_at; POST /api/members/welcome-seen; existing members migrated as seen via settings key welcome_note_migrated).
+- Push RCA: server delivery succeeds (no failures, last_ok_at set). The Android sub belongs to vinnykudjoe@gmail.com; vincekudjoe@gmail.com (the other admin) has only a desktop sub. These are duplicate accounts. Remaining phone issue is client/OS side or a wrong-account sign-in.
+- Redeploy queued.
