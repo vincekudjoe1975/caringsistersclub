@@ -473,3 +473,11 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Team emails are blocked from member sign-up (409). They use Forgot Password on the staff login; if a team email has no account yet, the reset request creates a role=admin account.
 - Non-admins on /login or /admin are redirected to /members (the old "Access pending approval" screen was removed).
 - Not yet redeployed in this step.
+
+
+## 2026-06 — Membership approval flow, approval alert, apply reminders, account merge (iteration 51, agent-tested, not user-confirmed)
+- Single membership journey: sign up on /members -> confirm email -> application -> Form Submissions -> Memberships card (status pill + Approve/Decline) and Admin -> Members -> Applications -> after approval, member portal access (require_member enforces this server-side).
+- On approval: welcome packet (existing) + push "Welcome to the sisterhood, {first}!" + "You're approved!" email.
+- Waiting-to-apply reminders at 3 and 7 days (hourly scheduler; only accounts created after settings.apply_reminders_since; staff on/off switch + list in Admin -> Members).
+- Admin -> Team -> Merge duplicate accounts (preview + merge). Moves all user-linked records, keeps the role/membership, and stores the duplicate email in users.alt_emails so it signs in to the kept account. User should merge vinnykudjoe@gmail.com into vincekudjoe@gmail.com on prod.
+- Redeploy queued.

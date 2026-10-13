@@ -1,0 +1,20 @@
+{
+  "summary": "Iteration 51: tested merge-duplicates, approval welcome alert, apply-reminders, and the member-apply -> Form Submissions -> approve/decline flow. Backend: 5/5 pytest passed. Frontend: Admin -> Form Submissions -> Memberships tab shows member-decision-status-{uid} 'Awaiting approval' with submission-approve/decline buttons; approving flips the pill to 'Approved member' with success toast. Admin -> Team -> MergeAccounts form and all merge-* data-testids present. Admin -> Members -> admin-waiting box and apply-reminders-toggle render.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iter51_merge_approval_reminders.py", "/app/test_reports/pytest/iter51.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is ~12,634 lines — well beyond the 700-line threshold; consider splitting into modules (members, auth, merge, submissions).",
+    "_send_apply_reminders iterates and awaits send_email serially inside the hourly scheduler; a slow SMTP would stall other hourly jobs. Consider a bounded gather or background task.",
+    "_merge_pair's 400 'Those are the same account' triggers only when both emails resolve to the same user_id; it also fires if dup_email is actually keep's alt — fine, but surface the 400 message more clearly in the UI toast."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter51_merge_approval_reminders.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "QA admin cookie session_token=qa_tok_123 via /app/backend/tests/qa_session.py (teardown-safe). All applicant test users use qa.*@example.com and are cleaned up at module teardown.",
+  "seed_data_creation": "Transient: @example.com users, submissions, push_subs, user_sessions, member_ledger, auth_tokens, account_merges — all removed in fixture teardown and a final cleanup pass. qa_session.py up/down toggles the temp admin + staff_notify_email.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run with -o addopts='' to bypass pytest.ini xdist. Admin view keys: 'inbox' = Form Submissions, 'members' = Members, 'team' = Team Access. _send_apply_reminders can be invoked directly: `import server; asyncio.run(server._send_apply_reminders())`. CSRF middleware requires X-Requested-With: XMLHttpRequest on POST/PUT/DELETE when session_token cookie is present. Dup account's session cookie correctly re-points to keep user after merge via on-write migration in /admin/team/merge.",
+  "rca of the issue": "N/A — no bugs found. All 7 scenarios from the review request pass."
+}
