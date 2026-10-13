@@ -1033,6 +1033,8 @@ async def create_submission(payload: SubmissionCreate, request: Request, backgro
 
 @api_router.get("/submissions")
 async def list_submissions(type: Optional[str] = None, user=Depends(require_admin)):
+    if type in (None, "member"):
+        await _sync_member_submissions()
     query = {}
     if type:
         query["type"] = type
@@ -1046,8 +1048,18 @@ async def list_submissions(type: Optional[str] = None, user=Depends(require_admi
     return items
 
 
+async def _sync_member_submissions():
+    """Every pending application must appear under Form Submissions -> Memberships."""
+    have = set(await db.submissions.distinct("user_id", {"type": "member", "member_decision": {"$exists": False}}))
+    for u in await db.users.find({"member_status": "applied"}, {"_id": 0}).to_list(2000):
+        if u["user_id"] not in have:
+            await _member_submission(u, u.get("member_application") or {})
+            logging.info(f"Membership submission synced for {u['user_id']}")
+
+
 @api_router.get("/submissions/counts")
 async def submission_counts(user=Depends(require_admin)):
+    await _sync_member_submissions()
     out = {}
     for t in ALLOWED_SUB_TYPES:
         total = await db.submissions.count_documents({"type": t})
@@ -6534,9 +6546,6 @@ async def startup_indexes():
             await db.settings.insert_one({"key": "welcome_note_migrated", "at": _now_iso()})
         if not await db.settings.find_one({"key": "apply_reminders_since"}):
             await db.settings.insert_one({"key": "apply_reminders_since", "at": _now_iso(), "enabled": True})
-        for u in await db.users.find({"member_status": "applied"}, {"_id": 0}).to_list(2000):
-            if not await db.submissions.find_one({"type": "member", "user_id": u["user_id"]}, {"_id": 1}):
-                await _member_submission(u, u.get("member_application") or {})
     except Exception as e:
         logging.warning(f"Index creation warning: {e}")
 

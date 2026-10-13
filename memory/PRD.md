@@ -481,3 +481,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Waiting-to-apply reminders at 3 and 7 days (hourly scheduler; only accounts created after settings.apply_reminders_since; staff on/off switch + list in Admin -> Members).
 - Admin -> Team -> Merge duplicate accounts (preview + merge). Moves all user-linked records, keeps the role/membership, and stores the duplicate email in users.alt_emails so it signs in to the kept account. User should merge vinnykudjoe@gmail.com into vincekudjoe@gmail.com on prod.
 - Redeploy queued.
+
+
+## 2026-06 — "Application never reached Memberships" RCA
+- Cause: the application (vandjwebdesign@gmail.com) was submitted on the PREVIEW site (preview DB), but the user checked the LIVE admin (prod DB has no applied users and no submissions). Prod code and deploy were confirmed working.
+- Hardening: /api/submissions and /api/submissions/counts self-sync pending applications into Memberships (_sync_member_submissions). A gold "Test (preview) site" ribbon now shows only on the preview host.
+- User action: set the website address in the live Admin banner ("Use caring-sisters-clone.emergent.host") and re-apply on the live site.

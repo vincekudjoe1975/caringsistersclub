@@ -66,6 +66,15 @@ function ScrollToTop() {
   return null;
 }
 
+function PreviewRibbon() {
+  if (!window.location.hostname.includes('preview.emergentagent.com')) return null;
+  return (
+    <div data-testid="preview-ribbon" role="note" className="fixed bottom-0 inset-x-0 z-[90] bg-[#CBA24B] text-[#241019] text-center text-[12.5px] font-semibold px-3 py-1.5">
+      Test (preview) site: sign-ups, applications and other data here stay on this test site and won't show up on your live site.
+    </div>
+  );
+}
+
 function ProtectedRoute({ children }) {
   const { user } = useAuth();
   if (user === null) {
@@ -169,6 +178,7 @@ function App() {
         <AuthProvider>
           <Shell />
           <Toaster />
+          <PreviewRibbon />
         </AuthProvider>
       </BrowserRouter>
     </div>
