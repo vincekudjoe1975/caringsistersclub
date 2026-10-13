@@ -157,6 +157,7 @@ function BylawsUpload({ toast }) {
 }
 
 import { AdminPush } from '../components/members/AdminPush';
+import { WaitingToApply } from '../components/members/admin/WaitingToApply';
 import { AdminMemberHours } from '../components/members/AdminMemberHours';
 
 export default function AdminMembers() {
@@ -178,6 +179,7 @@ export default function AdminMembers() {
     {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : sub === 'treasurer' ? <AdminTreasurer /> : sub === 'referrers' ? <AdminReferrers /> : sub === 'import' ? <AdminImport /> : sub === 'welcome' ? <AdminWelcome /> : sub === 'annual' ? <AdminAnnual /> : sub === 'spotlight' ? <AdminSpotlight /> : sub === 'photos' ? <><AdminGatheringPhotos /><AdminRecaps /></> : (
     <div className="grid lg:grid-cols-2 gap-6" data-testid="admin-members">
       <Box title={`Applications (${apps.length})`} testid="admin-applications"><Applications rows={apps} act={act} focus={focus} /></Box>
+      <Box title="Waiting to apply" testid="admin-waiting"><WaitingToApply toast={toast} /></Box>
       <Box title="Invite members" testid="admin-invites"><Invites invites={d.invites} reload={load} toast={toast} /></Box>
       <Box title="Announcements" testid="admin-announcements"><AnnouncementForm toast={toast} /></Box>
       <Box title="Phone alert" testid="admin-push"><AdminPush toast={toast} /></Box>

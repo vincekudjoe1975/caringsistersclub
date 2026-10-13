@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, Trash2, Mail, MailOpen, HandHeart, Users, MessageSquare, CalendarCheck, Heart, Layers, AlarmClock, Send } from 'lucide-react';
+import { Loader2, Trash2, Mail, MailOpen, HandHeart, Users, MessageSquare, CalendarCheck, Heart, Layers, AlarmClock, Send, Check, X } from 'lucide-react';
 
 const TYPES = [
   { key: 'volunteer', label: 'Volunteers', icon: HandHeart },
@@ -26,6 +26,30 @@ function StageSelect({ it, onChange }) {
       style={{ background: cur[2], color: cur[3] }}>
       {STAGES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
     </select>
+  );
+}
+
+const MSTATUS = { applied: ['Awaiting approval', '#fdf3e1', '#8a6a2c'], active: ['Approved member', '#e9f3e6', '#3c7a2f'], declined: ['Declined', '#f5e9ec', '#9b3b4f'], suspended: ['Suspended', '#f5e9ec', '#9b3b4f'], ended: ['Membership ended', '#eef1f5', '#53657d'], deleted: ['Account removed', '#eef1f5', '#53657d'] };
+
+function MemberDecision({ it, onDone }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState('');
+  const st = MSTATUS[it.member_status] || MSTATUS.applied;
+  const act = async (action) => {
+    setBusy(action);
+    try { const { data } = await api.post(`/admin/members/${it.user_id}/status`, { action }); toast({ title: action === 'approve' ? 'Approved: she now has member portal access' : 'Application declined' }); onDone(data.status); }
+    catch (ex) { toast({ title: 'Could not update', description: ex?.response?.data?.detail, variant: 'destructive' }); }
+    finally { setBusy(''); }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2 mt-4 pt-4 border-t border-[#3B0A2E]/8" data-testid={`member-decision-${it.user_id}`}>
+      <span data-testid={`member-decision-status-${it.user_id}`} className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full" style={{ background: st[1], color: st[2] }}>{st[0]}</span>
+      {it.member_status === 'applied' && <>
+        <button data-testid={`submission-approve-${it.user_id}`} disabled={!!busy} onClick={() => act('approve')} className="btn-magenta rounded-full px-4 py-1.5 text-[13px] font-semibold flex items-center gap-1 disabled:opacity-60">{busy === 'approve' ? <Loader2 size={13} className="animate-spin" /> : <Check size={14} />} Approve</button>
+        <button data-testid={`submission-decline-${it.user_id}`} disabled={!!busy} onClick={() => act('decline')} className="rounded-full px-4 py-1.5 text-[13px] font-semibold border border-[#3B0A2E]/15 text-[#3B0A2E] flex items-center gap-1 disabled:opacity-60"><X size={14} /> Decline</button>
+      </>}
+      <span className="text-[12px] text-[#241019]/50 ml-auto">Approving opens the member portal for her and sends her a welcome alert.</span>
+    </div>
   );
 }
 
@@ -170,6 +194,7 @@ export default function AdminSubmissions() {
                     )
                   ))}
                 </div>
+                {it.type === 'member' && it.user_id && <MemberDecision it={it} onDone={(member_status) => { setItems((prev) => prev.map((i) => (i.id === it.id ? { ...i, member_status, read: true } : i))); loadCounts(); }} />}
               </div>
             ))}
           </div>

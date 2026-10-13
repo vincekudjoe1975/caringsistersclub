@@ -180,7 +180,7 @@ async def auth_session(payload: SessionRequest, response: Response):
     email = data.get("email")
     if not email:
         raise HTTPException(status_code=401, detail="No email returned")
-    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    existing = await db.users.find_one({"email": email}, {"_id": 0}) or await db.users.find_one({"alt_emails": email.lower()}, {"_id": 0})
     if existing:
         user_id = existing["user_id"]
         update = {"name": data.get("name")} if existing.get("picture_custom") else {"name": data.get("name"), "picture": data.get("picture")}
@@ -300,7 +300,8 @@ def _check_strength(pw: str):
 
 
 async def _user_by_email(email: str):
-    return await db.users.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0})
+    return (await db.users.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0})
+            or await db.users.find_one({"alt_emails": email.lower()}, {"_id": 0}))
 
 
 async def _is_team_email(email: str) -> bool:
@@ -1036,6 +1037,12 @@ async def list_submissions(type: Optional[str] = None, user=Depends(require_admi
     if type:
         query["type"] = type
     items = await db.submissions.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    uids = [i["user_id"] for i in items if i.get("type") == "member" and i.get("user_id")]
+    if uids:
+        st = {u["user_id"]: u.get("member_status") for u in await db.users.find({"user_id": {"$in": uids}}, {"_id": 0, "user_id": 1, "member_status": 1}).to_list(len(uids))}
+        for i in items:
+            if i.get("user_id"):
+                i["member_status"] = st.get(i["user_id"], "deleted")
     return items
 
 
@@ -6371,6 +6378,7 @@ async def _hourly_scheduler():
             await _send_session_feedback()
             await _send_noshow_followups()
             await _member_scheduled()
+            await _send_apply_reminders()
             for p in await db.programs.find({"capacity": {"$gt": 0}}, {"_id": 0, "id": 1}).to_list(200):
                 await _fill_seats(p["id"])
         except Exception as e:
@@ -6524,6 +6532,11 @@ async def startup_indexes():
             await db.users.update_many({"$or": [{"member_status": "active"}, {"role": "admin"}], "portal_welcome_seen_at": {"$exists": False}},
                                        {"$set": {"portal_welcome_seen_at": _now_iso()}})
             await db.settings.insert_one({"key": "welcome_note_migrated", "at": _now_iso()})
+        if not await db.settings.find_one({"key": "apply_reminders_since"}):
+            await db.settings.insert_one({"key": "apply_reminders_since", "at": _now_iso(), "enabled": True})
+        for u in await db.users.find({"member_status": "applied"}, {"_id": 0}).to_list(2000):
+            if not await db.submissions.find_one({"type": "member", "user_id": u["user_id"]}, {"_id": 1}):
+                await _member_submission(u, u.get("member_application") or {})
     except Exception as e:
         logging.warning(f"Index creation warning: {e}")
 
@@ -6671,8 +6684,17 @@ async def members_apply(payload: MemberApplication, request: Request, background
                "why": payload.why.strip()[:1500], "submitted_at": _now_iso()}
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"member_status": "applied", "member_application": app_doc,
                               "member_profile": {"city": app_doc["city"], "phone": app_doc["phone"], "bio": "", "show_contact": False}}})
+    await _member_submission(user, app_doc)
     background.add_task(_alert_staff_new_sister, "applied", {**user, "member_application": app_doc})
     return {"status": "applied"}
+
+
+async def _member_submission(u: dict, app: dict):
+    data = {"name": u.get("name") or "", "email": u.get("email") or "", "phone": app.get("phone", ""), "city": app.get("city", ""),
+            "referred_by": app.get("referred_by", ""), "why": app.get("why", ""), "signed_up_with": _signup_method(u)}
+    await db.submissions.update_one({"type": "member", "user_id": u["user_id"], "member_decision": {"$exists": False}},
+                                    {"$set": {"data": data, "read": False, "created_at": app.get("submitted_at") or _now_iso()},
+                                     "$setOnInsert": {"id": str(uuid.uuid4()), "type": "member", "user_id": u["user_id"]}}, upsert=True)
 
 
 def _signup_method(u: dict) -> str:
@@ -6879,7 +6901,21 @@ async def admin_member_status(uid: str, payload: MemberAction, background: Backg
         await db.users.update_one({"user_id": uid}, {"$unset": {"member_ends_at": "", "member_end_reason": ""}})
     if payload.action == "approve" and target.get("email"):
         background.add_task(_send_welcome, uid)
+        background.add_task(_send_approved_alert, target)
+    await db.submissions.update_many({"type": "member", "user_id": uid}, {"$set": {"read": True, "member_decision": new, "decided_at": _now_iso()}})
     return {"status": new}
+
+
+async def _send_approved_alert(u: dict):
+    first = (u.get("name") or "Sister").split(" ")[0]
+    try:
+        await _push_users([u["user_id"]], f"Welcome to the sisterhood, {first}!", "You're approved. Tap to open the member portal.", "/members", "custom")
+        await send_email(to=u["email"], subject="You're approved! Welcome to Caring Sisters Club",
+                         html=_member_email_html("You're approved!", f"Welcome to the sisterhood, {first}!",
+                                                 "Great news: your membership application has been approved. The full member portal is now open to you: meet your sisters, see upcoming gatherings, and join the conversation.",
+                                                 "Open the member portal", "/members"))
+    except Exception as e:
+        logging.error(f"Approval alert failed: {e}")
 
 
 class InviteIn(BaseModel):
@@ -12420,6 +12456,139 @@ async def admin_auction_csv(eid: str, user=Depends(require_admin)):
              (i.get("high_bidder") or {}).get("email", ""), (i.get("high_bidder") or {}).get("phone", ""), (i.get("win") or {}).get("status", "")] for i in d["items"]]
     return Response(content=_csv_text(["Item", "Value", "Starting bid", "Winning bid", "Bids", "Winner", "Email", "Phone", "Payment"], rows), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="auction-{eid[:8]}.csv"'})
+
+# ---------- Waiting-to-apply reminders ----------
+def _waiting_query(since: str) -> dict:
+    return {"role": {"$ne": "admin"}, "member_status": {"$exists": False}, "email_verified": True, "created_at": {"$gte": since}}
+
+
+def _apply_base(u: dict) -> datetime:
+    return datetime.fromisoformat(u.get("email_verified_at") or u["created_at"])
+
+
+async def _send_apply_reminders() -> int:
+    cfg = await db.settings.find_one({"key": "apply_reminders_since"}, {"_id": 0}) or {}
+    if not cfg or cfg.get("enabled") is False:
+        return 0
+    now, sent = datetime.now(timezone.utc), 0
+    for u in await db.users.find(_waiting_query(cfg["at"]), {"_id": 0}).to_list(2000):
+        if not u.get("email"):
+            continue
+        age = now - _apply_base(u)
+        step = 2 if age >= timedelta(days=7) and u.get("apply_reminder_1_at") and not u.get("apply_reminder_2_at") else \
+            1 if age >= timedelta(days=3) and not u.get("apply_reminder_1_at") else 0
+        if not step:
+            continue
+        res = await db.users.update_one({"user_id": u["user_id"], f"apply_reminder_{step}_at": {"$exists": False}}, {"$set": {f"apply_reminder_{step}_at": _now_iso()}})
+        if not res.modified_count:
+            continue
+        first = (u.get("name") or "Sister").split(" ")[0]
+        body = ("You created your Caring Sisters Club member portal account a few days ago, but we haven't received your membership application yet. It only takes about two minutes, and our team reviews every application personally."
+                if step == 1 else
+                "Just a final friendly reminder: your membership application is still waiting. Sign in to the member portal to finish it whenever you're ready. We won't send any more reminders.")
+        await send_email(to=u["email"], subject="Finish your Caring Sisters Club membership application" if step == 1 else "Last reminder: your membership application is waiting",
+                         html=_member_email_html("Membership application", f"Hello {first},", body, "Finish my application", "/members"))
+        sent += 1
+    return sent
+
+
+class ToggleIn(BaseModel):
+    enabled: bool
+
+
+@api_router.get("/admin/members/waiting")
+async def admin_members_waiting(user=Depends(require_admin)):
+    cfg = await db.settings.find_one({"key": "apply_reminders_since"}, {"_id": 0}) or {"at": _now_iso(), "enabled": True}
+    rows = await db.users.find({"role": {"$ne": "admin"}, "member_status": {"$exists": False}, "email_verified": True},
+                               {"_id": 0, "user_id": 1, "name": 1, "email": 1, "auth_providers": 1, "created_at": 1, "email_verified_at": 1,
+                                "apply_reminder_1_at": 1, "apply_reminder_2_at": 1}).sort("created_at", -1).to_list(500)
+    return {"enabled": cfg.get("enabled") is not False, "rows": [{
+        "user_id": u["user_id"], "name": u.get("name") or "", "email": u.get("email") or "", "signed_up_with": _signup_method(u),
+        "confirmed_at": u.get("email_verified_at") or u.get("created_at") or "", "reminder_1_at": u.get("apply_reminder_1_at", ""),
+        "reminder_2_at": u.get("apply_reminder_2_at", ""), "eligible": (u.get("created_at") or "") >= cfg["at"]} for u in rows]}
+
+
+@api_router.put("/admin/members/apply-reminders")
+async def admin_apply_reminders_toggle(payload: ToggleIn, user=Depends(require_admin)):
+    await db.settings.update_one({"key": "apply_reminders_since"}, {"$set": {"enabled": payload.enabled}, "$setOnInsert": {"at": _now_iso()}}, upsert=True)
+    return {"enabled": payload.enabled}
+
+
+# ---------- Merge duplicate accounts ----------
+_MERGE_FIELDS = ["user_id", "author_id", "uploader_id", "uploaded_by", "driver_id", "beneficiary_id", "member_referrer_id", "referrer_id"]
+_MERGE_ARRAYS = ["replies", "encouragements", "testimonials", "suggestions", "payouts"]
+
+
+class MergeIn(BaseModel):
+    keep_email: str
+    dup_email: str
+
+
+async def _merge_pair(payload: MergeIn):
+    keep, dup = await _user_by_email(payload.keep_email.strip().lower()), await _user_by_email(payload.dup_email.strip().lower())
+    if not keep or not dup:
+        raise HTTPException(status_code=404, detail="We couldn't find an account for " + ("the account to keep." if not keep else "the duplicate account."))
+    if keep["user_id"] == dup["user_id"]:
+        raise HTTPException(status_code=400, detail="Those are the same account.")
+    return keep, dup
+
+
+async def _account_summary(u: dict) -> dict:
+    uid = u["user_id"]
+    return {"user_id": uid, "name": u.get("name") or "", "email": u.get("email"), "role": u.get("role"), "member_status": u.get("member_status") or "none",
+            "signed_up_with": _signup_method(u), "devices": [_push_device_kind(x["endpoint"]) for x in await db.push_subs.find({"user_id": uid}, {"_id": 0, "endpoint": 1}).to_list(50)],
+            "has_password": bool(await db.user_credentials.find_one({"user_id": uid}, {"_id": 1}))}
+
+
+@api_router.post("/admin/team/merge/preview")
+async def admin_merge_preview(payload: MergeIn, user=Depends(require_admin)):
+    keep, dup = await _merge_pair(payload)
+    return {"keep": await _account_summary(keep), "dup": await _account_summary(dup)}
+
+
+@api_router.post("/admin/team/merge")
+async def admin_merge(payload: MergeIn, user=Depends(require_admin)):
+    keep, dup = await _merge_pair(payload)
+    k, d = keep["user_id"], dup["user_id"]
+    moved = 0
+    for coll in await db.list_collection_names():
+        if coll in ("users", "user_credentials", "account_merges"):
+            continue
+        c = db[coll]
+        for f in _MERGE_FIELDS:
+            try:
+                moved += (await c.update_many({f: d}, {"$set": {f: k}})).modified_count
+            except DuplicateKeyError:
+                async for doc in c.find({f: d}, {"_id": 1}):
+                    try:
+                        moved += (await c.update_one({"_id": doc["_id"]}, {"$set": {f: k}})).modified_count
+                    except DuplicateKeyError:
+                        await c.delete_one({"_id": doc["_id"]})
+        for a in _MERGE_ARRAYS:
+            for sub in ("author_id", "user_id"):
+                moved += (await c.update_many({f"{a}.{sub}": d}, {"$set": {f"{a}.$[e].{sub}": k}}, array_filters=[{f"e.{sub}": d}])).modified_count
+        if await c.find_one({"praying": d}, {"_id": 1}):
+            await c.update_many({"praying": d}, {"$addToSet": {"praying": k}})
+            await c.update_many({"praying": d}, {"$pull": {"praying": d}})
+    upd = {key: v for key, v in dup.items() if key not in ("user_id", "email", "created_at", "_id") and v not in (None, "", {}, []) and not keep.get(key)}
+    if dup.get("role") == "admin" or keep.get("role") == "admin":
+        upd["role"] = "admin"
+    if "active" in (dup.get("member_status"), keep.get("member_status")):
+        upd["member_status"] = "active"
+    if dup.get("email_verified") or keep.get("email_verified"):
+        upd["email_verified"] = True
+    providers = sorted(set((keep.get("auth_providers") or ["google"]) + (dup.get("auth_providers") or ["google"])))
+    alts = sorted(set((keep.get("alt_emails") or []) + (dup.get("alt_emails") or []) + [(dup.get("email") or "").lower()]) - {(keep.get("email") or "").lower(), ""})
+    await db.users.update_one({"user_id": k}, {"$set": {**upd, "auth_providers": providers, "alt_emails": alts}})
+    if not await db.user_credentials.find_one({"user_id": k}, {"_id": 1}):
+        await db.user_credentials.update_one({"user_id": d}, {"$set": {"user_id": k}})
+    await db.user_credentials.delete_many({"user_id": d})
+    await db.users.delete_one({"user_id": d})
+    await db.account_merges.insert_one({"keep": k, "keep_email": keep.get("email"), "dup": d, "dup_email": dup.get("email"), "moved": moved, "by": user.get("email"), "at": _now_iso()})
+    logging.info(f"Merged account {d} into {k} ({moved} records)")
+    return {"ok": True, "moved": moved, "keep": await _account_summary(await db.users.find_one({"user_id": k}, {"_id": 0}))}
+
+
 
 # Include the router in the main app
 app.include_router(api_router)

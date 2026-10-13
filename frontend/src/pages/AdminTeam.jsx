@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 import { Loader2, UserPlus, ShieldCheck, ShieldX, Mail, X } from 'lucide-react';
+import { MergeAccounts } from '../components/MergeAccounts';
 
 export default function AdminTeam({ currentUserId }) {
   const { toast } = useToast();
@@ -99,7 +100,7 @@ export default function AdminTeam({ currentUserId }) {
       <div className="space-y-5">
         <form onSubmit={allow} className="bg-white rounded-2xl p-6 border border-[#3B0A2E]/8">
           <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold mb-2 flex items-center gap-2"><UserPlus size={18} className="text-[#B4247E]" /> Pre-approve an email</h3>
-          <p className="text-[12.5px] text-[#241019]/60 mb-4">They'll get admin access automatically the first time they sign in with Google.</p>
+          <p className="text-[12.5px] text-[#241019]/60 mb-4">They'll get admin access the first time they sign in with Google, or after setting a password with "Forgot Password?" on the staff login.</p>
           <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="name@example.com"
             className="w-full rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E] mb-3" />
           <button type="submit" className="btn-magenta rounded-full w-full py-2.5 font-semibold text-[14px]">Approve Email</button>
@@ -118,6 +119,7 @@ export default function AdminTeam({ currentUserId }) {
             </ul>
           </div>
         )}
+        <MergeAccounts toast={toast} onDone={load} />
       </div>
     </div>
   );
