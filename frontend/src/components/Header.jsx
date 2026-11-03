@@ -32,7 +32,7 @@ export default function Header() {
       <div className="max-w-7xl mx-auto px-5 lg:px-8 flex items-center justify-between h-[76px]">
         <Logo variant="light" compact={scrolled} />
 
-        <nav className="hidden lg:flex items-center gap-7">
+        <nav className="hidden xl:flex items-center gap-5 2xl:gap-7 mx-4">
           {nav.map((item) => (
             <NavLink
               key={item.to}
@@ -48,11 +48,11 @@ export default function Header() {
           ))}
         </nav>
 
-        <div className="hidden lg:flex items-center gap-3">
+        <div className="hidden xl:flex items-center gap-3 shrink-0">
           <Link
             to="/members"
             data-testid="header-member-login"
-            className="text-[13px] text-[#F7EFE9]/85 hover:text-[#F7EFE9] flex items-center gap-1.5 transition-colors"
+            className="text-[13px] text-[#F7EFE9]/85 hover:text-[#F7EFE9] flex items-center gap-1.5 transition-colors whitespace-nowrap"
           >
             <LogIn size={15} /> Member Login
           </Link>
@@ -64,7 +64,7 @@ export default function Header() {
           </Link>
         </div>
 
-        <div className="lg:hidden flex items-center gap-3">
+        <div className="xl:hidden flex items-center gap-3">
           <Link to="/donate" className="btn-magenta rounded-full px-4 py-2 text-[13px] font-semibold flex items-center gap-1.5">
             <Heart size={13} className="fill-white" /> Donate
           </Link>

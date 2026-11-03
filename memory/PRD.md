@@ -501,3 +501,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Removed entries are left out of member totals, the public summary, leaderboards and the CSV. _recheck_milestones drops or re-awards volunteer_milestones (all-time + current year) after any correction.
 - Redeploy queued, including the About editor.
 - Paused / not started: Leadership/Initiatives/Contact editors, About video, About version history.
+
+
+## 2026-06 — Videos page from the YouTube channel (self-tested, not user-confirmed)
+- GET /api/videos reads the public YouTube RSS feed for channel UCZIVBopmLHB2KGpUBJEZvGQ (@CaringSisters-m7b). No API key. Cached 30 min in memory and in settings key yt_videos as a fallback. Returns the latest 15 (a limit of the feed) with a short flag; Shorts use portrait oar2 thumbnails.
+- /videos page (pages/Videos.jsx): long videos in a 16:9 grid, Shorts in a portrait grid, a pop-up player (YouTube embed), and a Subscribe button. "Videos" added to the nav. The desktop nav now starts at xl (1280px) and the hamburger is used below that, because 10 links overflowed.
+- Embedded playback could not be verified in the headless browser (YouTube blocks it); needs a real-device check.

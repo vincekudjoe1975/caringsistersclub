@@ -18,6 +18,7 @@ import Volunteer from './pages/Volunteer';
 import Contact from './pages/Contact';
 import Legal from './pages/Legal';
 import Login from './pages/Login';
+import Videos from './pages/Videos';
 import ResetPassword from './pages/ResetPassword';
 import VerifyEmail from './pages/VerifyEmail';
 import Admin from './pages/Admin';
@@ -135,6 +136,7 @@ function Shell() {
           <Route path="/birthday-wishes/:uid" element={<BirthdayWall />} />
           <Route path="/events" element={<Events />} />
           <Route path="/gallery" element={<Gallery />} />
+          <Route path="/videos" element={<Videos />} />
           <Route path="/gallery/album/:slug" element={<GalleryAlbum />} />
           <Route path="/session-checkin/:sid" element={<SessionCheckIn />} />
           <Route path="/session-sheet/:sid" element={<SessionSheet />} />

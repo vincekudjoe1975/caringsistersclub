@@ -37,6 +37,7 @@ export const nav = [
   { label: 'Sessions', to: '/sessions' },
   { label: 'Events', to: '/events' },
   { label: 'Gallery', to: '/gallery' },
+  { label: 'Videos', to: '/videos' },
   { label: 'Transparency', to: '/transparency' },
   { label: 'Contact', to: '/contact' },
 ];

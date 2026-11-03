@@ -12595,6 +12595,50 @@ async def admin_auction_csv(eid: str, user=Depends(require_admin)):
     return Response(content=_csv_text(["Item", "Value", "Starting bid", "Winning bid", "Bids", "Winner", "Email", "Phone", "Payment"], rows), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="auction-{eid[:8]}.csv"'})
 
+# ---------- YouTube channel videos (public RSS feed, no key needed) ----------
+YT_CHANNEL_ID = "UCZIVBopmLHB2KGpUBJEZvGQ"
+YT_CHANNEL_URL = "https://www.youtube.com/@CaringSisters-m7b"
+_yt_cache = {"at": None, "items": []}
+
+
+def _parse_yt_feed(xml_text: str) -> list:
+    import xml.etree.ElementTree as ET
+    ns = {"a": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015", "m": "http://search.yahoo.com/mrss/"}
+    out = []
+    for e in ET.fromstring(xml_text).findall("a:entry", ns):
+        vid = e.findtext("yt:videoId", "", ns)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{11}", vid or ""):
+            continue
+        g = e.find("m:group", ns)
+        views = g.find("m:community/m:statistics", ns) if g is not None else None
+        link = e.find("a:link", ns)
+        short = "/shorts/" in (link.get("href", "") if link is not None else "")
+        out.append({"id": vid, "short": short, "title": (e.findtext("a:title", "", ns) or "").strip(), "published": e.findtext("a:published", "", ns),
+                    "description": ((g.findtext("m:description", "", ns) if g is not None else "") or "").strip()[:600],
+                    "thumbnail": f"https://i.ytimg.com/vi/{vid}/{'oar2' if short else 'hqdefault'}.jpg", "views": int(views.get("views", 0)) if views is not None else 0})
+    return sorted(out, key=lambda v: v["published"], reverse=True)
+
+
+@api_router.get("/videos")
+async def list_videos():
+    now = datetime.now(timezone.utc)
+    if _yt_cache["at"] and now - _yt_cache["at"] < timedelta(minutes=30):
+        return {"items": _yt_cache["items"], "channel_url": YT_CHANNEL_URL}
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"https://www.youtube.com/feeds/videos.xml?channel_id={YT_CHANNEL_ID}")
+            r.raise_for_status()
+        items = _parse_yt_feed(r.text)
+        _yt_cache.update(at=now, items=items)
+        await db.settings.update_one({"key": "yt_videos"}, {"$set": {"items": items, "at": now.isoformat()}}, upsert=True)
+    except Exception as e:
+        logging.warning(f"YouTube feed fetch failed: {e}")
+        if not _yt_cache["items"]:
+            _yt_cache["items"] = (await db.settings.find_one({"key": "yt_videos"}, {"_id": 0}) or {}).get("items", [])
+        _yt_cache["at"] = now - timedelta(minutes=25)
+    return {"items": _yt_cache["items"], "channel_url": YT_CHANNEL_URL}
+
+
 # ---------- Waiting-to-apply reminders ----------
 def _waiting_query(since: str) -> dict:
     return {"role": {"$ne": "admin"}, "member_status": {"$exists": False}, "email_verified": True, "created_at": {"$gte": since}}
