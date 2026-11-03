@@ -4139,11 +4139,99 @@ async def hours_summary():
 
 @api_router.get("/admin/volunteer-hours")
 async def admin_hours(user=Depends(require_admin)):
-    return {"items": await db.volunteer_hours.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)}
+    rows = await db.volunteer_hours.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return {"items": [r for r in rows if r["status"] != "removed"], "removed": [r for r in rows if r["status"] == "removed"]}
+
+
+async def _recheck_milestones(email: str):
+    """After a correction, drop milestone badges the volunteer no longer has the hours for."""
+    rows = await db.volunteer_hours.find({"email": email, "status": "approved"}, {"_id": 0, "hours": 1, "date": 1}).to_list(10000)
+    totals = {"all": sum(r["hours"] for r in rows)}
+    for r in rows:
+        totals[f"year:{r['date'][:4]}"] = totals.get(f"year:{r['date'][:4]}", 0) + r["hours"]
+    async for m in db.volunteer_milestones.find({"email": email}, {"_id": 0, "scope": 1, "threshold": 1}):
+        if totals.get(m["scope"], 0) < m["threshold"]:
+            await db.volunteer_milestones.delete_one({"email": email, "scope": m["scope"], "threshold": m["threshold"]})
+
+
+class HoursEditIn(BaseModel):
+    hours: float
+    date: str
+    program_id: str = ""
+    activity: str = ""
+    note: str = ""
+
+
+class HoursRemoveIn(BaseModel):
+    reason: str = ""
+
+
+@api_router.put("/admin/volunteer-hours/{hid}")
+async def admin_edit_hours(hid: str, payload: HoursEditIn, user=Depends(require_admin)):
+    h = await db.volunteer_hours.find_one({"id": hid, "status": {"$ne": "removed"}}, {"_id": 0})
+    if not h:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    if not 0.25 <= payload.hours <= 24:
+        raise HTTPException(status_code=400, detail="Hours must be between 0.25 and 24 for a single day.")
+    try:
+        day = datetime.strptime(payload.date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Please choose a valid date.")
+    if day > datetime.now(timezone.utc).date():
+        raise HTTPException(status_code=400, detail="Date can't be in the future.")
+    upd = {"hours": round(payload.hours, 2), "date": payload.date, "note": payload.note.strip()[:500]}
+    if payload.program_id and payload.program_id != h.get("program_id"):
+        prog = await db.programs.find_one({"id": payload.program_id[:64]}, {"_id": 0, "id": 1, "title": 1})
+        if not prog:
+            raise HTTPException(status_code=400, detail="Please choose a program.")
+        upd.update({"program_id": prog["id"], "program": prog["title"]})
+    if "activity" in h and payload.activity.strip():
+        upd["activity"] = payload.activity.strip()[:120]
+        if not h.get("program_id") and not upd.get("program_id"):
+            upd["program"] = upd["activity"]
+    change = {k: [h.get(k), v] for k, v in upd.items() if h.get(k) != v}
+    if not change:
+        return h
+    await db.volunteer_hours.update_one({"id": hid}, {"$set": upd, "$push": {"edits": {"by": user.get("email"), "at": _now_iso(), "changes": change}}})
+    await _recheck_milestones(h["email"])
+    if h["status"] == "approved":
+        await _member_badge_push(h["email"])
+    return await db.volunteer_hours.find_one({"id": hid}, {"_id": 0})
+
+
+@api_router.delete("/admin/volunteer-hours/{hid}")
+async def admin_delete_hours(hid: str, user=Depends(require_admin)):
+    h = await db.volunteer_hours.find_one({"id": hid}, {"_id": 0, "email": 1})
+    if not h:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    await db.volunteer_hours.delete_one({"id": hid})
+    await _recheck_milestones(h["email"])
+    logging.info(f"Volunteer hours {hid} permanently deleted by {user.get('email')}")
+    return {"ok": True}
 
 
 @api_router.post("/admin/volunteer-hours/{hid}/{action}")
-async def admin_review_hours(hid: str, action: str, background: BackgroundTasks, user=Depends(require_admin)):
+async def admin_review_hours(hid: str, action: str, background: BackgroundTasks, payload: Optional[HoursRemoveIn] = None, user=Depends(require_admin)):
+    if action in ("remove", "restore", "pending"):
+        h = await db.volunteer_hours.find_one({"id": hid}, {"_id": 0})
+        if not h:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        if action == "remove":
+            if h["status"] == "removed":
+                raise HTTPException(status_code=400, detail="Already removed")
+            await db.volunteer_hours.update_one({"id": hid}, {"$set": {"status": "removed", "prev_status": h["status"], "removed_at": _now_iso(),
+                                                                       "removed_by": user.get("email"), "removed_reason": ((payload.reason if payload else "") or "").strip()[:300]}})
+        elif action == "restore":
+            if h["status"] != "removed":
+                raise HTTPException(status_code=400, detail="Only removed entries can be restored")
+            await db.volunteer_hours.update_one({"id": hid}, {"$set": {"status": h.get("prev_status") or "pending"},
+                                                              "$unset": {"prev_status": "", "removed_at": "", "removed_by": "", "removed_reason": ""}})
+        else:
+            if h["status"] not in ("approved", "rejected"):
+                raise HTTPException(status_code=400, detail="Only reviewed entries can go back to pending")
+            await db.volunteer_hours.update_one({"id": hid}, {"$set": {"status": "pending"}, "$unset": {"reviewed_at": "", "reviewed_by": ""}})
+        await _recheck_milestones(h["email"])
+        return {"ok": True}
     if action not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="Invalid action")
     res = await db.volunteer_hours.update_one({"id": hid, "status": "pending"}, {"$set": {
@@ -11290,7 +11378,7 @@ async def members_hours_add(payload: MemberHoursIn, request: Request, user=Depen
 @api_router.get("/members/hours")
 async def members_hours(user=Depends(require_member)):
     email = (user.get("email") or "").lower()
-    rows = await db.volunteer_hours.find({"email": email}, {"_id": 0}).sort("date", -1).to_list(500)
+    rows = await db.volunteer_hours.find({"email": email, "status": {"$ne": "removed"}}, {"_id": 0}).sort("date", -1).to_list(500)
     total = round(sum(r["hours"] for r in rows if r["status"] == "approved"), 2)
     pending = round(sum(r["hours"] for r in rows if r["status"] == "pending"), 2)
     nxt = next((n for n in MEMBER_HOUR_BADGES if total < n), None)
@@ -11308,7 +11396,7 @@ async def members_hours_delete(hid: str, user=Depends(require_member)):
 async def _member_hours_board() -> list:
     emails = {(u.get("email") or "").lower(): u async for u in db.users.find({"$or": [{"member_status": "active"}, {"role": "admin"}]}, {"_id": 0, "user_id": 1, "name": 1, "email": 1})}
     out = []
-    async for r in db.volunteer_hours.aggregate([{"$match": {"email": {"$in": list(emails)}}}, {"$group": {"_id": {"e": "$email", "s": "$status"}, "h": {"$sum": "$hours"}, "n": {"$sum": 1}}}]):
+    async for r in db.volunteer_hours.aggregate([{"$match": {"email": {"$in": list(emails)}, "status": {"$ne": "removed"}}}, {"$group": {"_id": {"e": "$email", "s": "$status"}, "h": {"$sum": "$hours"}, "n": {"$sum": 1}}}]):
         out.append(r)
     board = {}
     for r in out:
@@ -11333,7 +11421,7 @@ async def admin_member_hours(user=Depends(require_admin)):
 @api_router.get("/admin/members/hours.csv")
 async def admin_member_hours_csv(user=Depends(require_admin)):
     board = await _member_hours_board()
-    rows = await db.volunteer_hours.find({"email": {"$in": [b["email"] for b in board]}}, {"_id": 0}).sort("date", -1).to_list(20000)
+    rows = await db.volunteer_hours.find({"email": {"$in": [b["email"] for b in board]}, "status": {"$ne": "removed"}}, {"_id": 0}).sort("date", -1).to_list(20000)
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Name", "Email", "Date", "Hours", "Activity / program", "Status", "Note", "Logged at"])
