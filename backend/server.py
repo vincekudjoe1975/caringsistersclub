@@ -4152,6 +4152,9 @@ async def _recheck_milestones(email: str):
     async for m in db.volunteer_milestones.find({"email": email}, {"_id": 0, "scope": 1, "threshold": 1}):
         if totals.get(m["scope"], 0) < m["threshold"]:
             await db.volunteer_milestones.delete_one({"email": email, "scope": m["scope"], "threshold": m["threshold"]})
+    for scope, t in totals.items():
+        if scope != "all":
+            await _award_milestones(email, scope[5:], t, totals["all"])
 
 
 class HoursEditIn(BaseModel):
@@ -4185,7 +4188,9 @@ async def admin_edit_hours(hid: str, payload: HoursEditIn, user=Depends(require_
         if not prog:
             raise HTTPException(status_code=400, detail="Please choose a program.")
         upd.update({"program_id": prog["id"], "program": prog["title"]})
-    if "activity" in h and payload.activity.strip():
+        if h.get("activity"):
+            upd["activity"] = prog["title"]
+    if "activity" in h and payload.activity.strip() and "program_id" not in upd:
         upd["activity"] = payload.activity.strip()[:120]
         if not h.get("program_id") and not upd.get("program_id"):
             upd["program"] = upd["activity"]
@@ -4201,9 +4206,11 @@ async def admin_edit_hours(hid: str, payload: HoursEditIn, user=Depends(require_
 
 @api_router.delete("/admin/volunteer-hours/{hid}")
 async def admin_delete_hours(hid: str, user=Depends(require_admin)):
-    h = await db.volunteer_hours.find_one({"id": hid}, {"_id": 0, "email": 1})
+    h = await db.volunteer_hours.find_one({"id": hid}, {"_id": 0, "email": 1, "status": 1})
     if not h:
         raise HTTPException(status_code=404, detail="Entry not found")
+    if h["status"] != "removed":
+        raise HTTPException(status_code=400, detail="Remove the entry first, then delete it for good from the Removed log.")
     await db.volunteer_hours.delete_one({"id": hid})
     await _recheck_milestones(h["email"])
     logging.info(f"Volunteer hours {hid} permanently deleted by {user.get('email')}")

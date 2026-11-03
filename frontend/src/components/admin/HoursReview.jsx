@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { useToast } from '../../hooks/use-toast';
 import { Check, X, Clock3, Pencil, Trash2, Undo2, RotateCcw, Loader2 } from 'lucide-react';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 
 const inp = 'rounded-lg border border-[#3B0A2E]/15 px-2.5 py-1.5 text-[13px] focus:outline-none focus:border-[#B4247E] w-full';
 const icon = 'p-1.5 rounded-full hover:bg-[#faf2f7] transition-colors';
@@ -47,12 +48,14 @@ export function HoursReview({ BadgeWallSetting }) {
     try { await api.post(`/admin/volunteer-hours/${h.id}/${action}`, body || {}); toast({ title: msg[action] }); load(); }
     catch (err) { toast({ title: 'Action failed', description: err?.response?.data?.detail, variant: 'destructive' }); }
   };
-  const remove = (h) => {
-    const reason = window.prompt(`Remove ${h.hours}h for ${h.name}? It stops counting in totals, badges and the leaderboard, and moves to the Removed log.\n\nReason (optional):`, '');
-    if (reason !== null) act(h, 'remove', { reason });
-  };
-  const purge = async (h) => {
-    if (!window.confirm(`Delete this entry for good? ${h.name}, ${h.hours}h on ${h.date}. This can't be undone.`)) return;
+  const [ask, setAsk] = useState(null);
+  const [reason, setReason] = useState('');
+  const remove = (h) => { setReason(''); setAsk({ kind: 'remove', h }); };
+  const purge = (h) => setAsk({ kind: 'purge', h });
+  const confirmAsk = async () => {
+    const { kind, h } = ask;
+    setAsk(null);
+    if (kind === 'remove') return act(h, 'remove', { reason });
     try { await api.delete(`/admin/volunteer-hours/${h.id}`); toast({ title: 'Entry deleted for good' }); load(); }
     catch (err) { toast({ title: 'Delete failed', description: err?.response?.data?.detail, variant: 'destructive' }); }
   };
@@ -106,6 +109,22 @@ export function HoursReview({ BadgeWallSetting }) {
           </tr>
         )))}</tbody></table></div>
       )}
+      <AlertDialog open={!!ask} onOpenChange={(o) => !o && setAsk(null)}>
+        <AlertDialogContent data-testid="hours-confirm-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{ask?.kind === 'remove' ? 'Remove this entry?' : 'Delete this entry for good?'}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {ask && `${ask.h.name}: ${ask.h.hours}h on ${ask.h.date}. `}
+              {ask?.kind === 'remove' ? 'It stops counting in totals, badges and the leaderboard, and moves to the Removed log, where you can restore it.' : "This can't be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {ask?.kind === 'remove' && <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional), e.g. test entry" className={inp} data-testid="hours-remove-reason" />}
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="hours-confirm-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmAsk} data-testid="hours-confirm-ok" className="bg-red-600 hover:bg-red-700">{ask?.kind === 'remove' ? 'Remove' : 'Delete for good'}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

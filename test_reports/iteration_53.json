@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 53: Tested admin correction and removal of volunteer hours. Endpoints: PUT /api/admin/volunteer-hours/{id}, POST /{id}/remove|restore|pending, DELETE /{id}, and GET /api/admin/volunteer-hours, which now returns items and removed separately. Tested the HoursReview UI in Admin > Reports. Backend: 19/19 pytest passed. Edits save and add an edits[] audit entry. A save with no changes adds no log entry. Validation works: hours must be 0.25 to 24, the date must be valid and not in the future, and an unknown program is rejected. Portal entries can have their activity edited, and both activity and program text update. Changing the program updates program_id and the title. Removed entries are left out of member totals, the public summary, the members leaderboard and the CSV. A second remove returns 400. Editing a removed entry returns 404. Restore brings back the previous status. Approved and rejected entries can be moved back to pending, and a pending entry can't. Delete for good returns 404 afterwards. Milestone records are dropped when an edit or removal takes the total below the threshold. Non-admins get 401/403. Frontend: every flow passed. Tested the Pending, Reviewed and Removed tabs with counts, inline edit with save, the 'Could not save' toast for invalid hours, the 'Edited by' note, the activity input on portal rows, Move back to Pending, removal with a reason via prompt (the Removed log shows who removed it, when and why), Restore, and Delete for good with a confirm.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/volunteer-hours/{id}/restore, PUT (raising hours)", "issue": "_recheck_milestones only removes badges and never awards them. If a removal drops a milestone and the entry is then restored (or the hours are corrected upward), the volunteer_milestones badge, certificate and share token is not re-awarded. It only comes back after a new approval runs _send_volunteer_thanks. The portal's MEMBER_HOUR_BADGES are worked out live, so those are fine."},
+      {"endpoint": "DELETE /api/admin/volunteer-hours/{id}", "issue": "Permanent delete works on any entry, including pending and approved ones that were never removed. The UI only offers it in the Removed tab. Consider requiring status=='removed' on the server."},
+      {"endpoint": "PUT /api/admin/volunteer-hours/{id}", "issue": "When the program of a portal entry that has both activity and program_id is changed, only program/program_id update. The row shows h.activity || h.program, so the admin list still shows the old activity text. The admin edit also has no 365-day past-date limit, unlike the submit endpoints. That may be intended."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin > Reports > Volunteer Hours", "issues": ["The edit row uses the browser's own date picker (input type=date) instead of the shadcn Calendar/Popover.", "Remove and Delete for good use window.prompt/window.confirm instead of a styled AlertDialog, which doesn't match the app's look."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter53_hours_edit_remove.py", "/app/test_reports/pytest/iter53.xml"],
+  "action_items": [
+    "Optional: re-award volunteer_milestones on restore or on upward edits (call _award_milestones with the recalculated year and all-time totals).",
+    "Optional: limit DELETE /api/admin/volunteer-hours/{id} to removed entries.",
+    "Optional: replace the native date input and the prompt/confirm dialogs with shadcn Calendar and AlertDialog."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 12.7k lines and should be split into routers. The hours endpoints are good candidates.",
+    "admin_review_hours combines the remove/restore/pending branches with approve/reject. It's fine, but separate handlers would be cleaner.",
+    "Re-approving an entry moved back to pending won't send a new thank-you email because thanked=True stays set. This is probably intended."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter53_hours_edit_remove.py", "/app/backend/tests/_seed_iter53_fe.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Temporary admin and member users and sessions with unique it53_* ids, plus TEST_ volunteer_hours rows, all deleted by id at teardown. The FE seed is _seed_iter53_fe.py up|down (cookie it53fe_tok) and was cleaned up (verified 0 left). No real data was touched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n 0. Mutating calls need the header X-Requested-With: XMLHttpRequest. The test module creates its own admin and member sessions, so qa_session.py is not needed. Do not run qa_session.py down: it deletes by regex. HoursReview lives in components/admin/HoursReview.jsx and appears at /admin?view=reports. Its testids are hours-tab-pending/reviewed/removed, hours-row, hours-edit-btn, hours-edit-row-{id}, hours-edit-hours/date/note/program/activity, hours-edit-save-btn, hours-remove-btn (prompt), hours-restore-btn, hours-delete-forever-btn (confirm), hours-to-pending-btn, hours-removed-info and hours-edited-note."
+}
