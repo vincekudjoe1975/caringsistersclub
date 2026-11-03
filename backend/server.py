@@ -4152,9 +4152,8 @@ async def _recheck_milestones(email: str):
     async for m in db.volunteer_milestones.find({"email": email}, {"_id": 0, "scope": 1, "threshold": 1}):
         if totals.get(m["scope"], 0) < m["threshold"]:
             await db.volunteer_milestones.delete_one({"email": email, "scope": m["scope"], "threshold": m["threshold"]})
-    for scope, t in totals.items():
-        if scope != "all":
-            await _award_milestones(email, scope[5:], t, totals["all"])
+    yr = datetime.now(timezone.utc).strftime("%Y")
+    await _award_milestones(email, yr, totals.get(f"year:{yr}", 0), totals["all"])
 
 
 class HoursEditIn(BaseModel):

@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 54: Retested the 4 follow-up fixes to volunteer hours from iteration 53. All passed. Backend: 27/27 pytest passed, made up of 8 new tests in test_iter54_hours_fixes.py and 19 regression tests from iter53. (1) Frontend: Remove and Delete for good now open the styled AlertDialog (hours-confirm-dialog) and no native prompt or confirm fires. Removing with a reason moves the row to the Removed tab, which shows 'Removed by X on DATE: TEST_ duplicate entry', and the Removed count updates. Cancel and Esc leave the entry unchanged. The reason clears when the dialog is reopened. The purge dialog has no reason input and its button reads 'Delete for good'. Confirming deletes the row and Removed drops to 0. (2) DELETE returns 400 'Remove the entry first...' for pending, approved and rejected entries, and leaves the row untouched. It returns 200 for a removed entry, then 404. (3) _recheck_milestones re-awards. With 12h approved, the {scope:'all', threshold:10} and year:YYYY milestones exist. Removing the entry deletes both and restoring adds both back, with the label '10 Hours All-Time'. An upward edit from 5h to 11h awards the milestone and an edit down to 4h removes it again. Pending hours are not counted. (4) Changing the program on a portal entry with activity and program_id sets activity, program and program_id to the new program, and the edits log records the activity change. This was verified through both the API and the UI: the program select appears, the row shows the new program title, and the DB row was checked.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "_recheck_milestones (called on edit/remove/restore/pending/delete)", "issue": "Milestones are now awarded silently by upsert, with no email. _send_volunteer_thanks sends a milestone email only for new upserts, and it is limited to one thank-you per volunteer per day. So suppose an entry is approved that crosses a threshold while its thank-you is still waiting (for example, the volunteer was already thanked today), and an admin then edits, removes or restores any entry for that volunteer. The badge gets recorded and the milestone or certificate email is never sent. This is an edge case."},
+      {"endpoint": "_recheck_milestones", "issue": "It awards year:YYYY milestones for every year that has approved hours, including past years. _send_volunteer_thanks only ever awards the current year. This makes a small inconsistency: a correction can create past-year badges that would never have been created otherwise. Probably harmless."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin > Reports > Volunteer Hours", "issues": ["Still open from iteration 53: the edit row uses the browser's own date input (type=date) instead of the shadcn Calendar. Optional."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter54_hours_fixes.py", "/app/backend/tests/test_iter53_hours_edit_remove.py", "/app/test_reports/pytest/iter54.xml"],
+  "action_items": [
+    "Optional: in _recheck_milestones, skip awarding (or let thanks handle it) when the volunteer has approved entries with thanked!=True, so milestone emails aren't lost.",
+    "Optional: replace the native date input in EditRow with the shadcn Calendar."
+  ],
+  "critical_code_review_comments": [
+    "server.py is about 12.8k lines. The volunteer-hours endpoints should move to their own router.",
+    "In admin_edit_hours, the activity override when the program changes depends on h.get('activity') being truthy. A portal row with an empty activity string won't sync. This is fine in practice."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter54_hours_fixes.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Temp it54_* admin and session plus TEST_ hour rows with test_it54_* emails, deleted at module teardown. FE used _seed_iter53_fe.py up|down and one extra row, it54fe-h4. Everything was cleaned up and 0 leftovers were confirmed. No real entries were touched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with: pytest tests/test_iter54_hours_fixes.py tests/test_iter53_hours_edit_remove.py -n 0. Mutating calls need the header X-Requested-With: XMLHttpRequest. FE: seed with _seed_iter53_fe.py up (cookie it53fe_tok), open /admin?view=reports and scroll to hours-review. The dialog testids are hours-confirm-dialog, hours-remove-reason, hours-confirm-ok and hours-confirm-cancel. The dialog fades in, so wait about 800ms before taking a screenshot."
+}

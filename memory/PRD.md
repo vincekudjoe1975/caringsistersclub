@@ -494,3 +494,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - A Preview button shows a full-page preview of the unsaved edits, with Keep editing / Publish now.
 - Public About.jsx exports AboutView, reused by the preview. PageHero has an optional image prop.
 - The bug where emptied tax note / button labels came back was fixed after testing and verified by curl. Not yet redeployed.
+
+
+## 2026-06 — Volunteer hours corrections (iterations 53-54, agent-tested, not user-confirmed)
+- Admin > Reports > Volunteer Hours has 3 tabs: Pending / Reviewed / Removed. Each entry can be edited inline (hours, date, program or activity, note; logged in edits[]), moved back to Pending (if reviewed), or removed (styled dialog with an optional reason; kept in the Removed log with who, when and why). Removed entries can be restored or deleted for good (server allows that only for removed entries).
+- Removed entries are left out of member totals, the public summary, leaderboards and the CSV. _recheck_milestones drops or re-awards volunteer_milestones (all-time + current year) after any correction.
+- Redeploy queued, including the About editor.
+- Paused / not started: Leadership/Initiatives/Contact editors, About video, About version history.
