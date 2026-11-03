@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 52: Tested the fully editable About page (GET /api/about-content, PUT /api/admin/about-content, Admin -> About Page editor, Preview, public /about). Backend: 11/13 pytest passed. All 12 new text fields, hero_image, and story images save and persist. Link validation rejects javascript:, //, http:// and ftp://, and accepts /, https:// and mailto:. Max lengths are enforced, auth is required, and the values/mission checks still work. BUG: the editor says 'leave empty to hide' for the tax note and 'empty hides it' for CTA button labels, but the backend replaces an empty value with the default, so neither can be hidden. Frontend: every editor input has a data-testid. The preview overlay shows unsaved edits, Publish from the preview saves and closes it, and the status shows 'Last published'. A bad link shows a 'Save failed' toast with the backend message. The public /about page shows the edited kicker, title, values heading, CTA title and button, and the CTA button goes to /donate.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/admin/about-content", "issue": "tax_note, cta_btn1_label and cta_btn2_label go through ABOUT_TEXT_FIELDS with `strip()[:mx] or default`, so an empty value is replaced with the default. Admins cannot hide the tax note or a CTA button, even though the UI labels promise they can."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Admin About -> clear tax note or button label -> Publish", "issue": "After publishing, the field refills with the default text and still appears on /about (backend fallback).", "affected_selectors": ["about-tax-note-input", "about-cta-btn1-label-input", "about-cta-btn2-label-input"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter52_about_editable.py", "/app/test_reports/pytest/iter52.xml"],
+  "action_items": [
+    "In admin_update_about, store tax_note, cta_btn1_label and cta_btn2_label as given (stripped and truncated) with no default fallback when empty. For example, keep a set of 'hideable' keys that skip the `or d` fallback. The frontend AboutView already hides these when the value is empty (spreading FALLBACK first keeps an explicit '')."
+  ],
+  "critical_code_review_comments": [
+    "Hideable fields need their own handling in the ABOUT_TEXT_FIELDS comprehension (see action item).",
+    "RowTools up/down buttons and the value icon <select> have no data-testid.",
+    "AboutView uses key={v.title} for values and `${year}-${title}` for story items. Duplicate or empty titles while previewing will cause React key collisions.",
+    "server.py is about 12.7k lines; consider splitting it into modules."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter52_about_editable.py"],
+  "success_rate": {"backend": "85% (11/13)", "frontend": "100% for the flows tested"},
+  "test_credentials": "QA admin via /app/backend/tests/qa_session.py up|down (cookie session_token=qa_tok_123). Already torn down.",
+  "seed_data_creation": "None left behind. settings.about is restored to its default text values (the 6 UI-edited fields were reset manually; updated_by now reads qa@example.com).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -o addopts=''. PUT needs header X-Requested-With: XMLHttpRequest. The test module restores settings.about at teardown. The admin view key is 'about' (data-testid admin-view-about). After the fix, test_empty_tax_note_hides and test_empty_cta_label_hides should pass.",
+  "rca of the issue": "server.py ~L3498: `{k: (getattr(payload, k).strip()[:mx] or d) for k, (d, mx) in ABOUT_TEXT_FIELDS.items()}` treats '' as missing for every key, including the optional tax_note and CTA labels. Reproduce: PUT with tax_note='' and GET returns the default note. Fix: drop the `or d` fallback for the hideable keys."
+}

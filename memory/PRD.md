@@ -487,3 +487,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Cause: the application (vandjwebdesign@gmail.com) was submitted on the PREVIEW site (preview DB), but the user checked the LIVE admin (prod DB has no applied users and no submissions). Prod code and deploy were confirmed working.
 - Hardening: /api/submissions and /api/submissions/counts self-sync pending applications into Memberships (_sync_member_submissions). A gold "Test (preview) site" ribbon now shows only on the preview host.
 - User action: set the website address in the live Admin banner ("Use caring-sisters-clone.emergent.host") and re-apply on the live site.
+
+
+## 2026-06 — Fully editable About page (iteration 52, agent-tested, not user-confirmed)
+- Admin -> About Page now edits the whole page: header label/title/background photo, intro, mission label/title/text/photo, tax note (empty hides it), values label/heading/cards, story label/title/timeline, and the bottom banner heading plus 2 buttons (text + link; empty text hides the button; links must be /, https:// or mailto:).
+- A Preview button shows a full-page preview of the unsaved edits, with Keep editing / Publish now.
+- Public About.jsx exports AboutView, reused by the preview. PageHero has an optional image prop.
+- The bug where emptied tax note / button labels came back was fixed after testing and verified by curl. Not yet redeployed.

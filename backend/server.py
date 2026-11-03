@@ -3495,7 +3495,7 @@ async def admin_update_about(payload: AboutIn, user=Depends(require_admin)):
         if link and not (link.startswith("/") and not link.startswith("//") or link.startswith("https://") or link.startswith("mailto:")):
             raise bad("Button links must start with / (a page on this site), https:// or mailto:")
     doc = {
-        **{k: (getattr(payload, k).strip()[:mx] or d) for k, (d, mx) in ABOUT_TEXT_FIELDS.items()},
+        **{k: (getattr(payload, k).strip()[:mx] or ("" if k in ("tax_note", "cta_btn1_label", "cta_btn2_label") else d)) for k, (d, mx) in ABOUT_TEXT_FIELDS.items()},
         "hero_image": payload.hero_image.strip(),
         "hero_subtitle": payload.hero_subtitle.strip()[:300] or DEFAULT_ABOUT["hero_subtitle"],
         "mission_title": payload.mission_title.strip()[:120] or "Why we exist",
