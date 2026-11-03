@@ -1,22 +1,31 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { mission, values, story, org } from '../mock/mock';
+import { mission, values, story } from '../mock/mock';
 import { useAboutContent, imgSrc } from '../lib/useHomeContent';
 
-const FALLBACK = { hero_subtitle: 'What began as ten women around a kitchen table is now a global network transforming individual ambition into shared empowerment.', mission_title: 'Why we exist', mission_body: mission.body, mission_image: '', values, story_title: 'A journey of shared strength', story: story.map((s) => ({ ...s, image: '' })) };
+const FALLBACK = { hero_kicker: 'About Caring Sisters Club', hero_title: 'A sisterhood built on love, respect, and empowerment', hero_image: '', mission_eyebrow: 'Our Mission', tax_note: 'The Caring Sisters Club, Inc. is a registered 501(c)(3) Tax-Exempt Nonprofit Organization. All contributions are tax-deductible to the extent permitted by law.', values_eyebrow: 'Our Values', values_title: 'The principles that guide us', story_eyebrow: 'Our Story', cta_title: 'Ready to build alongside us?', cta_btn1_label: 'Meet our Board', cta_btn1_link: '/leadership', cta_btn2_label: 'Get Involved', cta_btn2_link: '/volunteer', hero_subtitle: 'What began as ten women around a kitchen table is now a global network transforming individual ambition into shared empowerment.', mission_title: 'Why we exist', mission_body: mission.body, mission_image: '', values, story_title: 'A journey of shared strength', story: story.map((s) => ({ ...s, image: '' })) };
 import PageHero from '../components/PageHero';
 import Reveal from '../components/Reveal';
 import * as Icons from 'lucide-react';
 import { ArrowRight, BadgeCheck } from 'lucide-react';
 
+const CtaLink = ({ to, className, children, testid }) => (/^(https:|mailto:)/.test(to || '')
+  ? <a href={to} target={to.startsWith('https:') ? '_blank' : undefined} rel="noreferrer" className={className} data-testid={testid}>{children}</a>
+  : <Link to={to || '/'} className={className} data-testid={testid}>{children}</Link>);
+
 export default function About() {
-  const a = useAboutContent(FALLBACK);
+  return <AboutView a={useAboutContent(FALLBACK)} />;
+}
+
+export function AboutView({ a: raw }) {
+  const a = { ...FALLBACK, ...raw };
   return (
     <div>
       <PageHero
-        kicker="About Caring Sisters Club"
-        title="A sisterhood built on love, respect, and empowerment"
+        kicker={a.hero_kicker}
+        title={a.hero_title}
         subtitle={a.hero_subtitle}
+        image={a.hero_image ? imgSrc(a.hero_image) : ''}
       />
 
       {/* Mission + 501c3 */}
@@ -26,15 +35,13 @@ export default function About() {
             <img loading="lazy" decoding="async" src={imgSrc(a.mission_image, mission.image)} alt="Caring Sisters Club member" className="w-full h-[460px] object-cover" />
           </Reveal>
           <Reveal delay={120}>
-            <p className="eyebrow text-[#B4247E] mb-4">Our Mission</p>
+            <p className="eyebrow text-[#B4247E] mb-4">{a.mission_eyebrow}</p>
             <h2 className="font-serif text-[32px] lg:text-[42px] text-[#3B0A2E] font-semibold mb-6 leading-tight">{a.mission_title}</h2>
             <p className="text-[#241019]/75 text-[16px] leading-relaxed mb-5 whitespace-pre-line">{a.mission_body}</p>
-            <div className="flex items-start gap-3 rounded-xl p-4" style={{ background: '#F7EFE9' }}>
+            {a.tax_note && <div className="flex items-start gap-3 rounded-xl p-4" style={{ background: '#F7EFE9' }}>
               <BadgeCheck className="text-[#B4247E] shrink-0 mt-0.5" size={22} />
-              <p className="text-[14px] text-[#3B0A2E]/85 leading-relaxed">
-                {org.name} is a registered <strong>{org.status}</strong>. All contributions are tax-deductible to the extent permitted by law.
-              </p>
-            </div>
+              <p className="text-[14px] text-[#3B0A2E]/85 leading-relaxed whitespace-pre-line" data-testid="about-tax-note">{a.tax_note}</p>
+            </div>}
           </Reveal>
         </div>
       </section>
@@ -43,8 +50,8 @@ export default function About() {
       <section className="py-20 lg:py-24" style={{ background: '#F7EFE9' }}>
         <div className="max-w-7xl mx-auto px-5 lg:px-8">
           <div className="text-center max-w-2xl mx-auto mb-14">
-            <p className="eyebrow text-[#B4247E] mb-4">Our Values</p>
-            <h2 className="font-serif text-[32px] lg:text-[42px] text-[#3B0A2E] font-semibold">The principles that guide us</h2>
+            <p className="eyebrow text-[#B4247E] mb-4">{a.values_eyebrow}</p>
+            <h2 className="font-serif text-[32px] lg:text-[42px] text-[#3B0A2E] font-semibold">{a.values_title}</h2>
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-7">
             {a.values.map((v, i) => {
@@ -69,7 +76,7 @@ export default function About() {
       <section className="py-20 lg:py-28">
         <div className="max-w-5xl mx-auto px-5 lg:px-8">
           <div className="text-center max-w-2xl mx-auto mb-16">
-            <p className="eyebrow text-[#B4247E] mb-4">Our Story</p>
+            <p className="eyebrow text-[#B4247E] mb-4">{a.story_eyebrow}</p>
             <h2 className="font-serif text-[32px] lg:text-[42px] text-[#3B0A2E] font-semibold">{a.story_title}</h2>
           </div>
           <div className="relative">
@@ -96,10 +103,10 @@ export default function About() {
       {/* CTA strip */}
       <section className="csc-plum-bg py-14">
         <div className="max-w-5xl mx-auto px-5 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-6">
-          <h3 className="font-serif text-[#F7EFE9] text-[26px] md:text-[30px] font-semibold">Ready to build alongside us?</h3>
-          <div className="flex gap-4">
-            <Link to="/leadership" className="btn-outline-cream rounded-full px-7 py-3 font-semibold flex items-center gap-2">Meet our Board <ArrowRight size={16} /></Link>
-            <Link to="/volunteer" className="btn-gold rounded-full px-7 py-3 font-semibold">Get Involved</Link>
+          <h3 className="font-serif text-[#F7EFE9] text-[26px] md:text-[30px] font-semibold" data-testid="about-cta-title">{a.cta_title}</h3>
+          <div className="flex flex-wrap justify-center gap-4">
+            {a.cta_btn1_label && <CtaLink to={a.cta_btn1_link} testid="about-cta-btn1" className="btn-outline-cream rounded-full px-7 py-3 font-semibold flex items-center gap-2">{a.cta_btn1_label} <ArrowRight size={16} /></CtaLink>}
+            {a.cta_btn2_label && <CtaLink to={a.cta_btn2_link} testid="about-cta-btn2" className="btn-gold rounded-full px-7 py-3 font-semibold">{a.cta_btn2_label}</CtaLink>}
           </div>
         </div>
       </section>

@@ -3395,7 +3395,23 @@ async def admin_winbacks(user=Depends(require_admin)):
 
 # ---------- About page content (editable) ----------
 VALUE_ICONS = ("Heart", "Shield", "Sparkles", "Users", "HandHeart", "Star", "Crown", "Globe", "Sprout", "GraduationCap", "Briefcase", "HeartHandshake")
+ABOUT_TEXT_FIELDS = {  # field: (default, max length)
+    "hero_kicker": ("About Caring Sisters Club", 80),
+    "hero_title": ("A sisterhood built on love, respect, and empowerment", 140),
+    "mission_eyebrow": ("Our Mission", 60),
+    "tax_note": ("The Caring Sisters Club, Inc. is a registered 501(c)(3) Tax-Exempt Nonprofit Organization. All contributions are tax-deductible to the extent permitted by law.", 400),
+    "values_eyebrow": ("Our Values", 60),
+    "values_title": ("The principles that guide us", 120),
+    "story_eyebrow": ("Our Story", 60),
+    "cta_title": ("Ready to build alongside us?", 140),
+    "cta_btn1_label": ("Meet our Board", 40),
+    "cta_btn1_link": ("/leadership", 300),
+    "cta_btn2_label": ("Get Involved", 40),
+    "cta_btn2_link": ("/volunteer", 300),
+}
 DEFAULT_ABOUT = {
+    **{k: v[0] for k, v in ABOUT_TEXT_FIELDS.items()},
+    "hero_image": "",
     "hero_subtitle": "What began as ten women around a kitchen table is now a global network transforming individual ambition into shared empowerment.",
     "mission_title": "Why we exist",
     "mission_body": DEFAULT_HOME["mission_body"],
@@ -3431,6 +3447,19 @@ class StoryItem(BaseModel):
 
 
 class AboutIn(BaseModel):
+    hero_kicker: str = ""
+    hero_title: str = ""
+    hero_image: str = ""
+    mission_eyebrow: str = ""
+    tax_note: str = ""
+    values_eyebrow: str = ""
+    values_title: str = ""
+    story_eyebrow: str = ""
+    cta_title: str = ""
+    cta_btn1_label: str = ""
+    cta_btn1_link: str = ""
+    cta_btn2_label: str = ""
+    cta_btn2_link: str = ""
     hero_subtitle: str = ""
     mission_title: str = ""
     mission_body: str = ""
@@ -3459,9 +3488,15 @@ async def admin_update_about(payload: AboutIn, user=Depends(require_admin)):
         raise bad("Add 1–8 values, each with a title.")
     if len(payload.story) > 12 or any(not st.title.strip() for st in payload.story):
         raise bad("Each story milestone needs a title (max 12).")
-    if not all(_ok_img(u.strip()) for u in [payload.mission_image] + [st.image for st in payload.story]):
+    if not all(_ok_img(u.strip()) for u in [payload.mission_image, payload.hero_image] + [st.image for st in payload.story]):
         raise bad("Photos must be uploaded images or https URLs")
+    for f in ("cta_btn1_link", "cta_btn2_link"):
+        link = getattr(payload, f).strip()
+        if link and not (link.startswith("/") and not link.startswith("//") or link.startswith("https://") or link.startswith("mailto:")):
+            raise bad("Button links must start with / (a page on this site), https:// or mailto:")
     doc = {
+        **{k: (getattr(payload, k).strip()[:mx] or d) for k, (d, mx) in ABOUT_TEXT_FIELDS.items()},
+        "hero_image": payload.hero_image.strip(),
         "hero_subtitle": payload.hero_subtitle.strip()[:300] or DEFAULT_ABOUT["hero_subtitle"],
         "mission_title": payload.mission_title.strip()[:120] or "Why we exist",
         "mission_body": payload.mission_body.strip()[:3000], "mission_image": payload.mission_image.strip(),

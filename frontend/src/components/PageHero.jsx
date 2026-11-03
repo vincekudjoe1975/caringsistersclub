@@ -1,8 +1,9 @@
 import React from 'react';
 
-export default function PageHero({ kicker, title, subtitle, align = 'left' }) {
+export default function PageHero({ kicker, title, subtitle, align = 'left', image = '' }) {
   return (
-    <section className="csc-hero-gradient pt-[132px] pb-16 md:pb-20 relative overflow-hidden">
+    <section className="csc-hero-gradient pt-[132px] pb-16 md:pb-20 relative overflow-hidden" data-testid="page-hero">
+      {image && <><img src={image} alt="" aria-hidden="true" data-testid="page-hero-image" className="absolute inset-0 w-full h-full object-cover" /><div className="absolute inset-0" style={{ background: 'linear-gradient(100deg, rgba(42,6,33,.92) 0%, rgba(59,10,46,.78) 45%, rgba(59,10,46,.45) 100%)' }} /></>}
       <div
         className="absolute -right-24 -top-24 w-96 h-96 rounded-full opacity-30"
         style={{ background: 'radial-gradient(circle, #D14FA0, transparent 70%)' }}
