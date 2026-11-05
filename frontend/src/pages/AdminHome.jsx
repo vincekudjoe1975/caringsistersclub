@@ -152,7 +152,7 @@ export default function AdminHome() {
       <div className="grid xl:grid-cols-2 gap-5 items-start">
         <div className="space-y-5">
           <Card icon={ImageIcon} title="Page header (top of the Home page)">
-            <Label>Header photo</Label><ImageUpload value={form.hero_image} onChange={(url) => setForm((f) => ({ ...f, hero_image: url }))} category="gallery" testid="home-hero-image-input" fallback={hero.image} />
+            <Label>Header photo</Label><ImageUpload value={form.hero_image} onChange={(url) => setForm((f) => ({ ...f, hero_image: url }))} category="site" testid="home-hero-image-input" fallback={hero.image} />
             <Label>Photo description (for screen readers)</Label><input value={form.hero_image_alt} onChange={set('hero_image_alt')} className={inp} data-testid="home-hero-alt-input" />
             <Label>Small label above the title (empty hides it)</Label><input value={form.hero_kicker} onChange={set('hero_kicker')} className={inp} data-testid="home-hero-kicker-input" />
             <Label>Big title</Label><input value={form.hero_title} onChange={set('hero_title')} className={inp} data-testid="home-hero-title-input" />
@@ -161,7 +161,7 @@ export default function AdminHome() {
               <div><Label>Badge number</Label><input value={form.hero_badge_number} onChange={set('hero_badge_number')} placeholder="2,400+" className={inp} data-testid="home-hero-badge-number-input" /></div>
               <div><Label>Badge label</Label><input value={form.hero_badge_label} onChange={set('hero_badge_label')} placeholder="Sisters empowered" className={inp} data-testid="home-hero-badge-label-input" /></div>
             </div>
-            <p className="text-[11.5px] text-[#241019]/50 mt-1.5">Leave the badge number empty to hide the badge on the photo.</p>
+            <p className="text-[11.5px] text-[#241019]/50 mt-1.5">Leave the badge number empty to hide the badge. The badge shows on tablets and computers, not on phones.</p>
           </Card>
           <Card icon={Target} title="Mission section">
             <Label>Small heading</Label><input value={form.mission_heading} onChange={set('mission_heading')} className={inp} data-testid="home-mission-heading-input" />

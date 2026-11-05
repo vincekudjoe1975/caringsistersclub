@@ -124,7 +124,7 @@ def get_object(path: str):
 
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 ADMIN_OWNER_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_OWNER_EMAILS", "").split(",") if e.strip()}
-ALLOWED_CATEGORIES = {"gallery", "board", "document", "event", "report", "program", "share", "sponsor", "auction"}
+ALLOWED_CATEGORIES = {"gallery", "board", "document", "event", "report", "program", "share", "sponsor", "auction", "site"}
 
 
 class SessionRequest(BaseModel):
@@ -3331,13 +3331,13 @@ class PillarItem(BaseModel):
 
 
 class HomeContentIn(BaseModel):
-    hero_kicker: str = ""
-    hero_title: str = ""
-    hero_subtitle: str = ""
-    hero_image: str = ""
-    hero_image_alt: str = ""
-    hero_badge_number: str = ""
-    hero_badge_label: str = ""
+    hero_kicker: Optional[str] = None
+    hero_title: Optional[str] = None
+    hero_subtitle: Optional[str] = None
+    hero_image: Optional[str] = None
+    hero_image_alt: Optional[str] = None
+    hero_badge_number: Optional[str] = None
+    hero_badge_label: Optional[str] = None
     mission_heading: str = ""
     mission_title: str = ""
     mission_body: str = ""
@@ -3363,7 +3363,9 @@ async def admin_update_home_content(payload: HomeContentIn, user=Depends(require
         raise HTTPException(status_code=400, detail="Mission title and paragraph are required.")
     if not _ok_img(payload.mission_image.strip()):
         raise HTTPException(status_code=400, detail="Mission image must be an uploaded image or https URL")
-    if not _ok_img(payload.hero_image.strip()):
+    current = await _get_home_content()
+    hero_in = {k: (getattr(payload, k) if getattr(payload, k) is not None else current[k]) for k in [*HOME_HERO_FIELDS, "hero_image"]}
+    if not _ok_img(hero_in["hero_image"].strip()):
         raise HTTPException(status_code=400, detail="Header photo must be an uploaded image or https URL")
     if not 1 <= len(payload.pillars) <= 6:
         raise HTTPException(status_code=400, detail="Add between 1 and 6 mission cards.")
@@ -3377,8 +3379,8 @@ async def admin_update_home_content(payload: HomeContentIn, user=Depends(require
         pillars.append({"icon": c.icon if c.icon in HOME_ICONS else "Sparkles", "title": c.title.strip()[:80],
                         "text": c.text.strip()[:500], "cta": c.cta.strip()[:40] or "Learn More", "to": to})
     doc = {
-        **{k: (getattr(payload, k).strip()[:mx] or (d if req else "")) for k, (d, mx, req) in HOME_HERO_FIELDS.items()},
-        "hero_image": payload.hero_image.strip(),
+        **{k: (hero_in[k].strip()[:mx] or (d if req else "")) for k, (d, mx, req) in HOME_HERO_FIELDS.items()},
+        "hero_image": hero_in["hero_image"].strip(),
         "mission_heading": payload.mission_heading.strip()[:60] or "Our Mission",
         "mission_title": payload.mission_title.strip()[:150], "mission_body": payload.mission_body.strip()[:2000],
         "mission_quote": payload.mission_quote.strip()[:300], "mission_image": payload.mission_image.strip(),

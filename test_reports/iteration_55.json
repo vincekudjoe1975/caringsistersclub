@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 55: Tested the editable Home page header. The header covers the kicker, title, subtitle, photo, alt text, badge number and badge label. Testing covered GET /api/home-content, PUT /api/admin/home-content, the AdminHome 'Page header' card, the Preview overlay, and HomeHero on the public Home page. Backend: 8/8 pytest passed (test_iter55_home_hero_editable.py). Results: (1) Defaults are returned when the fields are unset, and there is no _id. (2) PUT without auth returns 401/403. (3) All 7 hero fields persist and the mission and pillars fields stay intact. (4) Empty optional fields save as '' and are hidden; an empty title falls back to the default. (5) Max lengths are enforced: 80/140/300/160/20/40. (6) A header photo URL using http://, javascript: or a non-media path returns 400 'Header photo must be...', and the stored value is unchanged. (7) /api/media/file/... is accepted. Frontend: all checks passed at 1920px and 390px. The editor loads the default values. The preview overlay shows the edited kicker and title, the subtitle disappears when emptied, and the badge shows 5,000+ / TEST_ strong. 'Keep editing' closes the preview. 'Publish now' saves, closes the preview and updates the 'Last published' status. The public Home page shows the new title, kicker and badge, and hides the subtitle. A photo upload through home-hero-image-input works: the thumbnail updates and the public hero img uses the /api/media/file URL. Publishing an empty title restores the default title. Using 'View Site' from the admin to the Home page shows the fresh content, so the cache reset works. The real settings{key:'home'} doc was backed up and restored exactly, and the temporary admin user, session and uploaded media were removed. GET /api/videos was smoke-checked and returns items.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/admin/home-content", "issue": "A payload that omits the hero_* fields is treated as hiding them. This happens for any client that does not send these fields, for example an admin tab still running the pre-deploy JS bundle. Saving that payload silently stores kicker, subtitle, badge number, badge label and alt as '', which hides them on the live page. Only the title falls back to its default. Possible fix: make the HomeContentIn hero fields Optional[str]=None and keep the stored or default value when the field is None."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Public Home first paint", "issue": "Flash of old content. The FALLBACK in useHomeContent has no hero_* keys, so HomeHero renders the mock title, kicker and subtitle until /api/home-content resolves, then swaps to the custom text. When the API was delayed 2.5s, the old default title was visible first. This becomes noticeable once staff change the header. Possible fix: render a neutral skeleton or hidden text for the hero until the data has loaded.", "affected_selectors": ["[data-testid='home-hero-title']", "[data-testid='home-hero-kicker']"]},
+      {"flow": "Header photo upload", "issue": "ImageUpload uses category='gallery' for the hero photo. This is the same as the existing mission and About images. The uploaded header photo therefore also appears in the public Gallery (/api/media?category=gallery), because uploads are not hidden. Consider using a non-listed category such as 'site', or setting hidden:true.", "affected_selectors": ["[data-testid='home-hero-image-input']"]}
+    ],
+    "design_issues": [
+      {"screen": "Public site header (desktop 1920px)", "issues": ["Header.jsx now puts 11 nav links, Member Login and Donate in max-w-7xl. The Logo text 'CARING SISTERS club' wraps onto 2 lines and the 'LOVE · RESPECT · EMPOWERMENT' tagline wraps onto 3 lines, because the Logo Link has no shrink-0 or whitespace-nowrap. The nav looks cramped. Add shrink-0 to the Logo wrapper, or reduce the nav gap or font size at xl."]},
+      {"screen": "Home hero (mobile)", "issues": ["The badge is hidden below md. This is unchanged from before, but the admin helper text does not mention that the badge only shows on larger screens."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter55_home_hero_editable.py", "/app/test_reports/pytest/pytest_iter55.xml"],
+  "action_items": [
+    "Optional: preserve stored hero values when a PUT omits the hero_* fields (Optional/None instead of '').",
+    "Avoid the default-to-custom hero text flash on the public Home first paint.",
+    "Fix the Logo text wrapping in the desktop header (add shrink-0 / whitespace-nowrap to the Logo link).",
+    "Consider uploading site images (hero, mission) under a category that is not listed in the public Gallery."
+  ],
+  "critical_code_review_comments": [
+    "HomeHero uses pick() for kicker, subtitle and badge, which correctly treats '' as hidden. The alt text falls back to 'Caring Sisters Club' when empty, which is fine.",
+    "test_home_winbacks_gallery.py calls DB.settings.delete_one({'key':'home'}), which wipes the user's real published Home content. Do not run that file against this DB without backing up first. The iter55 test backs up and restores.",
+    "AdminHome.jsx imports HomeHero from Home.jsx, which pulls the whole public Home module into the admin bundle. This is acceptable."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter55_home_hero_editable.py"],
+  "success_rate": {"backend": "100%", "frontend": "100% (core flows); 3 minor issues"},
+  "seed_data_creation": "None left behind. The temporary admin qa_user_iter55 / qa_tok_iter55 was deleted. The home settings doc was restored from a backup. The test media 8ea19fa5... was soft-deleted (is_deleted=true).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "PUT endpoints need the header X-Requested-With: XMLHttpRequest, otherwise they return 403. Admin is reached via cookie session_token plus the admin-view-home button. Hero testids are home-hero-{kicker,title,subtitle,alt,badge-number,badge-label}-input and home-hero-image-input, preview-home-hero-btn, home-hero-preview, home-preview-close-btn and home-preview-publish-btn. Public page testids are home-hero-title, home-hero-kicker, home-hero-subtitle, home-hero-badge and home-hero-image."
+}

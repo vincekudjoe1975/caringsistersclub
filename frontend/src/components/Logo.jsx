@@ -7,7 +7,7 @@ export default function Logo({ variant = 'light', compact = false }) {
   const isLight = variant === 'light';
   const size = compact ? 44 : 54;
   return (
-    <Link to="/" className="flex items-center gap-3 group" aria-label={`${org.name} home`}>
+    <Link to="/" className="flex items-center gap-3 group shrink-0 whitespace-nowrap" aria-label={`${org.name} home`}>
       <img
         src={logoImg}
         alt="Caring Sisters Club logo"

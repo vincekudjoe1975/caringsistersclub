@@ -17,7 +17,7 @@ export function useHomeContent() {
   useEffect(() => {
     if (cache) return;
     api.get('/home-content').then(({ data: d }) => { cache = d; setData(d); })
-      .catch((e) => console.error('Home content: load failed', e));
+      .catch((e) => { console.error('Home content: load failed', e); setData((d) => ({ ...d, hero_title: '' })); });
   }, []);
   return data;
 }

@@ -507,3 +507,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - GET /api/videos reads the public YouTube RSS feed for channel UCZIVBopmLHB2KGpUBJEZvGQ (@CaringSisters-m7b). No API key. Cached 30 min in memory and in settings key yt_videos as a fallback. Returns the latest 15 (a limit of the feed) with a short flag; Shorts use portrait oar2 thumbnails.
 - /videos page (pages/Videos.jsx): long videos in a 16:9 grid, Shorts in a portrait grid, a pop-up player (YouTube embed), and a Subscribe button. "Videos" added to the nav. The desktop nav now starts at xl (1280px) and the hamburger is used below that, because 10 links overflowed.
 - Embedded playback could not be verified in the headless browser (YouTube blocks it); needs a real-device check.
+
+
+## 2026-06 — Editable Home page header (iteration 55, agent-tested, not user-confirmed)
+- Admin > Home Page > "Page header": photo (uploaded with category "site", which is not listed in the public Gallery), alt text, kicker, title, subtitle, badge number and label (an empty kicker, subtitle or badge number hides it; an empty title falls back to the default). "Preview header" overlay with Keep editing / Publish now.
+- Home.jsx exports HomeHero and fades in after content loads (no flash of the old text). PUT /admin/home-content treats missing hero_* fields as "keep the current value".
+- Header: the logo no longer wraps; nav text is 13.5px at xl.
+- The 2 hero buttons stay fixed (user did not select them). Not yet redeployed.

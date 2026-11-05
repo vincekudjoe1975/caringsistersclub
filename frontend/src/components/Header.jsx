@@ -38,7 +38,7 @@ export default function Header() {
               key={item.to}
               to={item.to}
               className={({ isActive }) =>
-                `text-[14px] tracking-wide link-underline transition-colors ${
+                `text-[13.5px] 2xl:text-[14px] whitespace-nowrap tracking-wide link-underline transition-colors ${
                   isActive ? 'text-[#CBA24B]' : 'text-[#F7EFE9]/85 hover:text-[#F7EFE9]'
                 }`
               }

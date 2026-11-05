@@ -21,10 +21,11 @@ export function HomeHero({ home }) {
     image: imgSrc(home.hero_image, hero.image), alt: home.hero_image_alt || 'Caring Sisters Club',
     badgeNumber: pick('hero_badge_number', '2,400+'), badgeLabel: pick('hero_badge_label', 'Sisters empowered'),
   };
+  const fade = { opacity: home.hero_title === undefined ? 0 : 1, transition: 'opacity .35s ease' };
   return (
       <section className="csc-hero-gradient relative overflow-hidden">
         <div className="max-w-7xl mx-auto px-5 lg:px-8 pt-[120px] pb-16 lg:pt-[150px] lg:pb-24 grid lg:grid-cols-2 gap-12 items-center">
-          <div className="relative z-10">
+          <div className="relative z-10" style={fade}>
             {h.kicker && <p className="eyebrow text-[#CBA24B] mb-5" data-testid="home-hero-kicker">{h.kicker}</p>}
             <h1 data-testid="home-hero-title" className="font-serif text-[#F7EFE9] text-[44px] sm:text-[56px] lg:text-[66px] leading-[1.02] font-semibold text-shadow-soft">
               {h.title}
@@ -42,8 +43,8 @@ export function HomeHero({ home }) {
             </div>
           </div>
           <Reveal className="relative">
-            <div className="relative rounded-[24px] overflow-hidden img-zoom" style={{ boxShadow: '0 40px 80px -30px rgba(0,0,0,0.6)' }}>
-              <img fetchpriority="high" src={h.image} alt={h.alt} data-testid="home-hero-image" className="w-full h-[420px] lg:h-[560px] object-cover" />
+            <div className="relative rounded-[24px] overflow-hidden img-zoom bg-[#3B0A2E]" style={{ boxShadow: '0 40px 80px -30px rgba(0,0,0,0.6)' }}>
+              <img fetchpriority="high" style={fade} src={home.hero_title === undefined ? undefined : h.image} alt={h.alt} data-testid="home-hero-image" className="w-full h-[420px] lg:h-[560px] object-cover" />
               <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, transparent 55%, rgba(41,6,31,0.55))' }} />
             </div>
             {h.badgeNumber && <div data-testid="home-hero-badge" className="absolute -bottom-6 -left-6 bg-[#F7EFE9] rounded-2xl px-6 py-4 shadow-xl hidden md:block">
