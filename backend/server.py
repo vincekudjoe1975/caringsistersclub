@@ -354,10 +354,6 @@ async def _send_verify(user: dict):
 @api_router.post("/auth/signup")
 async def auth_signup(payload: SignupIn, request: Request, background: BackgroundTasks):
     await _rate_limit(request, "auth_signup", 10, 3600)
-    try:
-        await _detect_site_url(request)
-    except Exception as e:
-        logging.error(f"Site URL detection failed: {e}")
     email = _norm_email(payload.email)
     _check_strength(payload.password)
     name = re.sub(r"\s+", " ", payload.name or "").strip()[:80]
@@ -386,7 +382,8 @@ async def auth_signup(payload: SignupIn, request: Request, background: Backgroun
 
 
 @api_router.post("/auth/verify-email")
-async def auth_verify_email(payload: TokenIn, response: Response):
+async def auth_verify_email(payload: TokenIn, request: Request, response: Response):
+    await _rate_limit(request, "auth_verify_submit", 20, 900)
     t = await _consume_auth_token(payload.token, "verify")
     u = await db.users.find_one({"user_id": t["user_id"]}, {"_id": 0})
     if not u:
@@ -400,10 +397,6 @@ async def auth_verify_email(payload: TokenIn, response: Response):
 @api_router.post("/auth/resend-verification")
 async def auth_resend_verification(payload: EmailOnlyIn, request: Request, background: BackgroundTasks):
     await _rate_limit(request, "auth_resend", 5, 3600)
-    try:
-        await _detect_site_url(request)
-    except Exception as e:
-        logging.error(f"Site URL detection failed: {e}")
     u = await _user_by_email(_norm_email(payload.email))
     if u and not u.get("email_verified") and await db.user_credentials.find_one({"user_id": u["user_id"]}, {"_id": 1}):
         background.add_task(_send_verify, u)
@@ -435,10 +428,6 @@ async def auth_login(payload: LoginIn, request: Request, response: Response):
 @api_router.post("/auth/reset-password-request")
 async def auth_reset_request(payload: EmailOnlyIn, request: Request, background: BackgroundTasks):
     await _rate_limit(request, "auth_reset", 5, 3600)
-    try:
-        await _detect_site_url(request)
-    except Exception as e:
-        logging.error(f"Site URL detection failed: {e}")
     email = _norm_email(payload.email)
     u = await _user_by_email(email)
     if not u and await _is_team_email(email):
@@ -489,7 +478,8 @@ async def auth_set_password(payload: SetPwIn, request: Request, user=Depends(get
 
 
 @api_router.post("/auth/reset-password")
-async def auth_reset_password(payload: ResetIn):
+async def auth_reset_password(payload: ResetIn, request: Request):
+    await _rate_limit(request, "auth_reset_submit", 10, 900)
     _check_strength(payload.password)
     t = await _consume_auth_token(payload.token, "reset")
     uid = t["user_id"]
@@ -964,6 +954,7 @@ class SubmissionCreate(BaseModel):
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PUBLIC_SUB_TYPES = {"volunteer", "member", "contact"}
+_SUB_FIELDS = {"name", "email", "phone", "city", "interest", "message", "subject"}
 SUB_LABELS = {"program_signup": "Program sign-up", "story": "Member story", "volunteer": "Volunteer application", "member": "Membership application", "contact": "Contact message", "rsvp": "Event RSVP"}
 
 
@@ -1016,6 +1007,8 @@ async def create_submission(payload: SubmissionCreate, request: Request, backgro
     stype = data.get("type")
     if stype not in PUBLIC_SUB_TYPES:
         raise HTTPException(status_code=400, detail="Invalid submission type")
+    data = {k: str(v).strip()[:3000] for k, v in data.items() if k in _SUB_FIELDS and isinstance(v, (str, int, float))}
+    data["type"] = stype
     _validate_person(data)
     if stype == "contact" and not str(data.get("message") or "").strip():
         raise HTTPException(status_code=400, detail="Please enter a message.")
@@ -1197,7 +1190,7 @@ async def send_email(*, to: str, subject: str, html: str, reply_to: str = None):
         return None
 
 
-_SITE_URL_FALLBACK = os.environ.get("PUBLIC_APP_URL", "https://caring-sisters-clone.preview.emergentagent.com").rstrip("/")
+_SITE_URL_FALLBACK = (os.environ.get("PUBLIC_APP_URL") or "https://caringsistersclub.org").rstrip("/")
 PUBLIC_APP_URL = _SITE_URL_FALLBACK
 
 
@@ -1211,16 +1204,26 @@ def _clean_site_url(url: str) -> str:
     return f"https://{parsed.netloc.lower()}"
 
 
+CANONICAL_SITE_URL = "https://caringsistersclub.org"
+_TRUSTED_SITE_HOSTS = {"caringsistersclub.org", "www.caringsistersclub.org"} | {
+    o.split("://", 1)[-1].strip().rstrip("/").lower() for o in os.environ["CORS_ORIGINS"].split(",") if o.strip().endswith(".preview.emergentagent.com")}
+
+
+def _trusted_site(url: str) -> bool:
+    return bool(url) and url.startswith("https://") and url[8:].rstrip("/").lower() in _TRUSTED_SITE_HOSTS
+
+
 async def _refresh_site_url():
-    """Email links use the admin-set site_url, else the host this deployment was last reached on."""
+    """Email links: admin-set site_url, else env PUBLIC_APP_URL, else a trusted detected host, else the canonical domain."""
     global PUBLIC_APP_URL
     doc = await db.settings.find_one({"key": "site"}, {"_id": 0}) or {}
-    PUBLIC_APP_URL = (doc.get("site_url") or doc.get("detected_site_url") or _SITE_URL_FALLBACK).rstrip("/")
+    detected = doc.get("detected_site_url") if _trusted_site(doc.get("detected_site_url") or "") else ""
+    PUBLIC_APP_URL = (doc.get("site_url") or os.environ.get("PUBLIC_APP_URL") or detected or CANONICAL_SITE_URL).rstrip("/")
 
 
 async def _detect_site_url(request: Request):
     host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip().lower()
-    if not host or host.startswith(("localhost", "127.", "0.0.0.0")) or ":" in host:
+    if not host or host not in _TRUSTED_SITE_HOSTS:
         return
     url = f"https://{host}"
     doc = await db.settings.find_one({"key": "site"}, {"_id": 0, "detected_site_url": 1}) or {}
@@ -11831,7 +11834,12 @@ async def ticket_session_status(session_id: str):
                 o = await db.ticket_orders.find_one({"session_id": session_id}, {"_id": 0})
         except Exception as ex:
             logging.warning(f"Ticket status check failed: {ex}")
-    return {"status": o["status"], "token": o["token"] if o["status"] == "paid" else "", "event_title": o["event_title"], "email": o["email"]}
+    return {"status": o["status"], "token": o["token"] if o["status"] == "paid" else "", "event_title": o["event_title"], "email": _mask_email(o.get("email", ""))}
+
+
+def _mask_email(e: str) -> str:
+    user, _, dom = (e or "").partition("@")
+    return f"{user[:1]}***@{dom}" if dom else ""
 
 
 @api_router.get("/tickets/order/{token}")
@@ -12575,7 +12583,7 @@ async def auction_win(token: str):
     w = await db.auction_wins.find_one({"token": token[:60]}, {"_id": 0})
     if not w:
         raise HTTPException(status_code=404, detail="Not found")
-    return {k: w[k] for k in ("title", "amount", "name", "status")}
+    return {"title": w["title"], "amount": w["amount"], "status": w["status"], "name": (w.get("name") or "").split(" ")[0]}
 
 
 @api_router.post("/auction/pay/{token}")
@@ -12797,6 +12805,19 @@ async def admin_merge(payload: MergeIn, user=Depends(require_admin)):
 
 # Include the router in the main app
 app.include_router(api_router)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    h = resp.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("X-Frame-Options", "SAMEORIGIN")
+    h.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
+    h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    h.setdefault("Permissions-Policy", "camera=(self), microphone=(), geolocation=(), payment=(self)")
+    return resp
 
 app.add_middleware(
     CORSMiddleware,

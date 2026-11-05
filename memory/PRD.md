@@ -514,3 +514,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Home.jsx exports HomeHero and fades in after content loads (no flash of the old text). PUT /admin/home-content treats missing hero_* fields as "keep the current value".
 - Header: the logo no longer wraps; nav text is 13.5px at xl.
 - The 2 hero buttons stay fixed (user did not select them). Not yet redeployed.
+
+
+## 2026-06 — Security fixes (re-audit PASS)
+- Email links are never built from request host headers. PUBLIC_APP_URL order: admin site_url, then env PUBLIC_APP_URL, then a trusted detected host (caringsistersclub.org, www, or a preview host from CORS_ORIGINS), then https://caringsistersclub.org. Detection runs only on admin /auth/me.
+- security_headers middleware: nosniff, X-Frame-Options SAMEORIGIN, CSP frame-ancestors self, Referrer-Policy, HSTS, Permissions-Policy. index.html has a referrer meta tag and an anti-framing script (allows *.emergentagent.com for preview).
+- Rate limits on /auth/reset-password and /auth/verify-email. Ticket status returns a masked email; the auction pay page returns only the first name. Public submissions keep only the _SUB_FIELDS allowlist.
+- Redeploy queued.
