@@ -3290,7 +3290,17 @@ async def admin_program_categories(payload: CategoriesIn, user=Depends(require_a
 
 # ---------- Home page content (editable) ----------
 HOME_ICONS = ("Briefcase", "HeartHandshake", "Home", "Users", "GraduationCap", "Sparkles", "HandHeart", "Globe", "Heart", "Star", "Crown", "Sprout")
+HOME_HERO_FIELDS = {  # field: (default, max length, required)
+    "hero_kicker": ("Welcome to Caring Sisters Club", 80, False),
+    "hero_title": ("Connecting & Empowering Women of the Diaspora", 140, True),
+    "hero_subtitle": ("A powerful professional network fostering friendship, mutual respect, and philanthropic growth globally.", 300, False),
+    "hero_image_alt": ("Confident professional woman of the Diaspora in a magenta blazer", 160, False),
+    "hero_badge_number": ("2,400+", 20, False),
+    "hero_badge_label": ("Sisters empowered", 40, False),
+}
 DEFAULT_HOME = {
+    **{k: v[0] for k, v in HOME_HERO_FIELDS.items()},
+    "hero_image": "",
     "mission_heading": "Our Mission",
     "mission_title": "Bridging the distance for women in the Diaspora",
     "mission_body": ("Caring Sisters Club, Inc. is dedicated to bridging the distance for women in the Diaspora. We provide a powerhouse platform "
@@ -3321,6 +3331,13 @@ class PillarItem(BaseModel):
 
 
 class HomeContentIn(BaseModel):
+    hero_kicker: str = ""
+    hero_title: str = ""
+    hero_subtitle: str = ""
+    hero_image: str = ""
+    hero_image_alt: str = ""
+    hero_badge_number: str = ""
+    hero_badge_label: str = ""
     mission_heading: str = ""
     mission_title: str = ""
     mission_body: str = ""
@@ -3346,6 +3363,8 @@ async def admin_update_home_content(payload: HomeContentIn, user=Depends(require
         raise HTTPException(status_code=400, detail="Mission title and paragraph are required.")
     if not _ok_img(payload.mission_image.strip()):
         raise HTTPException(status_code=400, detail="Mission image must be an uploaded image or https URL")
+    if not _ok_img(payload.hero_image.strip()):
+        raise HTTPException(status_code=400, detail="Header photo must be an uploaded image or https URL")
     if not 1 <= len(payload.pillars) <= 6:
         raise HTTPException(status_code=400, detail="Add between 1 and 6 mission cards.")
     pillars = []
@@ -3358,6 +3377,8 @@ async def admin_update_home_content(payload: HomeContentIn, user=Depends(require
         pillars.append({"icon": c.icon if c.icon in HOME_ICONS else "Sparkles", "title": c.title.strip()[:80],
                         "text": c.text.strip()[:500], "cta": c.cta.strip()[:40] or "Learn More", "to": to})
     doc = {
+        **{k: (getattr(payload, k).strip()[:mx] or (d if req else "")) for k, (d, mx, req) in HOME_HERO_FIELDS.items()},
+        "hero_image": payload.hero_image.strip(),
         "mission_heading": payload.mission_heading.strip()[:60] or "Our Mission",
         "mission_title": payload.mission_title.strip()[:150], "mission_body": payload.mission_body.strip()[:2000],
         "mission_quote": payload.mission_quote.strip()[:300], "mission_image": payload.mission_image.strip(),

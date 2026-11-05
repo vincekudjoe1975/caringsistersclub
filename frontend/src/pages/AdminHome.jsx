@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import * as Icons from 'lucide-react';
-import { Loader2, Plus, Trash2, Save, UploadCloud, ArrowUp, ArrowDown, LayoutTemplate, MessageSquareQuote, Target } from 'lucide-react';
+import { Loader2, Plus, Trash2, Save, UploadCloud, ArrowUp, ArrowDown, LayoutTemplate, MessageSquareQuote, Target, Eye, X, Image as ImageIcon } from 'lucide-react';
+import { HomeHero } from './Home';
+import { hero } from '../mock/mock';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 import { imgSrc, uploadImage, resetHomeContentCache, DEFAULT_MISSION_IMAGE } from '../lib/useHomeContent';
@@ -102,6 +104,7 @@ function PillarsEditor({ items, onChange }) {
 export default function AdminHome() {
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [preview, setPreview] = useState(false);
   const { toast } = useToast();
   useEffect(() => {
     api.get('/home-content').then(({ data }) => setForm(data)).catch(() => toast({ title: 'Could not load Home content', variant: 'destructive' }));
@@ -112,7 +115,7 @@ export default function AdminHome() {
     setSaving(true);
     try {
       const { data } = await api.put('/admin/home-content', form);
-      setForm(data); resetHomeContentCache();
+      setForm(data); setPreview(false); resetHomeContentCache();
       toast({ title: 'Home page published', description: 'Your changes are live.' });
     } catch (err) {
       toast({ title: 'Save failed', description: err?.response?.data?.detail || 'Try again', variant: 'destructive' });
@@ -127,12 +130,39 @@ export default function AdminHome() {
           <h2 className="font-serif text-[24px] text-[#3B0A2E] font-semibold flex items-center gap-2"><LayoutTemplate size={22} className="text-[#B4247E]" /> Home Page</h2>
           <p className="text-[#241019]/60 text-[13.5px]" data-testid="home-status">{form.updated_at ? `Last published ${new Date(form.updated_at).toLocaleString()}` : 'Showing the original content. Edit and publish to make it yours.'}</p>
         </div>
-        <button onClick={save} disabled={saving} data-testid="save-home-btn" className="btn-magenta rounded-full px-6 py-2.5 text-[13.5px] font-semibold flex items-center gap-2 disabled:opacity-60">
-          {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Publish Changes
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setPreview(true)} data-testid="preview-home-hero-btn" className="rounded-full px-5 py-2.5 text-[13.5px] font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] flex items-center gap-2 hover:bg-[#F7EFE9] transition-colors"><Eye size={15} /> Preview header</button>
+          <button onClick={save} disabled={saving} data-testid="save-home-btn" className="btn-magenta rounded-full px-6 py-2.5 text-[13.5px] font-semibold flex items-center gap-2 disabled:opacity-60">
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Publish Changes
+          </button>
+        </div>
       </div>
+      {preview && (
+        <div className="fixed inset-0 z-[95] bg-[#29061F] overflow-y-auto" data-testid="home-hero-preview">
+          <div className="sticky top-0 z-[96] bg-[#241019] text-[#F7EFE9] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 border-b border-[#CBA24B]/30">
+            <p className="text-[13px] font-semibold flex items-center gap-2"><Eye size={15} className="text-[#CBA24B]" /> Preview: these changes are not live yet</p>
+            <div className="flex gap-2">
+              <button onClick={() => setPreview(false)} data-testid="home-preview-close-btn" className="rounded-full px-4 py-1.5 text-[13px] font-semibold border border-[#F7EFE9]/30 flex items-center gap-1.5"><X size={14} /> Keep editing</button>
+              <button onClick={save} disabled={saving} data-testid="home-preview-publish-btn" className="btn-gold rounded-full px-4 py-1.5 text-[13px] font-semibold flex items-center gap-1.5 disabled:opacity-60">{saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Publish now</button>
+            </div>
+          </div>
+          <div className="pointer-events-none select-none -mt-[60px]"><HomeHero home={form} /></div>
+        </div>
+      )}
       <div className="grid xl:grid-cols-2 gap-5 items-start">
         <div className="space-y-5">
+          <Card icon={ImageIcon} title="Page header (top of the Home page)">
+            <Label>Header photo</Label><ImageUpload value={form.hero_image} onChange={(url) => setForm((f) => ({ ...f, hero_image: url }))} category="gallery" testid="home-hero-image-input" fallback={hero.image} />
+            <Label>Photo description (for screen readers)</Label><input value={form.hero_image_alt} onChange={set('hero_image_alt')} className={inp} data-testid="home-hero-alt-input" />
+            <Label>Small label above the title (empty hides it)</Label><input value={form.hero_kicker} onChange={set('hero_kicker')} className={inp} data-testid="home-hero-kicker-input" />
+            <Label>Big title</Label><input value={form.hero_title} onChange={set('hero_title')} className={inp} data-testid="home-hero-title-input" />
+            <Label>Line under the title (empty hides it)</Label><textarea rows={2} value={form.hero_subtitle} onChange={set('hero_subtitle')} className={`${inp} resize-y`} data-testid="home-hero-subtitle-input" />
+            <div className="grid grid-cols-[110px_1fr] gap-3">
+              <div><Label>Badge number</Label><input value={form.hero_badge_number} onChange={set('hero_badge_number')} placeholder="2,400+" className={inp} data-testid="home-hero-badge-number-input" /></div>
+              <div><Label>Badge label</Label><input value={form.hero_badge_label} onChange={set('hero_badge_label')} placeholder="Sisters empowered" className={inp} data-testid="home-hero-badge-label-input" /></div>
+            </div>
+            <p className="text-[11.5px] text-[#241019]/50 mt-1.5">Leave the badge number empty to hide the badge on the photo.</p>
+          </Card>
           <Card icon={Target} title="Mission section">
             <Label>Small heading</Label><input value={form.mission_heading} onChange={set('mission_heading')} className={inp} data-testid="home-mission-heading-input" />
             <Label>Title</Label><input value={form.mission_title} onChange={set('mission_title')} className={inp} data-testid="home-mission-title-input" />

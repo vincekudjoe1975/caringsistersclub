@@ -14,22 +14,24 @@ import { HomeThermometer } from '../components/Thermometer';
 import * as Icons from 'lucide-react';
 import { ArrowRight, Quote, Heart } from 'lucide-react';
 
-export default function Home() {
-  const { stats: impactStats = [] } = useTransparency();
-  const home = useHomeContent();
+export function HomeHero({ home }) {
+  const pick = (k, d) => (home[k] === undefined ? d : home[k]);
+  const h = {
+    kicker: pick('hero_kicker', hero.kicker), title: home.hero_title || hero.title, subtitle: pick('hero_subtitle', hero.subtitle),
+    image: imgSrc(home.hero_image, hero.image), alt: home.hero_image_alt || 'Caring Sisters Club',
+    badgeNumber: pick('hero_badge_number', '2,400+'), badgeLabel: pick('hero_badge_label', 'Sisters empowered'),
+  };
   return (
-    <div>
-      {/* HERO */}
       <section className="csc-hero-gradient relative overflow-hidden">
         <div className="max-w-7xl mx-auto px-5 lg:px-8 pt-[120px] pb-16 lg:pt-[150px] lg:pb-24 grid lg:grid-cols-2 gap-12 items-center">
           <div className="relative z-10">
-            <p className="eyebrow text-[#CBA24B] mb-5">{hero.kicker}</p>
-            <h1 className="font-serif text-[#F7EFE9] text-[44px] sm:text-[56px] lg:text-[66px] leading-[1.02] font-semibold text-shadow-soft">
-              {hero.title}
+            {h.kicker && <p className="eyebrow text-[#CBA24B] mb-5" data-testid="home-hero-kicker">{h.kicker}</p>}
+            <h1 data-testid="home-hero-title" className="font-serif text-[#F7EFE9] text-[44px] sm:text-[56px] lg:text-[66px] leading-[1.02] font-semibold text-shadow-soft">
+              {h.title}
             </h1>
-            <p className="text-[#F7EFE9]/80 text-[17px] lg:text-[19px] mt-6 max-w-xl leading-relaxed">
-              {hero.subtitle}
-            </p>
+            {h.subtitle && <p data-testid="home-hero-subtitle" className="text-[#F7EFE9]/80 text-[17px] lg:text-[19px] mt-6 max-w-xl leading-relaxed">
+              {h.subtitle}
+            </p>}
             <div className="flex flex-wrap items-center gap-4 mt-9">
               <Link to="/volunteer" className="btn-gold rounded-full px-8 py-3.5 font-semibold flex items-center gap-2">
                 Join the Sisterhood <ArrowRight size={18} />
@@ -41,16 +43,25 @@ export default function Home() {
           </div>
           <Reveal className="relative">
             <div className="relative rounded-[24px] overflow-hidden img-zoom" style={{ boxShadow: '0 40px 80px -30px rgba(0,0,0,0.6)' }}>
-              <img fetchpriority="high" src={hero.image} alt="Confident professional woman of the Diaspora in a magenta blazer" className="w-full h-[420px] lg:h-[560px] object-cover" />
+              <img fetchpriority="high" src={h.image} alt={h.alt} data-testid="home-hero-image" className="w-full h-[420px] lg:h-[560px] object-cover" />
               <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, transparent 55%, rgba(41,6,31,0.55))' }} />
             </div>
-            <div className="absolute -bottom-6 -left-6 bg-[#F7EFE9] rounded-2xl px-6 py-4 shadow-xl hidden md:block">
-              <p className="font-serif text-[28px] text-[#3B0A2E] font-bold leading-none">2,400+</p>
-              <p className="text-[12px] text-[#3B0A2E]/70 mt-1 tracking-wide">Sisters empowered</p>
-            </div>
+            {h.badgeNumber && <div data-testid="home-hero-badge" className="absolute -bottom-6 -left-6 bg-[#F7EFE9] rounded-2xl px-6 py-4 shadow-xl hidden md:block">
+              <p className="font-serif text-[28px] text-[#3B0A2E] font-bold leading-none">{h.badgeNumber}</p>
+              {h.badgeLabel && <p className="text-[12px] text-[#3B0A2E]/70 mt-1 tracking-wide">{h.badgeLabel}</p>}
+            </div>}
           </Reveal>
         </div>
       </section>
+  );
+}
+
+export default function Home() {
+  const { stats: impactStats = [] } = useTransparency();
+  const home = useHomeContent();
+  return (
+    <div>
+      <HomeHero home={home} />
 
       <Marquee items={['EMPOWERMENT', 'NETWORKING', 'SISTERHOOD', 'PHILANTHROPY']} />
 
