@@ -521,3 +521,8 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - security_headers middleware: nosniff, X-Frame-Options SAMEORIGIN, CSP frame-ancestors self, Referrer-Policy, HSTS, Permissions-Policy. index.html has a referrer meta tag and an anti-framing script (allows *.emergentagent.com for preview).
 - Rate limits on /auth/reset-password and /auth/verify-email. Ticket status returns a masked email; the auction pay page returns only the first name. Public submissions keep only the _SUB_FIELDS allowlist.
 - Redeploy queued.
+
+
+## 2026-06 — Stripe live readiness
+- PROD Stripe is still TEST mode: the Emergent stripe_sandbox is unclaimed, all sessions are cs_test_, and STRIPE_MODE=live is unused and misleading. User must claim the sandbox in Deployment/Preview > Manage > Payments (Stripe onboarding/KYC, install the Emergent app), then redeploy, then make one small real donation and confirm a cs_live_ session.
+- The Donate test-card note now shows only on the preview host when GET /api/payments/mode reports {"live": false}. Deployed.

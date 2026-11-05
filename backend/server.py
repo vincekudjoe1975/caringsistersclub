@@ -647,6 +647,13 @@ if not stripe.api_key:
 def _require_stripe():
     if not stripe.api_key:
         raise HTTPException(status_code=503, detail="Online payments are temporarily unavailable.")
+
+
+@api_router.get("/payments/mode")
+async def payments_mode():
+    return {"live": (stripe.api_key or "").startswith(("sk_live_", "rk_live_"))}
+
+
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 DONATION_MIN = 1.0
 DONATION_MAX = 100000.0

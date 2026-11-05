@@ -10,6 +10,10 @@ import { useToast } from '../hooks/use-toast';
 import { api } from '../lib/api';
 
 export default function Donate() {
+  const [payLive, setPayLive] = useState(true);
+  useEffect(() => {
+    if (window.location.hostname.includes('preview.emergentagent.com')) api.get('/payments/mode').then(({ data }) => setPayLive(data.live)).catch(() => {});
+  }, []);
   const [amount, setAmount] = useState(50);
   const [custom, setCustom] = useState('');
   const [freq, setFreq] = useState('one-time');
@@ -137,7 +141,7 @@ export default function Donate() {
 
             <div className="rounded-xl p-4 mb-6 flex items-center gap-3" style={{ background: '#F7EFE9' }}>
               <CreditCard size={20} className="text-[#B4247E]" />
-              <p className="text-[12.5px] text-[#3B0A2E]/70">Secure checkout by Stripe. Test mode: use card <strong>4242 4242 4242 4242</strong>, any future expiry & CVC.</p>
+              <p className="text-[12.5px] text-[#3B0A2E]/70" data-testid="donate-checkout-note">Secure checkout by Stripe. Your card details go straight to Stripe and are never stored on our site.{payLive === false && <> Test mode: use card <strong>4242 4242 4242 4242</strong>, any future expiry & CVC.</>}</p>
             </div>
 
             {freq === 'monthly' && (
