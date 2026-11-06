@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 56: Tested the same-origin API and sign-in fixes from the RCA. The review request text was cut off, so the scope was taken from the git diff HEAD~1. The fixes cover: lib/api.js, which now uses window.location.origin; every media/download URL, which switched from REACT_APP_BACKEND_URL to the page origin; logout delete_cookie, which now sends secure/httponly/samesite=none; _refresh_site_url, which now ignores a site_url ending in *.emergent.host; the iOS installed-app sign-in tip; and the InstallApp tips for iOS Safari and for CriOS/FxiOS. Backend: 9/9 pytest passed. (1) The logout Set-Cookie has Max-Age=0, Secure, HttpOnly, SameSite=none and Path=/. The session row is deleted and /auth/me then returns 401. (2) Logout without a cookie returns 200. (3) A site_url of caringsistersclub.org or www is used in email/ICS links, checked through the event calendar.ics URL line. (4) A site_url of https://caring-sisters-clone.emergent.host, in any case, is ignored, and links fall back to the detected/canonical host. (5) http:// site_url returns 400. (6) Public endpoints and the CORS credentialed preflight work. Frontend: all checks passed. Every /api request on Home and /members goes to the page origin. Member cookie sign-in shows the portal. 'Sign out' clears the cookie and the session and redirects to /, and after a reload the login button shows. With an emulated iOS standalone app, /members shows ios-app-signin-tip with 'Log in or Sign up with Email' and /login shows 'Log in with Email'. The tip is hidden in a normal Safari tab and on desktop. install-app-ios-tip shows the Safari 'Share at the bottom of Safari...' text, and in CriOS it shows 'Open caringsistersclub.org in Safari...'. Gallery /api/media images load same-origin with no broken images. Admin loads with a temp session. The real www/emergent.host/PWA cross-origin behaviour and Safari ITP cannot be reproduced in preview. Same-origin can only be verified here, where origin == REACT_APP_BACKEND_URL.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT/GET /api/admin/settings (site_url)", "issue": "A *.emergent.host site_url is still accepted, stored and returned, but it is silently ignored for email links. AdminCampaign then shows 'Email links use: https://caring-sisters-clone.emergent.host', which is false. If an admin opens Admin on the emergent.host default URL while site_url is empty, SiteUrlBanner offers 'Use caring-sisters-clone.emergent.host'. Clicking it saves the value and shows 'Email links now use ...emergent.host', but those links are never used. Fix: reject *.emergent.host in _clean_site_url with a clear 400 message, or show the effective PUBLIC_APP_URL (return effective_site_url from /admin/settings). Also hide SiteUrlBanner when origin ends with .emergent.host. On prod, the stored site_url is still emergent.host, so the admin should clear it or set it to the apex."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Share links / ICS / webcal on non-apex hosts", "issue": "BadgePage, SisterhoodPage and YearInReview ShareBar URLs, and the Sessions webcal feed, now use window.location.origin. Shares made from www or emergent.host or an installed app opened there will spread those hosts instead of the canonical apex. Consider using a canonical public URL for share links, which are not auth-sensitive.", "affected_selectors": ["[data-testid='badge-card-image']", "[data-testid='session-detail-feed']"]}
+    ],
+    "design_issues": [
+      {"screen": "Members/Login in the iOS installed app", "issues": ["The tip says to use Email, but 'Continue with Google' is still the first, primary magenta button directly under it. Consider moving the Email button first or de-emphasising Google when iosApp is true."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter56_same_origin_logout_siteurl.py", "/app/backend/tests/_qa56_sessions.py", "/app/test_reports/pytest/pytest_iter56.xml"],
+  "action_items": [
+    "Reject or flag a *.emergent.host site_url in PUT /admin/settings, or show the effective email-link URL in AdminCampaign/SiteUrlBanner, so the admin is not told links use emergent.host when they don't",
+    "Hide or adjust SiteUrlBanner's 'Use <origin>' when origin is *.emergent.host",
+    "(Optional) Use the canonical apex for public share URLs instead of window.location.origin",
+    "(Optional) In iOS standalone mode, show the Email sign-in button first"
+  ],
+  "critical_code_review_comments": [
+    "Avatar/HomeExtras/Phase6/Phase7/Slideshow/AdminRecaps/AdminAnnualSpotlight each repeat the inline `u.startsWith('/api') ? window.location.origin + u : u`. Reuse mediaSrc from lib/api.js for DRY.",
+    "lib/api.js: the typeof window guard is fine. Local dev on :3000 would now call localhost:3000/api, which has no proxy. This is acceptable only because the preview and prod ingresses proxy /api.",
+    "server.py is 12.8k lines and should be split into routers.",
+    "The `qa_session.py down` helper overwrites settings.staff_notify_email. It was not used this iteration."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter56_same_origin_logout_siteurl.py", "/app/backend/tests/_qa56_sessions.py"],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100%"},
+  "seed_data_creation": "Created and removed temporary TEST_qa56_* users/sessions and a TEST_QA56 event. settings.site.site_url was changed during the tests and restored to the original value (preview host), which was verified afterwards.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use _qa56_sessions.py up|down for member (TEST_qa56_memtok) and admin (TEST_qa56_admtok) cookies. To emulate iOS, use add_init_script to override Navigator.prototype.userAgent and standalone. The PUBLIC_APP_URL effective value is observable through the URL: line of GET /api/events/{id}/calendar.ics. Run pytest without -p no:xdist, because pytest.ini uses xdist."
+}

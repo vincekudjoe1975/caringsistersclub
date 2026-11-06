@@ -1208,6 +1208,8 @@ def _clean_site_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.path or parsed.query:
         raise ValueError("Website address must look like https://yourdomain.org")
+    if parsed.hostname.lower().endswith(".emergent.host"):
+        raise ValueError("Please use your own domain (https://caringsistersclub.org), not the emergent.host address.")
     return f"https://{parsed.netloc.lower()}"
 
 

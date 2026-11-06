@@ -6,7 +6,7 @@ import { useToast } from '../hooks/use-toast';
 export const SiteUrlBanner = () => {
   const [state, setState] = useState('loading');
   const { toast } = useToast();
-  const origin = window.location.origin;
+  const origin = window.location.hostname.endsWith('.emergent.host') ? 'https://caringsistersclub.org' : window.location.origin;
 
   useEffect(() => {
     api.get('/admin/settings').then(({ data }) => setState(data.site_url ? 'set' : 'missing')).catch(() => setState('set'));

@@ -526,3 +526,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 ## 2026-06 — Stripe live readiness
 - PROD Stripe is still TEST mode: the Emergent stripe_sandbox is unclaimed, all sessions are cs_test_, and STRIPE_MODE=live is unused and misleading. User must claim the sandbox in Deployment/Preview > Manage > Payments (Stripe onboarding/KYC, install the Emergent app), then redeploy, then make one small real donation and confirm a cs_live_ session.
 - The Donate test-card note now shows only on the preview host when GET /api/payments/mode reports {"live": false}. Deployed.
+
+
+## 2026-06 — Production login fix (RCA 021b21f2, iteration 56 passed)
+- ROOT CAUSE: the frontend called the API at the absolute apex (REACT_APP_BACKEND_URL). On www, emergent.host and iOS installed apps, those calls were cross-origin: CORS preflights returned 400 and Safari ITP blocked the SameSite=None cookie (session 200 then /me 401). Also, prod settings.site_url = emergent.host, so verify links pointed to the wrong host.
+- FIX: lib/api.js BACKEND_URL = window.location.origin (same-origin; Cloudflare proxies /api on every host), and all media URLs use the page origin. Logout delete_cookie now sends secure/samesite=none. *.emergent.host site_url is ignored and rejected on save. SiteUrlBanner suggests caringsistersclub.org on emergent.host.
+- iOS installed app: the sign-in screen puts the Email button first, with a tip (Google opens Safari and cannot return to the app). iOS install tips are clearer, with a Safari-only note for Chrome/Firefox on iOS.
+- Redeploy queued. The user should re-save the Website address as https://caringsistersclub.org, and iPhone users should reinstall from the apex.
