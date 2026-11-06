@@ -22,6 +22,8 @@ import AdminSessions from './AdminSessions';
 import AdminOverview from './AdminOverview';
 import { SiteUrlBanner } from '../components/SiteUrlBanner';
 import { InstallApp } from '../components/InstallApp';
+import { StaffCodeGate } from '../components/StaffCodeGate';
+import { StaffCodeToggle } from '../components/StaffCodeToggle';
 import { useToast } from '../hooks/use-toast';
 import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote, BarChart3, HeartHandshake } from 'lucide-react';
 
@@ -99,6 +101,7 @@ export default function Admin() {
     return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#B4247E]" size={36} /></div>;
   }
 
+  if (user && user.code_pending) return <StaffCodeGate />;
   if (user && user.role !== 'admin') return <Navigate to="/members" replace />;
 
   return (
@@ -194,7 +197,7 @@ export default function Admin() {
         ) : view === 'members' ? (
           <AdminMembers />
         ) : view === 'team' ? (
-          <AdminTeam currentUserId={user?.user_id} />
+          <><StaffCodeToggle /><AdminTeam currentUserId={user?.user_id} /></>
         ) : (
         <>
         {/* Tabs */}

@@ -13,7 +13,7 @@ export default function Login() {
     if (user) {
       const next = sessionStorage.getItem('csc_after_login');
       sessionStorage.removeItem('csc_after_login');
-      if (user.role !== 'admin') navigate('/members', { replace: true });
+      if (user.role !== 'admin' && !user.code_pending) navigate('/members', { replace: true });
       else navigate(next && next.startsWith('/admin') ? next : '/admin');
     }
   }, [user, navigate]);

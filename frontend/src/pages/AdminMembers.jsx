@@ -173,7 +173,7 @@ export default function AdminMembers() {
   const [sub, setSub] = useState('people');
   const [focus] = useState(() => new URLSearchParams(window.location.search).get('applicant') || '');
   const apps = d.members.filter((m) => m.status === 'applied');
-  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['treasurer', 'Treasurer report'], ['referrers', 'Referrers'], ['import', 'Import'], ['welcome', 'Welcome email'], ['annual', 'Annual summary'], ['spotlight', 'Spotlight'], ['photos', 'Gathering photos'], ['december', 'December renewal']];
+  const tabs = [['people', 'People & content'], ['dues', 'Dues'], ['meetings', 'Meetings & attendance'], ['votes', 'Votes & elections'], ['support', 'Support funds'], ['treasurer', 'Treasurer report'], ['referrers', 'Referrers'], ['import', 'Import'], ['welcome', 'Welcome & approval emails'], ['annual', 'Annual summary'], ['spotlight', 'Spotlight'], ['photos', 'Gathering photos'], ['december', 'December renewal']];
   return (
     <div>
     <div className="flex flex-wrap gap-1 mb-6">{tabs.map(([k, l]) => <button key={k} data-testid={`members-sub-${k}`} onClick={() => setSub(k)} className={`rounded-full px-4 py-2 text-[13px] font-semibold transition-colors ${sub === k ? 'bg-[#3B0A2E] text-white' : 'bg-white border border-[#3B0A2E]/15 text-[#3B0A2E]'}`}>{l}</button>)}</div>

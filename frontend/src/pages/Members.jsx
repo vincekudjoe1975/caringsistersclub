@@ -11,6 +11,7 @@ import { Bylaws } from '../components/members/Bylaws';
 import { SignInOptions } from '../components/EmailAuth';
 import { Welcome } from '../components/members/Welcome';
 import { WelcomeBack } from '../components/members/WelcomeBack';
+import { AppCelebration } from '../components/members/AppCelebration';
 import { isStandaloneApp } from './GetApp';
 
 const GetAppLink = () => (isStandaloneApp() ? null : (
@@ -108,6 +109,7 @@ function Portal({ me, onChange }) {
         </div>
       </div>
       <WelcomeBack me={me} onGo={pick} />
+      <AppCelebration me={me} onGo={pick} />
       <InstallApp />
       <div data-testid="portal-tabbar" className="grid grid-cols-3 sm:grid-cols-4 md:flex md:flex-wrap md:w-fit gap-1.5 md:gap-1 p-1.5 rounded-3xl md:rounded-full mb-8 bg-white/10 backdrop-blur-md border border-white/15">
         {TABS.map(({ k, l, icon: Icon }) => (

@@ -153,11 +153,20 @@ async def get_current_user(request: Request):
     user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    request.state.session = session
+    if session.get("code_pending") and user.get("role") == "admin":
+        user = {**user, "role": "pending", "code_pending": True}
     return user
+
+
+def _needs_staff_code(u: dict) -> bool:
+    return u.get("role") == "admin" and bool(u.get("require_login_code"))
 
 
 async def require_admin(request: Request):
     user = await get_current_user(request)
+    if user.get("code_pending"):
+        raise HTTPException(status_code=403, detail="Please enter the sign-in code we emailed you to open Admin.")
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
@@ -205,18 +214,22 @@ async def auth_session(payload: SessionRequest, response: Response):
         })
     session_token = data.get("session_token")
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    pending = _needs_staff_code(user)
     await db.user_sessions.insert_one({
         "user_id": user_id,
         "session_token": session_token,
         "expires_at": expires_at.isoformat(),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "code_pending": pending,
     })
+    if pending:
+        asyncio.create_task(_send_staff_code(user))
     response.set_cookie(
         key="session_token", value=session_token, httponly=True,
         secure=True, samesite="none", max_age=7 * 24 * 60 * 60, path="/",
     )
-    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    return user
+    return {**user, "code_pending": pending}
 
 
 @api_router.get("/auth/me")
@@ -334,12 +347,17 @@ async def _consume_auth_token(raw: str, kind: str) -> dict:
     return t
 
 
-async def _start_session(user_id: str, response: Response) -> dict:
+async def _start_session(user_id: str, response: Response, code_ok: bool = False) -> dict:
     token = _asec.token_urlsafe(32)
     now = datetime.now(timezone.utc)
-    await db.user_sessions.insert_one({"user_id": user_id, "session_token": token, "expires_at": (now + timedelta(days=7)).isoformat(), "created_at": now.isoformat()})
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    pending = not code_ok and _needs_staff_code(u)
+    await db.user_sessions.insert_one({"user_id": user_id, "session_token": token, "expires_at": (now + timedelta(days=7)).isoformat(),
+                                       "created_at": now.isoformat(), "code_pending": pending})
     response.set_cookie(key="session_token", value=token, httponly=True, secure=True, samesite="none", max_age=7 * 24 * 60 * 60, path="/")
-    return await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if pending:
+        asyncio.create_task(_send_staff_code(u))
+    return {**u, "code_pending": pending}
 
 
 async def _send_verify(user: dict):
@@ -6831,12 +6849,21 @@ async def members_me(user=Depends(get_current_user)):
     return {"status": status, "user_id": user["user_id"], "is_admin": user.get("role") == "admin", "name": user.get("name"), "email": user.get("email"),
             "picture": user.get("picture"), "profile": user.get("member_profile") or {}, "application": user.get("member_application") or {},
             "member_since": user.get("member_since", ""), "leave_request": user.get("member_leave_request"), "ends_at": user.get("member_ends_at"),
-            "app_installed": bool(user.get("app_installed_at")), "welcome_seen": bool(user.get("portal_welcome_seen_at"))}
+            "app_installed": bool(user.get("app_installed_at")), "welcome_seen": bool(user.get("portal_welcome_seen_at")),
+            "app_celebrated": bool(user.get("app_celebrated_at"))}
 
 
 @api_router.post("/members/welcome-seen")
 async def members_welcome_seen(user=Depends(get_current_user)):
     await db.users.update_one({"user_id": user["user_id"], "portal_welcome_seen_at": {"$exists": False}}, {"$set": {"portal_welcome_seen_at": _now_iso()}})
+    return {"ok": True}
+
+
+@api_router.post("/members/app-celebrated")
+async def members_app_celebrated(user=Depends(get_current_user)):
+    now = _now_iso()
+    await db.users.update_one({"user_id": user["user_id"], "app_celebrated_at": {"$exists": False}}, {"$set": {"app_celebrated_at": now}})
+    await db.users.update_one({"user_id": user["user_id"], "app_installed_at": {"$exists": False}}, {"$set": {"app_installed_at": now}})
     return {"ok": True}
 
 
@@ -7095,10 +7122,8 @@ async def _send_approved_alert(u: dict):
     first = (u.get("name") or "Sister").split(" ")[0]
     try:
         await _push_users([u["user_id"]], f"Welcome to the sisterhood, {first}!", "You're approved. Tap to open the member portal.", "/members", "custom")
-        await send_email(to=u["email"], subject="You're approved! Welcome to Caring Sisters Club",
-                         html=_member_email_html("You're approved!", f"Welcome to the sisterhood, {first}!",
-                                                 "Great news: your membership application has been approved. The full member portal is now open to you: meet your sisters, see upcoming gatherings, and join the conversation.",
-                                                 "Open the member portal", "/members", _app_block_html()))
+        out = await _render_member_email("approval", u, await _member_email_settings("approval"))
+        await send_email(to=u["email"], subject=out["subject"], html=out["html"])
     except Exception as e:
         logging.error(f"Approval alert failed: {e}")
 
@@ -8943,14 +8968,34 @@ async def members_spotlight_submit(sid: str, payload: SpotlightEdit, user=Depend
 
 
 # ---------- Member Portal phase 6: welcome packet, door check-in, spotlight archive, prayer board ----------
-WELCOME_DEFAULT = {"subject": "Welcome to the Caring Sisters Club, {first}!",
-                   "message": "We are so happy to welcome you into our sisterhood. Caring Sisters Club unites women from diverse backgrounds to uplift, "
-                              "support and inspire one another through love, respect and empowerment.\n\nBelow you'll find a few essentials to get you started."}
+MEMBER_EMAIL_DEFAULTS = {
+    "welcome": {"subject": "Welcome to the Caring Sisters Club, {first}!", "greeting": "Welcome, {first}!",
+                "message": "We are so happy to welcome you into our sisterhood. Caring Sisters Club unites women from diverse backgrounds to uplift, "
+                           "support and inspire one another through love, respect and empowerment.\n\nBelow you'll find a few essentials to get you started."},
+    "approval": {"subject": "You're approved! Welcome to Caring Sisters Club", "greeting": "Welcome to the sisterhood, {first}!",
+                 "message": "Great news: your membership application has been approved. The full member portal is now open to you: meet your sisters, see upcoming gatherings, and join the conversation."},
+}
+WELCOME_DEFAULT = MEMBER_EMAIL_DEFAULTS["welcome"]
+_MEMBER_EMAIL_KEYS = {"welcome": "welcome", "approval": "approval_email"}
+_EMAIL_FIELDS = ("subject", "greeting", "message")
+
+
+async def _member_email_settings(kind: str) -> dict:
+    s = await db.member_settings.find_one({"key": _MEMBER_EMAIL_KEYS[kind]}, {"_id": 0})
+    return {**MEMBER_EMAIL_DEFAULTS[kind], **{k: v for k, v in (s or {}).items() if k in _EMAIL_FIELDS and v}}
 
 
 async def _welcome_settings() -> dict:
-    s = await db.member_settings.find_one({"key": "welcome"}, {"_id": 0})
-    return {**WELCOME_DEFAULT, **{k: v for k, v in (s or {}).items() if k in ("subject", "message") and v}}
+    return await _member_email_settings("welcome")
+
+
+def _first(u: dict) -> str:
+    return (u.get("name") or "Sister").split(" ")[0]
+
+
+def _approval_html(u: dict, s: dict) -> str:
+    return _member_email_html("You're approved!", s["greeting"].replace("{first}", _first(u)), s["message"],
+                              "Open the member portal", "/members", _app_block_html())
 
 
 async def _welcome_html(u: dict, settings: dict) -> str:
@@ -8979,7 +9024,7 @@ async def _welcome_html(u: dict, settings: dict) -> str:
         '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
         + _brand_header("Welcome, Sister") +
         '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
-        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 16px">Welcome, {_esc(first)}!</h1>{body}'
+        f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 16px">{_esc((settings.get("greeting") or WELCOME_DEFAULT["greeting"]).replace("{first}", first))}</h1>{body}'
         + _btn(f"{PUBLIC_APP_URL}/members", "Open the member portal", primary=True) + _app_block_html() +
         '<p style="font-size:12px;color:#8a7380;margin:18px 0 0">Sign in with Google, your email and password, or a one-time email code.</p>'
         '</td></tr></table></td></tr></table>'
@@ -9023,6 +9068,61 @@ async def admin_welcome_put(payload: WelcomeIn, user=Depends(require_admin)):
 async def admin_welcome_preview(payload: WelcomeIn, user=Depends(require_admin)):
     sample = {"user_id": "_preview", "name": user.get("name") or "Sister", "member_status": "active", "member_since": _now_iso()}
     return {"html": await _welcome_html(sample, {"subject": payload.subject, "message": payload.message or WELCOME_DEFAULT["message"]})}
+
+
+class MemberEmailIn(BaseModel):
+    subject: str
+    greeting: str
+    message: str
+
+
+def _email_kind(kind: str) -> str:
+    if kind not in MEMBER_EMAIL_DEFAULTS:
+        raise HTTPException(status_code=404, detail="Unknown email")
+    return kind
+
+
+async def _render_member_email(kind: str, u: dict, s: dict) -> dict:
+    s = {**MEMBER_EMAIL_DEFAULTS[kind], **{k: v.strip() for k, v in s.items() if k in _EMAIL_FIELDS and (v or "").strip()}}
+    html = await _welcome_html(u, s) if kind == "welcome" else _approval_html(u, s)
+    return {"subject": s["subject"].replace("{first}", _first(u))[:150], "html": html}
+
+
+@api_router.get("/admin/member-emails/{kind}")
+async def admin_member_email_get(kind: str, user=Depends(require_admin)):
+    return {**await _member_email_settings(_email_kind(kind)), "defaults": MEMBER_EMAIL_DEFAULTS[kind]}
+
+
+@api_router.put("/admin/member-emails/{kind}")
+async def admin_member_email_put(kind: str, payload: MemberEmailIn, user=Depends(require_admin)):
+    _email_kind(kind)
+    if not payload.subject.strip() or not payload.greeting.strip() or not payload.message.strip():
+        raise HTTPException(status_code=400, detail="Subject, greeting and message are all required.")
+    await db.member_settings.update_one({"key": _MEMBER_EMAIL_KEYS[kind]}, {"$set": {
+        "key": _MEMBER_EMAIL_KEYS[kind], "subject": payload.subject.strip()[:150], "greeting": payload.greeting.strip()[:150],
+        "message": payload.message.strip()[:4000], "updated_by": user.get("email"), "updated_at": _now_iso()}}, upsert=True)
+    return {"ok": True}
+
+
+def _preview_member(user: dict) -> dict:
+    return {"user_id": "_preview", "name": user.get("name") or "Sister", "member_status": "active", "member_since": _now_iso()}
+
+
+@api_router.post("/admin/member-emails/{kind}/preview")
+async def admin_member_email_preview(kind: str, payload: MemberEmailIn, user=Depends(require_admin)):
+    return await _render_member_email(_email_kind(kind), _preview_member(user), payload.model_dump())
+
+
+@api_router.post("/admin/member-emails/{kind}/test")
+async def admin_member_email_test(kind: str, payload: MemberEmailIn, request: Request, user=Depends(require_admin)):
+    await _rate_limit(request, f"member_email_test:{user['user_id']}", 10, 3600)
+    out = await _render_member_email(_email_kind(kind), _preview_member(user), payload.model_dump())
+    try:
+        await send_email(to=user["email"], subject=f"[Test] {out['subject']}", html=out["html"])
+    except Exception as e:
+        logging.warning(f"Test {kind} email failed: {e}")
+        raise HTTPException(status_code=502, detail="The test email could not be sent. Please try again shortly.")
+    return {"ok": True, "sent_to": user["email"]}
 
 
 @api_router.post("/admin/members/{uid}/welcome")
@@ -12754,38 +12854,30 @@ def _code_hash(uid: str, code: str) -> str:
     return _hashlib.sha256(f"{uid}:{code}".encode()).hexdigest()
 
 
-@api_router.post("/auth/code-request")
-async def auth_code_request(payload: CodeRequestIn, request: Request, background: BackgroundTasks):
-    await _rate_limit(request, "auth_code_req", 5, 900)
-    email = _norm_email(payload.email)
-    await _rate_limit(request, f"auth_code_req_email:{email}", 5, 3600)
-    u = await _user_by_email(email)
-    if u:
-        code = f"{_asec.randbelow(1000000):06d}"
-        await db.auth_tokens.delete_many({"user_id": u["user_id"], "kind": "code"})
-        await db.auth_tokens.insert_one({"token_hash": _code_hash(u["user_id"], code), "user_id": u["user_id"], "kind": "code", "used": False, "attempts": 0,
-                                         "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10), "created_at": datetime.now(timezone.utc)})
-        first = (u.get("name") or "Sister").split(" ")[0]
-        html = ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F7EFE9;padding:28px 12px"><tr><td align="center">'
-                '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:16px">'
-                '<tr><td style="padding:30px 32px;font-family:Arial,sans-serif;color:#241019">'
-                f'<p style="font-size:15px;margin:0 0 14px">Hello {_esc(first)},</p><p style="font-size:15px;line-height:1.6;margin:0 0 18px">Your Caring Sisters Club sign-in code is:</p>'
-                f'<p style="font-family:Georgia,serif;font-size:36px;letter-spacing:10px;font-weight:bold;color:#3B0A2E;margin:0 0 18px">{code}</p>'
-                '<p style="font-size:13px;line-height:1.6;color:#6b5563;margin:0">It works once and expires in 10 minutes. If you didn\'t ask for it, you can ignore this email. We will never ask you for this code.</p>'
-                '</td></tr></table></td></tr></table>')
-        background.add_task(send_email, to=u["email"], subject=f"{code} is your Caring Sisters Club sign-in code", html=html)
-    return {"ok": True, "message": "If an account exists for that email, we've sent a 6-digit code. It expires in 10 minutes."}
+def _code_email_html(u: dict, code: str, what: str) -> str:
+    return ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F7EFE9;padding:28px 12px"><tr><td align="center">'
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:16px">'
+            '<tr><td style="padding:30px 32px;font-family:Arial,sans-serif;color:#241019">'
+            f'<p style="font-size:15px;margin:0 0 14px">Hello {_esc(_first(u))},</p><p style="font-size:15px;line-height:1.6;margin:0 0 18px">Your Caring Sisters Club {what} is:</p>'
+            f'<p style="font-family:Georgia,serif;font-size:36px;letter-spacing:10px;font-weight:bold;color:#3B0A2E;margin:0 0 18px">{code}</p>'
+            '<p style="font-size:13px;line-height:1.6;color:#6b5563;margin:0">It works once and expires in 10 minutes. If you didn\'t ask for it, you can ignore this email. We will never ask you for this code.</p>'
+            '</td></tr></table></td></tr></table>')
 
 
-@api_router.post("/auth/code-verify")
-async def auth_code_verify(payload: CodeVerifyIn, request: Request, response: Response):
-    await _rate_limit(request, "auth_code_verify", 20, 900)
+async def _issue_code(u: dict, kind: str) -> str:
+    code = f"{_asec.randbelow(1000000):06d}"
+    await db.auth_tokens.delete_many({"user_id": u["user_id"], "kind": kind})
+    await db.auth_tokens.insert_one({"token_hash": _code_hash(u["user_id"], code), "user_id": u["user_id"], "kind": kind, "used": False, "attempts": 0,
+                                     "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10), "created_at": datetime.now(timezone.utc)})
+    return code
+
+
+async def _consume_code(u: dict, kind: str, raw: str):
     bad = HTTPException(status_code=400, detail="That code isn't right or has expired. Please check it or request a new one.")
-    code = re.sub(r"\D", "", payload.code or "")
-    u = await _user_by_email(_norm_email(payload.email))
-    if not u or len(code) != 6:
+    code = re.sub(r"\D", "", raw or "")
+    if len(code) != 6:
         raise bad
-    live = {"user_id": u["user_id"], "kind": "code", "used": False, "expires_at": {"$gt": datetime.now(timezone.utc)}}
+    live = {"user_id": u["user_id"], "kind": kind, "used": False, "expires_at": {"$gt": datetime.now(timezone.utc)}}
     t = await db.auth_tokens.find_one_and_update({**live, "attempts": {"$lt": 5}}, {"$inc": {"attempts": 1}})
     if not t:
         if await db.auth_tokens.find_one(live, {"_id": 1}):
@@ -12797,8 +12889,76 @@ async def auth_code_verify(payload: CodeVerifyIn, request: Request, response: Re
     res = await db.auth_tokens.update_one({"_id": t["_id"], "used": False}, {"$set": {"used": True, "used_at": datetime.now(timezone.utc)}})
     if not res.modified_count:
         raise bad
+
+
+async def _send_staff_code(u: dict):
+    try:
+        code = await _issue_code(u, "staff_code")
+        await send_email(to=u["email"], subject=f"{code} is your Caring Sisters Club staff sign-in code", html=_code_email_html(u, code, "staff sign-in code"))
+    except Exception as e:
+        logging.warning(f"Staff code email failed for {u.get('user_id')}: {e}")
+
+
+@api_router.post("/auth/code-request")
+async def auth_code_request(payload: CodeRequestIn, request: Request, background: BackgroundTasks):
+    await _rate_limit(request, "auth_code_req", 5, 900)
+    email = _norm_email(payload.email)
+    await _rate_limit(request, f"auth_code_req_email:{email}", 5, 3600)
+    u = await _user_by_email(email)
+    if u:
+        code = await _issue_code(u, "code")
+        background.add_task(send_email, to=u["email"], subject=f"{code} is your Caring Sisters Club sign-in code", html=_code_email_html(u, code, "sign-in code"))
+    return {"ok": True, "message": "If an account exists for that email, we've sent a 6-digit code. It expires in 10 minutes."}
+
+
+@api_router.post("/auth/code-verify")
+async def auth_code_verify(payload: CodeVerifyIn, request: Request, response: Response):
+    await _rate_limit(request, "auth_code_verify", 20, 900)
+    u = await _user_by_email(_norm_email(payload.email))
+    if not u:
+        raise HTTPException(status_code=400, detail="That code isn't right or has expired. Please check it or request a new one.")
+    await _consume_code(u, "code", payload.code)
     await db.users.update_one({"user_id": u["user_id"]}, {"$set": {"email_verified": True}})
-    return await _start_session(u["user_id"], response)
+    return await _start_session(u["user_id"], response, code_ok=True)
+
+
+# ---------- Staff: optional email code on every Admin sign-in ----------
+class StaffCodeIn(BaseModel):
+    code: str
+
+
+class StaffCodePrefIn(BaseModel):
+    enabled: bool
+
+
+@api_router.post("/auth/staff-code/request")
+async def staff_code_request(request: Request, user=Depends(get_current_user)):
+    if not user.get("code_pending"):
+        return {"ok": True, "needed": False}
+    await _rate_limit(request, f"staff_code_req:{user['user_id']}", 5, 900)
+    await _send_staff_code(user)
+    return {"ok": True, "needed": True, "email": user.get("email")}
+
+
+@api_router.post("/auth/staff-code/verify")
+async def staff_code_verify(payload: StaffCodeIn, request: Request, user=Depends(get_current_user)):
+    if not user.get("code_pending"):
+        return {"ok": True}
+    await _rate_limit(request, f"staff_code_verify:{user['user_id']}", 20, 900)
+    await _consume_code(user, "staff_code", payload.code)
+    await db.user_sessions.update_one({"session_token": request.state.session["session_token"]}, {"$set": {"code_pending": False, "code_verified_at": _now_iso()}})
+    return {"ok": True}
+
+
+@api_router.get("/auth/staff-code/pref")
+async def staff_code_pref_get(user=Depends(require_admin)):
+    return {"enabled": bool(user.get("require_login_code")), "email": user.get("email")}
+
+
+@api_router.put("/auth/staff-code/pref")
+async def staff_code_pref_put(payload: StaffCodePrefIn, user=Depends(require_admin)):
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"require_login_code": payload.enabled}})
+    return {"enabled": payload.enabled}
 
 
 # ---------- Waiting-to-apply reminders ----------
