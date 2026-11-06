@@ -19,7 +19,9 @@ function EmailEditor({ kind }) {
   const body = (x) => ({ subject: x.subject, greeting: x.greeting, message: x.message });
   const preview = async (x = f) => { const { data } = await api.post(`/admin/member-emails/${kind.k}/preview`, body(x)); setView(data); };
   useEffect(() => {
-    api.get(`/admin/member-emails/${kind.k}`).then(({ data }) => { setDefaults(data.defaults); setF(body(data)); preview(body(data)); });
+    let live = true;
+    api.get(`/admin/member-emails/${kind.k}`).then(({ data }) => { if (!live) return; setDefaults(data.defaults); setF(body(data)); preview(body(data)); });
+    return () => { live = false; };
   }, [kind.k]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = async () => {
     try { await api.put(`/admin/member-emails/${kind.k}`, body(f)); toast({ title: `${kind.l} email saved` }); preview(); }

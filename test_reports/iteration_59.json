@@ -1,0 +1,43 @@
+{
+  "summary": "Tested the editable welcome and approval emails, the optional staff email code for Admin, and the install celebration, on both backend and frontend. Backend: 15 of 15 pytest tests pass. They cover GET/PUT/preview/test for both kinds, unknown kind 404, 401/403 for non-admins, 400 on empty fields, legacy /admin/members/welcome endpoints, approve, staff login code_pending, 403 on admin while pending, members/me is_admin false, wrong code 400, right code 200, 429 after 5 wrong tries, code-verify sessions not pending, pref toggle, normal login with the toggle off, and app-celebrated. Frontend: the email editor tabs, Preview with {first} replaced, Save that survives a reload, the empty-field error toast, Use original wording, and Send me a test all work. The staff gate works end to end (password login, gate, short code, wrong code, Send a new code, right code opens Admin, Sign out). The Team toggle works both ways with toasts. The celebration overlay works: it shows only in standalone mode, the tour goes through 4 steps, Open tab switches tabs, Skip and Done close it and it never shows again after reload, and it never shows together with WelcomeBack. No blocking bugs.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/member-emails/{kind}/test", "issue": "send_email() catches every error and returns None, so the 502 branch can never run. The UI says 'Test email sent' even when the provider rejects the email. Confirmed: example.com addresses got 200 'Test email sent'. Fix: check the return value of send_email (None means failed) and raise 502."},
+      {"endpoint": "db.member_settings key 'welcome' (data, not code)", "issue": "The current saved welcome settings are leftover QA text: subject 'QA Welcome, {first}!', message 'QA custom welcome body for test.' Real new members would get this. It was already there before this run; I restored it exactly as found, per instructions. The owner or main agent should reset it with 'Use original wording', then Save."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminWelcome EmailEditor", "issue": "Race on load: in dev StrictMode the GET runs twice, and the second reply overwrites f. An edit typed before it arrives is lost. Seen in testing: a subject filled right after the field appeared was silently reset. Production builds (no StrictMode) are much less affected. Fix: ignore stale replies (AbortController or a cancelled flag in the effect cleanup).", "selector": "[data-testid=approval-email-subject]", "priority": "LOW"},
+      {"component": "Members page while staff code is pending", "issue": "A staff member with a pending code who opens /members sees the 'Membership application: Join the sisterhood' form, because role is masked to 'pending' and she has no member_status. She could submit an application on her staff account. Suggest: if me/auth user.code_pending, redirect to /admin (the gate) or show 'Finish signing in'.", "selector": "/members", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "StaffCodeGate", "issues": ["The Logo compact wordmark ('CARING SISTERS club / LOVE RESPECT EMPOWERMENT') is light text on the white card and is almost invisible. Use a dark logo variant on white."]},
+      {"screen": "AppCelebration on mobile (390x844)", "issues": ["The card sits at the bottom of the screen. The fixed yellow preview banner ('Test (preview) site...') covers its bottom edge: 'Maybe later' and the Open/Next buttons are partly hidden. The banner is preview-only, but add bottom safe-area padding (e.g. pb-[calc(env(safe-area-inset-bottom)+1rem)]) so iOS home bars don't cover it either.", "The 'Open Announcements' label nearly fills its half-width button at 390px."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter59_member_emails_staff_code_celebration.py", "/app/backend/tests/qa_iter59_ui.py", "/app/test_reports/pytest/pytest_iter59.xml"],
+  "action_items": [
+    "Make /admin/member-emails/{kind}/test return 502 when send_email returns None (it never raises now), so 'Send me a test' does not show success when the send failed",
+    "Reset the leftover QA welcome email text in member_settings (key 'welcome') to defaults",
+    "On /members, send staff with a pending code to the /admin code gate instead of showing the membership application form",
+    "Optional: guard the AdminWelcome initial GET against stale replies",
+    "Optional: use a dark logo on the white StaffCodeGate card; add bottom safe-area padding to the AppCelebration card on mobile"
+  ],
+  "critical_code_review_comments": [
+    "get_current_user masks role to 'pending' only when the session is code_pending AND the user's role is admin. require_admin checks code_pending first. All admin checks in member endpoints read user.role, so a pending staff member gets no admin powers. Verified: members/me is_admin is false.",
+    "_consume_code now uses an atomic find_one_and_update with attempts < 5. After 5 failures the code is marked used and the next try returns 429. Verified. This fixes the iteration 58 note.",
+    "_approval_html and _welcome_html both read the saved greeting and subject. _send_approved_alert uses _render_member_email('approval', ...) with the saved settings. Checked in code. The real send to example.com could not be watched because send_email swallows errors.",
+    "/auth/verify-email and /auth/login use _start_session without code_ok, so staff with the toggle on are pending. /auth/code-verify passes code_ok=True, which is correct because the email code is itself the second factor.",
+    "Legacy PUT /admin/members/welcome writes only subject and message, and keeps any saved greeting (the update uses $set). Fine."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter59_member_emails_staff_code_celebration.py", "/app/backend/tests/qa_iter59_ui.py"],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% of tested flows (2 minor UX issues, 1 low-priority race)"},
+  "test_credentials": "Temporary users only: test59_* (pytest) and ui59_* (UI; staff ui59.staff@example.com / QaPass1234 with require_login_code). All were deleted afterwards, together with their sessions, credentials, auth_tokens, rate_hits and login_attempts.",
+  "seed_data_creation": "None left. member_settings 'welcome' was restored exactly as found. 'approval_email' did not exist before and was deleted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend: cd /app/backend && python -m pytest tests/test_iter59_member_emails_staff_code_celebration.py -p no:xdist -o addopts=''. UI: python tests/qa_iter59_ui.py up | code (sets staff code to 123456, run it after login or resend, about 2.5s later) | celebrate_reset | state | down. Cookies: ui59_admin_tok, ui59_mem_tok, ui59_newmem_tok. The up/down commands back up and restore member_settings. Emulate standalone mode with an add_init_script that overrides matchMedia."
+}

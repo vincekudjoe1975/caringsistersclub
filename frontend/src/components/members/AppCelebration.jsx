@@ -17,7 +17,7 @@ export function AppCelebration({ me, onGo }) {
   const close = (tab) => { api.post('/members/app-celebrated').catch(() => {}); setOpen(false); if (tab) onGo(tab); };
   const s = STEPS[step];
   return (
-    <div data-testid="app-celebration-overlay" className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-4 bg-[#1A0414]/60 backdrop-blur-sm" style={{ animation: 'fadeUp .35s ease both' }}>
+    <div data-testid="app-celebration-overlay" className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-4 pb-[calc(env(safe-area-inset-bottom)+5rem)] sm:pb-4 bg-[#1A0414]/60 backdrop-blur-sm" style={{ animation: 'fadeUp .35s ease both' }}>
       <div data-testid="app-celebration-card" role="dialog" aria-modal="true" aria-labelledby="app-celebration-title" className="bg-[#F7EFE9] rounded-3xl p-7 sm:p-9 w-full max-w-md" style={{ boxShadow: '0 40px 80px -30px rgba(0,0,0,0.6)' }}>
         {step < 0 ? (
           <>
@@ -35,7 +35,7 @@ export function AppCelebration({ me, onGo }) {
             <p className="text-[14px] text-[#241019]/65 mt-1.5 mb-6">{s.d}</p>
             <div className="flex gap-1.5 mb-6">{STEPS.map((x, i) => <span key={x.tab} className={`h-1.5 flex-1 rounded-full transition-colors ${i <= step ? 'bg-[#B4247E]' : 'bg-[#3B0A2E]/10'}`} />)}</div>
             <div className="flex gap-2">
-              <button data-testid="app-celebration-open-tab-btn" onClick={() => close(s.tab)} className="flex-1 rounded-full py-3 font-semibold text-[14px] border border-[#3B0A2E]/15 text-[#3B0A2E]">Open {s.t}</button>
+              <button data-testid="app-celebration-open-tab-btn" onClick={() => close(s.tab)} className="flex-1 rounded-full py-3 font-semibold text-[14px] border border-[#3B0A2E]/15 text-[#3B0A2E]">Go there</button>
               {step < STEPS.length - 1
                 ? <button data-testid="app-celebration-next-btn" onClick={() => setStep(step + 1)} className="flex-1 btn-magenta rounded-full py-3 font-semibold text-[14px]">Next</button>
                 : <button data-testid="app-celebration-done-btn" onClick={() => close()} className="flex-1 btn-magenta rounded-full py-3 font-semibold text-[14px]">Start exploring</button>}

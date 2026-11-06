@@ -24,7 +24,7 @@ export function StaffCodeGate() {
   return (
     <div data-testid="staff-code-gate" className="csc-hero-gradient min-h-screen flex items-center justify-center p-5">
       <form onSubmit={verify} className="bg-white rounded-3xl p-7 sm:p-10 w-full max-w-md text-center" style={{ boxShadow: '0 40px 80px -30px rgba(0,0,0,0.5)' }}>
-        <div className="flex justify-center mb-6"><Logo compact /></div>
+        <div className="flex justify-center mb-6"><Logo variant="dark" compact /></div>
         <span className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-5" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }}><ShieldCheck size={26} className="text-white" /></span>
         <h1 className="font-serif text-[26px] text-[#3B0A2E] font-semibold mb-2">Check your email</h1>
         <p data-testid="staff-code-gate-hint" className="text-[14px] text-[#241019]/65 mb-6">For extra safety, Admin needs the 6-digit code we just sent to <b>{user.email}</b>.</p>

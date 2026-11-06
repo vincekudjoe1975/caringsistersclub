@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
 import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText, Star, HandHeart, Camera, CalendarDays, Clock3, Smartphone } from 'lucide-react';
@@ -134,6 +134,7 @@ export default function Members() {
   }, []);
   useEffect(() => { if (user) load(); }, [user, load]);
 
+  if (user && user.code_pending) return <Navigate to="/admin" replace />;
   if (user === null || (user && me === null)) return <Shell><div className="flex justify-center py-32"><Loader2 className="animate-spin text-[#CBA24B]" size={36} /></div></Shell>;
   if (!user || me === false) return <Shell><MemberLogin /><OfflinePass /></Shell>;
   if (welcome) return <Shell><Welcome me={me} onStart={closeWelcome} onPortal={closeWelcome} /></Shell>;

@@ -546,3 +546,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Admin > Members > "App installs": X of Y active sisters installed (users.app_installed_at), a list of who has not, a Nudge button per sister and Nudge all (POST /api/admin/members/app-nudge, max 1 per 7 days via users.app_nudged_at).
 - 6-digit email code sign-in for everyone (/members and /login): POST /api/auth/code-request (generic response, rate-limited) and /api/auth/code-verify (atomic attempts, 5 tries max, 10 min, single use; creates the same session_token session and marks email_verified). The UI link is "Email me a sign-in code instead"; the iOS app tip points to it.
 - Admin tab bar uses rounded-2xl on mobile. Redeploy queued.
+
+## 2026-06 — Iteration 59: editable member emails, install celebration, staff email code
+- Admin > Members > "Welcome & approval emails": staff edit Subject / Greeting / Message for both welcome packet and approval notice, live preview, Save, "Send me a test", "Use original wording". Get-the-app box + QR always included. Endpoints: /api/admin/member-emails/{welcome|approval} (+ /preview, /test).
+- Install celebration: first open of installed app (standalone) shows "You're all set!" + 4-step tour (Announcements, This Week, Discussion, My Profile). Once only (users.app_celebrated_at, POST /api/members/app-celebrated).
+- Staff email code: Admin > Team toggle "Ask me for an email code every time I sign in" (users.require_login_code). New password/Google sessions get code_pending; Admin blocked until code entered (/api/auth/staff-code/request|verify). Member-portal code sign-in counts as the code.
+- Tested: iteration_59 backend 15/15, frontend pass; follow-ups fixed (test-send failure now reported, pending staff redirected from /members to code screen, dark logo, mobile padding, load race). Preview QA welcome text reset to defaults.
+- Not deployed yet; user to confirm on production after next deploy.

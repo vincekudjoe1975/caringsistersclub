@@ -9117,11 +9117,8 @@ async def admin_member_email_preview(kind: str, payload: MemberEmailIn, user=Dep
 async def admin_member_email_test(kind: str, payload: MemberEmailIn, request: Request, user=Depends(require_admin)):
     await _rate_limit(request, f"member_email_test:{user['user_id']}", 10, 3600)
     out = await _render_member_email(_email_kind(kind), _preview_member(user), payload.model_dump())
-    try:
-        await send_email(to=user["email"], subject=f"[Test] {out['subject']}", html=out["html"])
-    except Exception as e:
-        logging.warning(f"Test {kind} email failed: {e}")
-        raise HTTPException(status_code=502, detail="The test email could not be sent. Please try again shortly.")
+    if not await send_email(to=user["email"], subject=f"[Test] {out['subject']}", html=out["html"]):
+        raise HTTPException(status_code=400, detail="The test email could not be sent. Please try again shortly.")
     return {"ok": True, "sent_to": user["email"]}
 
 
