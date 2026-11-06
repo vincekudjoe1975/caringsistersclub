@@ -44,6 +44,7 @@ export default function Footer() {
               <li><Link to="/events" className="inline-block py-1.5 lg:py-0 text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Upcoming Events</Link></li>
               <li><Link to="/transparency" className="inline-block py-1.5 lg:py-0 text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Financial Transparency</Link></li>
               <li><Link to="/manage-gift" data-testid="footer-manage-gift-link" className="inline-block py-1.5 lg:py-0 text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Manage My Monthly Gift</Link></li>
+              <li><Link to="/app" data-testid="footer-get-app-link" className="inline-block py-1.5 lg:py-0 text-[13.5px] text-[#F7EFE9]/75 hover:text-[#F7EFE9]">Get the App</Link></li>
             </ul>
           </div>
 

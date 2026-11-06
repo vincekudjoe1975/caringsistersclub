@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import { nav } from '../mock/mock';
 import Logo from './Logo';
-import { Menu, X, Heart, LogIn } from 'lucide-react';
+import { Menu, X, Heart, LogIn, Smartphone } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from './ui/sheet';
 
 export default function Header() {
@@ -93,6 +93,9 @@ export default function Header() {
                 ))}
                 <Link to="/members" data-testid="mobile-member-login" className="py-3 text-[16px] border-b border-white/10 text-[#F7EFE9]/90 flex items-center gap-2">
                   <LogIn size={16} /> Member Login
+                </Link>
+                <Link to="/app" data-testid="mobile-get-app" className="py-3 text-[16px] border-b border-white/10 text-[#F7EFE9]/90 flex items-center gap-2">
+                  <Smartphone size={16} /> Get the App
                 </Link>
                 <Link to="/donate" className="btn-magenta rounded-full px-6 py-3 text-center font-semibold mt-6">
                   Donate Now

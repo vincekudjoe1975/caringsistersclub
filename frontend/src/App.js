@@ -19,6 +19,7 @@ import Contact from './pages/Contact';
 import Legal from './pages/Legal';
 import Login from './pages/Login';
 import Videos from './pages/Videos';
+import GetApp from './pages/GetApp';
 import ResetPassword from './pages/ResetPassword';
 import VerifyEmail from './pages/VerifyEmail';
 import Admin from './pages/Admin';
@@ -137,6 +138,7 @@ function Shell() {
           <Route path="/events" element={<Events />} />
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/videos" element={<Videos />} />
+          <Route path="/app" element={<GetApp />} />
           <Route path="/gallery/album/:slug" element={<GalleryAlbum />} />
           <Route path="/session-checkin/:sid" element={<SessionCheckIn />} />
           <Route path="/session-sheet/:sid" element={<SessionSheet />} />

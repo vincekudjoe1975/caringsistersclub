@@ -14,6 +14,7 @@ const queryClient = new QueryClient({
 });
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); window.__cscInstallEvt = e; });
 root.render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>

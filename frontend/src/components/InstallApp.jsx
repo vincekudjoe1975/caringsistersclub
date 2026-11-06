@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Smartphone, X, Share } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 
 const KEY = 'csc_installed';
@@ -9,7 +10,7 @@ const isIOS = () => /iphone|ipad|ipod/i.test(window.navigator.userAgent);
 const markInstalled = () => { localStorage.setItem(KEY, '1'); api.post('/members/app-installed').catch(() => {}); };
 
 export const InstallApp = ({ light = false }) => {
-  const [evt, setEvt] = useState(null);
+  const [evt, setEvt] = useState(() => window.__cscInstallEvt || null);
   const [show, setShow] = useState(false);
   useEffect(() => {
     if (isStandalone()) { markInstalled(); return undefined; }
@@ -35,10 +36,8 @@ export const InstallApp = ({ light = false }) => {
         <p className="font-semibold text-[15px] flex items-center gap-1.5"><Smartphone size={15} /> Add the Club to your home screen</p>
         {evt ? (
           <button data-testid="install-app-btn" onClick={install} className="btn-magenta rounded-full px-5 py-2 mt-2.5 text-[14px] font-semibold">Install app</button>
-        ) : /crios|fxios|edgios/i.test(window.navigator.userAgent) ? (
-          <p data-testid="install-app-ios-tip" className="text-[13.5px] opacity-80 mt-1">Open <strong>caringsistersclub.org</strong> in <strong>Safari</strong>, tap <Share size={13} className="inline -mt-0.5" /> Share, then “Add to Home Screen” and “Add”.</p>
         ) : (
-          <p data-testid="install-app-ios-tip" className="text-[13.5px] opacity-80 mt-1">Tap <Share size={13} className="inline -mt-0.5" /> Share at the bottom of Safari, scroll down to “Add to Home Screen”, then tap “Add”.</p>
+          <p data-testid="install-app-ios-tip" className="text-[13.5px] opacity-80 mt-1">Tap <Share size={13} className="inline -mt-0.5" /> Share, then “Add to Home Screen”. <Link to="/app" data-testid="install-app-help-link" className="underline font-semibold">Step-by-step help</Link></p>
         )}
       </div>
       <button data-testid="install-app-dismiss" onClick={close} aria-label="Hide for now" className="w-10 h-10 -m-2 flex items-center justify-center opacity-70 hover:opacity-100"><X size={18} /></button>

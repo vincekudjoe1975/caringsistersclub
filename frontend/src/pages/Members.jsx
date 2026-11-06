@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
-import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText, Star, HandHeart, Camera, CalendarDays, Clock3 } from 'lucide-react';
+import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText, Star, HandHeart, Camera, CalendarDays, Clock3, Smartphone } from 'lucide-react';
 import { MemberApply } from '../components/members/MemberApply';
 import { Announcements } from '../components/members/Announcements';
 import { Discussion } from '../components/members/Discussion';
@@ -11,6 +11,13 @@ import { Bylaws } from '../components/members/Bylaws';
 import { SignInOptions } from '../components/EmailAuth';
 import { Welcome } from '../components/members/Welcome';
 import { WelcomeBack } from '../components/members/WelcomeBack';
+import { isStandaloneApp } from './GetApp';
+
+const GetAppLink = () => (isStandaloneApp() ? null : (
+  <Link to="/app" data-testid="member-get-app-link" className="mt-5 flex items-center justify-center gap-2 rounded-2xl px-4 py-3 bg-[#F7EFE9] text-[#3B0A2E] text-[13.5px] font-semibold hover:bg-[#f1e3ea] transition-colors">
+    <Smartphone size={16} className="text-[#B4247E]" /> Get the app on your phone
+  </Link>
+));
 import { MyProfile } from '../components/members/MyProfile';
 import { Ballots } from '../components/members/Ballots';
 import { Standing } from '../components/members/Standing';
@@ -67,6 +74,7 @@ function MemberLogin() {
       <p className="text-[#241019]/65 text-[14.5px] mb-8">Sign in to read our bylaws, meet your sisters, and join the conversation.</p>
       <SignInOptions onGoogle={login} googleTestid="member-login-btn" />
       <p className="text-[13px] text-[#241019]/55 mt-6">Not a member yet? <Link to="/membership" data-testid="member-learn-link" className="text-[#B4247E] font-semibold">Learn how to join</Link></p>
+      <GetAppLink />
     </Card>
   );
 }
@@ -128,7 +136,7 @@ export default function Members() {
   if (!user || me === false) return <Shell><MemberLogin /><OfflinePass /></Shell>;
   if (welcome) return <Shell><Welcome me={me} onStart={closeWelcome} onPortal={closeWelcome} /></Shell>;
   if (me.status === 'active') return <Shell><Portal me={me} onChange={load} /></Shell>;
-  if (me.status === 'applied') return <Shell><Card icon={Clock} title="Application received" testid="member-pending-card"><p className="text-[#241019]/65 text-[14.5px]">Thank you, {(me.name || '').split(' ')[0]}. Our membership team will review your application and email you once you're approved.</p></Card></Shell>;
+  if (me.status === 'applied') return <Shell><Card icon={Clock} title="Application received" testid="member-pending-card"><p className="text-[#241019]/65 text-[14.5px]">Thank you, {(me.name || '').split(' ')[0]}. Our membership team will review your application and email you once you're approved.</p><GetAppLink /></Card></Shell>;
   if (me.status === 'declined' || me.status === 'suspended' || me.status === 'ended') return <Shell><Card icon={Clock} title="Portal access paused" testid="member-paused-card"><p className="text-[#241019]/65 text-[14.5px]">Your member access isn't active right now. Please <Link to="/contact" className="text-[#B4247E] font-semibold">contact us</Link> if you have questions.</p></Card></Shell>;
   return <Shell><MemberApply me={me} onDone={load} /></Shell>;
 }
