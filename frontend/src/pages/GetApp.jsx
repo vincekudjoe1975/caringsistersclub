@@ -55,9 +55,9 @@ const GUIDES = {
     <>Tap <b>Add</b>.</>,
   ] },
   desktop: { group: 'Computer', label: 'Chrome or Edge', steps: [
-    <>Click the <b>Install app</b> button above, or the install icon <I icon={Download} /> at the right end of the address bar.</>,
+    <>In Chrome or Edge, click the install icon <I icon={Download} /> at the right end of the address bar (or the <b>Install app</b> button on this page, if shown).</>,
     <>Click <b>Install</b>. The Club opens in its own window.</>,
-    <>Or scan the code below with your phone to install it there.</>,
+    <>To install on your phone, scan the code on this page with your phone's camera.</>,
   ] },
 };
 const GROUPS = ['iPhone', 'Android', 'Computer'];
@@ -127,7 +127,7 @@ export default function GetApp() {
               </>
             )}
           </div>
-          <aside className="bg-white rounded-3xl p-6 border border-[#3B0A2E]/8 text-center lg:sticky lg:top-28" data-testid="get-app-qr">
+          <aside className="hidden lg:block bg-white rounded-3xl p-6 border border-[#3B0A2E]/8 text-center lg:sticky lg:top-28" data-testid="get-app-qr">
             <p className="font-serif text-[18px] text-[#3B0A2E] font-semibold mb-1">On a computer?</p>
             <p className="text-[13px] text-[#241019]/60 mb-4">Scan with your phone's camera to open this page there.</p>
             <div className="inline-block p-3 rounded-2xl bg-[#F7EFE9]"><QRCodeSVG value={`${SITE}/app`} size={168} fgColor="#3B0A2E" bgColor="#F7EFE9" /></div>

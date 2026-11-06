@@ -533,3 +533,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - FIX: lib/api.js BACKEND_URL = window.location.origin (same-origin; Cloudflare proxies /api on every host), and all media URLs use the page origin. Logout delete_cookie now sends secure/samesite=none. *.emergent.host site_url is ignored and rejected on save. SiteUrlBanner suggests caringsistersclub.org on emergent.host.
 - iOS installed app: the sign-in screen puts the Email button first, with a tip (Google opens Safari and cannot return to the app). iOS install tips are clearer, with a Safari-only note for Chrome/Firefox on iOS.
 - Redeploy queued. The user should re-save the Website address as https://caringsistersclub.org, and iPhone users should reinstall from the apex.
+
+
+## 2026-06 — Get the App page (iteration 57, agent-tested, not user-confirmed)
+- /app (pages/GetApp.jsx): detects iPhone Safari/Chrome/Firefox/Edge, Android Chrome/Samsung/Firefox and computers, with step-by-step guides. Shows an Install button when beforeinstallprompt is available (captured globally in index.js as window.__cscInstallEvt), an "installed" state in standalone mode, and a QR code on desktop.
+- Links: footer "Get the App", phone menu "Get the App", and "Get the app on your phone" on the Member Portal sign-in card and the Application received card. The InstallApp banner tip links to /app (no more Safari-only advice).
+- Not yet redeployed.

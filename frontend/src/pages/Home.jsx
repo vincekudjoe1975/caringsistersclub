@@ -44,7 +44,7 @@ export function HomeHero({ home }) {
           </div>
           <Reveal className="relative">
             <div className="relative rounded-[24px] overflow-hidden img-zoom bg-[#3B0A2E]" style={{ boxShadow: '0 40px 80px -30px rgba(0,0,0,0.6)' }}>
-              <img fetchpriority="high" style={fade} src={home.hero_title === undefined ? undefined : h.image} alt={h.alt} data-testid="home-hero-image" className="w-full h-[420px] lg:h-[560px] object-cover" />
+              <img fetchPriority="high" style={fade} src={home.hero_title === undefined ? undefined : h.image} alt={h.alt} data-testid="home-hero-image" className="w-full h-[420px] lg:h-[560px] object-cover" />
               <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, transparent 55%, rgba(41,6,31,0.55))' }} />
             </div>
             {h.badgeNumber && <div data-testid="home-hero-badge" className="absolute -bottom-6 -left-6 bg-[#F7EFE9] rounded-2xl px-6 py-4 shadow-xl hidden md:block">

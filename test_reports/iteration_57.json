@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 57 tested only the frontend for the iPhone/all-browser install help. Every requested check passed. (1) /app (get-app-page) auto-selects the right guide in a fresh context for each emulated user agent. iPhone Safari picks ios-safari ('...bar at the bottom of the screen'). CriOS picks ios-chrome ('top right'). FxiOS picks ios-firefox ('bottom right'). EdgiOS picks ios-edge ('bottom'). Android Chrome picks android-chrome. SamsungBrowser picks android-samsung. Windows Chrome picks the Computer group / 'Chrome or Edge'. The selected pill has the magenta class. get-app-ios-note shows only for the iPhone group. (2) The group tabs and all 7 browser pills switch the title and steps. The Computer group hides the pills. Every guide ends with a gold (#CBA24B) last step that contains 'Log in with Email'. (3) get-app-qr shows the QR SVG and the caption caringsistersclub.org/app. (4) In an iPhone context with navigator.standalone=true, get-app-installed shows and the steps are hidden. get-app-open-portal goes to /members, where member-get-app-link is hidden. (5) A synthetic beforeinstallprompt makes get-app-install-btn appear. Clicking it calls prompt(). The outcome 'accepted' shows the installed card. 'dismissed' clears the button. An event fired on Home is captured by index.js, so after SPA navigation through footer-get-app-link the button shows on /app. (6) footer-get-app-link goes to /app. At 390px, the hamburger shows mobile-get-app ('Get the App'), which goes to /app and closes the menu. There is no horizontal overflow. (7) Signed out on /members, member-get-app-link ('Get the app on your phone') sits below member-learn-link and goes to /app. (8) A TEST_ user with member_status 'applied' sees member-pending-card with member-get-app-link, which goes to /app. (9) Regression: on /members, the Google button (member-login-btn) and the email form are present, and a wrong password shows 'Incorrect email or password.' Home, About, Videos and /app load. The only console output is the expected signed-out /auth/me 401s, plus one React dev warning on Home about fetchpriority.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/app Computer guide", "issues": ["Step 1 says 'Click the Install app button above' even when no install button is shown, for example in Firefox/Safari desktop or before beforeinstallprompt fires. Step 3 says 'scan the code below', but on desktop the QR is in the right column, not below."]},
+      {"screen": "/app on phones", "issues": ["The 'On a computer? Scan with your phone's camera' QR card still renders on mobile below the steps, where it is not useful. Consider hiding it below lg or when the group is iPhone/Android."]},
+      {"screen": "Home", "issues": ["React dev warning: 'Invalid DOM property fetchpriority. Did you mean fetchPriority?' in Home.jsx line 47 <img fetchpriority=\"high\">. Use fetchPriority, which React 18.3+/19 supports, or spread it as a lowercase attribute through a ref."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/_qa57_sessions.py"],
+  "action_items": [
+    "(Minor) Home.jsx:47: rename fetchpriority to fetchPriority to clear the console warning",
+    "(Minor) GetApp desktop guide: make step 1 depend on whether an install event exists, and reword 'scan the code below' to 'scan the code on the right' (or 'the QR code')",
+    "(Optional) Hide the QR aside on small screens"
+  ],
+  "critical_code_review_comments": [
+    "GetApp.install(): if evt.userChoice rejects, the button state is never reset. Wrap it in try/finally. evt.prompt() is not awaited, which is OK for Chrome.",
+    "isStandalone logic is duplicated in InstallApp.jsx (isStandalone/isIOS) and GetApp.jsx (isStandaloneApp/detect). InstallApp's isIOS misses iPadOS desktop UAs, which GetApp handles through maxTouchPoints. Reuse GetApp's helpers.",
+    "detect() puts iPad under the 'iPhone' group label. That is fine, but the copy says 'iPhone'."
+  ],
+  "updated_files": ["/app/backend/tests/_qa57_sessions.py"],
+  "success_rate": {"backend": "N/A (frontend only)", "frontend": "100%"},
+  "seed_data_creation": "Created TEST_qa57_applied user (member_status applied) and session TEST_qa57_apptok via _qa57_sessions.py up, then removed them with 'down'.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "To emulate UAs, use page.context.browser.new_context(user_agent=...). For standalone, use add_init_script to override Navigator.prototype.standalone. For beforeinstallprompt, dispatch new Event('beforeinstallprompt') with prompt and userChoice stubs. Use _qa57_sessions.py up|down for the applied-member cookie. A successful email login was not exercised, because there is no standing email account; only the wrong-password path was checked."
+}
