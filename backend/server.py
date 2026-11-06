@@ -6664,7 +6664,10 @@ class RoleUpdate(BaseModel):
 
 @api_router.get("/admin/team")
 async def admin_team(user=Depends(require_admin)):
-    users = await db.users.find({"$or": [{"role": "admin"}, {"member_status": {"$exists": False}}]}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    fields = {"_id": 0, "user_id": 1, "name": 1, "email": 1, "picture": 1, "role": 1, "member_status": 1, "created_at": 1}
+    users = await db.users.find({"$or": [{"role": "admin"}, {"member_status": {"$exists": False}}]}, fields).sort("created_at", 1).to_list(500)
+    for u in users:
+        u["is_owner"] = (u.get("email") or "").lower() in ADMIN_OWNER_EMAILS
     allowed = await db.allowed_emails.find({}, {"_id": 0}).to_list(500)
     return {"users": users, "allowed_emails": [a["email"] for a in allowed], "me": user["user_id"]}
 
@@ -6687,7 +6690,29 @@ async def admin_team_role(user_id: str, payload: RoleUpdate, user=Depends(requir
     if user_id == user["user_id"] and payload.role != "admin":
         raise HTTPException(status_code=400, detail="You cannot remove your own admin access")
     await db.users.update_one({"user_id": user_id}, {"$set": {"role": payload.role}})
+    if payload.role != "admin":
+        t = await db.users.find_one({"user_id": user_id}, {"_id": 0, "email": 1})
+        await db.allowed_emails.delete_one({"email": ((t or {}).get("email") or "").lower()})
     return {"message": "Role updated"}
+
+
+@api_router.post("/admin/team/{user_id}/make-member")
+async def admin_team_make_member(user_id: str, user=Depends(require_admin)):
+    if user_id == user["user_id"]:
+        raise HTTPException(status_code=400, detail="You cannot remove your own admin access")
+    t = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Account not found")
+    email = (t.get("email") or "").lower()
+    if email in ADMIN_OWNER_EMAILS:
+        raise HTTPException(status_code=400, detail="This is an owner account and always keeps Admin access.")
+    update = {"role": "pending", "require_login_code": False}
+    if t.get("member_status") not in ("active", "applied", "declined", "suspended", "ended"):
+        update.update({"member_status": "active", "member_since": t.get("member_since") or _now_iso()})
+    await db.users.update_one({"user_id": user_id}, {"$set": update})
+    await db.allowed_emails.delete_one({"email": email})
+    logging.info(f"Team: {user.get('email')} changed {email} to member")
+    return {"message": "Changed to member", "member_status": update.get("member_status", t.get("member_status"))}
 
 
 @api_router.post("/admin/team/revoke-email")

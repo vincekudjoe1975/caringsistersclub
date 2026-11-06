@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, UserPlus, ShieldCheck, ShieldX, Mail, X } from 'lucide-react';
+import { Loader2, UserPlus, Mail, X } from 'lucide-react';
+import { TeamList } from '../components/admin/TeamList';
 import { MergeAccounts } from '../components/MergeAccounts';
 
 export default function AdminTeam({ currentUserId }) {
@@ -38,10 +39,11 @@ export default function AdminTeam({ currentUserId }) {
     }
   };
 
-  const setRole = async (uid, role) => {
+  const change = async (u, to) => {
     try {
-      await api.post(`/admin/team/${uid}/role`, { role });
-      toast({ title: role === 'admin' ? 'Access granted' : 'Access revoked' });
+      if (to === 'member') await api.post(`/admin/team/${u.user_id}/make-member`);
+      else await api.post(`/admin/team/${u.user_id}/role`, { role: 'admin' });
+      toast({ title: to === 'member' ? 'Changed to member' : 'Admin access granted', description: to === 'member' ? `${u.name || u.email} can no longer open Admin. She now appears under Members.` : undefined });
       load();
     } catch (err) {
       toast({ title: 'Failed', description: err?.response?.data?.detail || 'Try again', variant: 'destructive' });
@@ -66,35 +68,7 @@ export default function AdminTeam({ currentUserId }) {
 
   return (
     <div className="grid lg:grid-cols-[1fr_320px] gap-8 items-start">
-      {/* Users */}
-      <div>
-        <h3 className="font-serif text-[20px] text-[#3B0A2E] font-semibold mb-4">Team Members</h3>
-        <div className="bg-white rounded-2xl border border-[#3B0A2E]/8 divide-y divide-[#3B0A2E]/8">
-          {users.map((u) => (
-            <div key={u.user_id} className="flex items-center justify-between gap-3 p-4">
-              <div className="flex items-center gap-3 min-w-0">
-                {u.picture ? <img loading="lazy" decoding="async" src={u.picture} alt="" className="w-9 h-9 rounded-full" referrerPolicy="no-referrer" /> : <span className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold" style={{ background: '#B4247E' }}>{(u.name || u.email || '?').charAt(0)}</span>}
-                <div className="min-w-0">
-                  <p className="text-[14px] text-[#3B0A2E] font-semibold truncate">{u.name || u.email}{u.user_id === currentUserId && <span className="text-[#241019]/45 font-normal"> (you)</span>}</p>
-                  <p className="text-[12px] text-[#241019]/55 truncate">{u.email}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${u.role === 'admin' ? 'text-white' : ''}`} style={u.role === 'admin' ? { background: '#1f7a4d' } : { background: '#f0ece4', color: '#8a6d2f' }}>
-                  {u.role === 'admin' ? 'Admin' : 'Pending'}
-                </span>
-                {u.role === 'admin' ? (
-                  u.user_id !== currentUserId && (
-                    <button onClick={() => setRole(u.user_id, 'pending')} title="Revoke access" className="text-red-500 hover:text-red-700 p-1.5"><ShieldX size={17} /></button>
-                  )
-                ) : (
-                  <button onClick={() => setRole(u.user_id, 'admin')} title="Grant access" className="text-[#1f7a4d] hover:opacity-70 p-1.5"><ShieldCheck size={17} /></button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <TeamList users={users} me={currentUserId} onConfirm={change} />
 
       {/* Pre-approve */}
       <div className="space-y-5">

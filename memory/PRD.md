@@ -553,3 +553,8 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Staff email code: Admin > Team toggle "Ask me for an email code every time I sign in" (users.require_login_code). New password/Google sessions get code_pending; Admin blocked until code entered (/api/auth/staff-code/request|verify). Member-portal code sign-in counts as the code.
 - Tested: iteration_59 backend 15/15, frontend pass; follow-ups fixed (test-send failure now reported, pending staff redirected from /members to code screen, dark logo, mobile padding, load race). Preview QA welcome text reset to defaults.
 - Not deployed yet; user to confirm on production after next deploy.
+
+## 2026-06 — Team Access: staff vs member separation
+- Team Access now shows "Staff with Admin access" (Owner/Admin tags) and "Member accounts" (signed up, not applied; "Member · portal only").
+- "Change to member" (confirm dialog) -> POST /api/admin/team/{uid}/make-member: role pending, member_status active if none, removed from pre-approved emails, owners/self blocked. "Make staff" also needs confirmation (old one-click shield likely caused accidental admin grants).
+- Self-tested via API + screenshots. Not deployed; owner must change Evelyn Davies, fem mansaray, VandJ on live site after deploy.
