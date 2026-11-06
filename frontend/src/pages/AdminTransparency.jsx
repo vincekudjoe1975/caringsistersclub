@@ -116,7 +116,7 @@ function Reports({ form, setForm }) {
           <input value={r.year} onChange={(e) => upd(i, { year: e.target.value })} className={`${inp} w-20`} data-testid={`report-year-${i}`} />
           <select value={r.type} onChange={(e) => upd(i, { type: e.target.value })} className={`${inp} w-36`} data-testid={`report-type-${i}`}>{TYPES.map((t) => <option key={t.v} value={t.v}>{t.n}</option>)}</select>
           <input value={r.title} onChange={(e) => upd(i, { title: e.target.value })} placeholder="Title (optional)" className={`${inp} flex-1 min-w-[160px]`} data-testid={`report-title-${i}`} />
-          <a href={r.url.startsWith('/api/') ? `${process.env.REACT_APP_BACKEND_URL}${r.url}` : r.url} target="_blank" rel="noreferrer" className="p-2 text-[#3B0A2E] hover:text-[#B4247E]"><ExternalLink size={15} /></a>
+          <a href={r.url.startsWith('/api/') ? `${window.location.origin}${r.url}` : r.url} target="_blank" rel="noreferrer" className="p-2 text-[#3B0A2E] hover:text-[#B4247E]"><ExternalLink size={15} /></a>
           <DelBtn onClick={() => del(i)} id={`report-del-${i}`} />
         </div>
       ))}

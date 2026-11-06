@@ -3,7 +3,7 @@ import { api } from '../../lib/api';
 import { Slideshow } from './Slideshow';
 import { Camera, Upload, Trash2, ArrowLeft, X, Loader2, Cake, Check, Clock, ImageOff, Download, Gift, Play } from 'lucide-react';
 
-export const src = (u) => (u && u.startsWith('/api') ? `${process.env.REACT_APP_BACKEND_URL}${u}` : u);
+export const src = (u) => (u && u.startsWith('/api') ? `${window.location.origin}${u}` : u);
 const longDate = (d) => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
 const multipart = { headers: { 'Content-Type': 'multipart/form-data' } };
 
@@ -53,7 +53,7 @@ function Album({ mid, me, onBack }) {
         <div><h2 className="font-serif text-[26px] text-[#3B0A2E] font-semibold">{d.gathering.title}</h2><p className="text-[13px] text-[#241019]/60">{longDate(d.gathering.date)}{d.gathering.location ? ` · ${d.gathering.location}` : ''}</p></div>
         <div className="flex flex-wrap items-center gap-3">
           {d.photos.some((p) => p.status === 'approved') && <button data-testid="album-slideshow-btn" onClick={() => setShow(true)} className="rounded-full px-5 py-2.5 text-[13.5px] font-semibold bg-[#3B0A2E] text-white flex items-center gap-2"><Play size={15} /> Slideshow</button>}
-          {d.photos.some((p) => p.status === 'approved') && <a data-testid="album-download-zip" href={`${process.env.REACT_APP_BACKEND_URL}/api/members/albums/${mid}/download`} className="rounded-full px-5 py-2.5 text-[13.5px] font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] flex items-center gap-2 hover:border-[#B4247E] transition-colors"><Download size={15} /> Download album</a>}
+          {d.photos.some((p) => p.status === 'approved') && <a data-testid="album-download-zip" href={`${window.location.origin}/api/members/albums/${mid}/download`} className="rounded-full px-5 py-2.5 text-[13.5px] font-semibold border border-[#3B0A2E]/20 text-[#3B0A2E] flex items-center gap-2 hover:border-[#B4247E] transition-colors"><Download size={15} /> Download album</a>}
           {d.can_upload && <Uploader mid={mid} onDone={load} isAdmin={me.is_admin} />}
         </div>
       </div>

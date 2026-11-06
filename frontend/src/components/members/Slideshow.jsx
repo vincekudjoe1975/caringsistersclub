@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Pause, Play, X, Maximize } from 'lucide-react';
 
-const full = (u) => `${process.env.REACT_APP_BACKEND_URL}${u}`;
+const full = (u) => `${window.location.origin}${u}`;
 
 export function Slideshow({ photos, title, onClose }) {
   const [i, setI] = useState(0);

@@ -17,7 +17,7 @@ export function CheckinCode() {
   );
 }
 
-const src = (u) => (u && u.startsWith('/api') ? `${process.env.REACT_APP_BACKEND_URL}${u}` : u);
+const src = (u) => (u && u.startsWith('/api') ? `${window.location.origin}${u}` : u);
 const monthLabel = (m) => new Date(m + '-15').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 
 export function SpotlightArchive() {

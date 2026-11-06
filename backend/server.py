@@ -238,7 +238,7 @@ async def auth_logout(request: Request, response: Response):
             token = auth[7:]
     if token:
         await db.user_sessions.delete_one({"session_token": token})
-    response.delete_cookie("session_token", path="/")
+    response.delete_cookie("session_token", path="/", secure=True, httponly=True, samesite="none")
     return {"message": "Logged out"}
 
 # ---------- Email + password auth (shares users + user_sessions with Google auth) ----------
@@ -1225,7 +1225,10 @@ async def _refresh_site_url():
     global PUBLIC_APP_URL
     doc = await db.settings.find_one({"key": "site"}, {"_id": 0}) or {}
     detected = doc.get("detected_site_url") if _trusted_site(doc.get("detected_site_url") or "") else ""
-    PUBLIC_APP_URL = (doc.get("site_url") or os.environ.get("PUBLIC_APP_URL") or detected or CANONICAL_SITE_URL).rstrip("/")
+    site = (doc.get("site_url") or "").rstrip("/")
+    if site.endswith(".emergent.host"):  # default platform host: links there break sign-in on the custom domain
+        site = ""
+    PUBLIC_APP_URL = (site or os.environ.get("PUBLIC_APP_URL") or detected or CANONICAL_SITE_URL).rstrip("/")
 
 
 async def _detect_site_url(request: Request):

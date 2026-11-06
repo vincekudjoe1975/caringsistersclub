@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../../lib/api';
 import { Eye, Send, Check, Loader2 } from 'lucide-react';
 
-const src = (u) => `${process.env.REACT_APP_BACKEND_URL}${u}`;
+const src = (u) => `${window.location.origin}${u}`;
 
 function RecapEditor({ g, reload }) {
   const [sel, setSel] = useState(g.photos.slice(0, 6).map((p) => p.id));

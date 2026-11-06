@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// Same-origin API: every host (apex, www, installed app) proxies /api, so the session cookie stays first-party.
+export const BACKEND_URL = typeof window !== 'undefined' ? window.location.origin : process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
 export const api = axios.create({

@@ -39,7 +39,7 @@ export default function GivingStatement() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   useEffect(() => { api.get(`/donor/statements/${t}`).then(({ data }) => setD(data)).catch((ex) => setErr(ex?.response?.data?.detail || 'This link is not valid.')); }, [t]);
-  const base = `${process.env.REACT_APP_BACKEND_URL}/api/donor/statements/${t}`;
+  const base = `${window.location.origin}/api/donor/statements/${t}`;
   return (
     <div className="min-h-[70vh] bg-[#F7EFE9] py-16 px-5" data-testid="giving-statement-page">
       <div className="max-w-xl mx-auto bg-white rounded-3xl p-7 sm:p-10 border border-[#3B0A2E]/8">

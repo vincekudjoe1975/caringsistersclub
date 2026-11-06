@@ -5,7 +5,7 @@ import { Printer, Share2, EyeOff, Star, Upload, Trash2 } from 'lucide-react';
 import { AnnualBody } from '../../../pages/AnnualReport';
 
 const inputCls = 'rounded-lg border border-[#3B0A2E]/15 px-3 py-2 text-[13.5px] focus:outline-none focus:border-[#B4247E]';
-const src = (u) => (u && u.startsWith('/api') ? `${process.env.REACT_APP_BACKEND_URL}${u}` : u);
+const src = (u) => (u && u.startsWith('/api') ? `${window.location.origin}${u}` : u);
 
 export function AdminAnnual() {
   const { toast } = useToast();

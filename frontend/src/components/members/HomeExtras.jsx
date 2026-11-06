@@ -82,7 +82,7 @@ function InviteForm({ inv, me, onDone }) {
       <h3 className="font-serif text-[21px] text-[#3B0A2E] font-semibold mb-3">Share your story for the Sisterhood Spotlight</h3>
       <div className="flex flex-wrap gap-4 items-start">
         <div className="w-28 shrink-0">
-          {photo ? <img loading="lazy" decoding="async" src={photo.startsWith('/api') ? `${process.env.REACT_APP_BACKEND_URL}${photo}` : photo} alt="" referrerPolicy="no-referrer" className="w-28 h-28 rounded-2xl object-cover" /> : <div className="w-28 h-28 rounded-2xl bg-[#F7EFE9]" />}
+          {photo ? <img loading="lazy" decoding="async" src={photo.startsWith('/api') ? `${window.location.origin}${photo}` : photo} alt="" referrerPolicy="no-referrer" className="w-28 h-28 rounded-2xl object-cover" /> : <div className="w-28 h-28 rounded-2xl bg-[#F7EFE9]" />}
           <label className="mt-2 text-[12px] font-semibold text-[#B4247E] flex items-center gap-1 cursor-pointer"><Upload size={12} /> Upload photo<input data-testid="spotlight-photo-input" type="file" accept="image/*" className="hidden" onChange={(e) => upload(e.target.files?.[0])} /></label>
         </div>
         <textarea data-testid="spotlight-story-input" rows={6} value={story} onChange={(e) => setStory(e.target.value)} placeholder="Tell your sisters about yourself: your story, what the Club means to you, a favourite memory…" className="flex-1 min-w-[220px] rounded-xl border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E]" />
@@ -99,7 +99,7 @@ export function Spotlight({ me }) {
   useEffect(() => { load(); }, [load]);
   if (!d) return null;
   const s = d.spotlight;
-  const src = (u) => (u && u.startsWith('/api') ? `${process.env.REACT_APP_BACKEND_URL}${u}` : u);
+  const src = (u) => (u && u.startsWith('/api') ? `${window.location.origin}${u}` : u);
   return (
     <>
       {d.my_invite && <InviteForm inv={d.my_invite} me={me} onDone={load} />}
