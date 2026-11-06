@@ -1,0 +1,35 @@
+{
+  "summary": "Tested the app QR code, the app block in welcome/approval emails, app-install stats and nudges, and the 6-digit email sign-in code, on both backend and frontend. Backend: 13 of 13 pytest tests pass. Frontend: code sign-in works on /members (desktop) and /login (mobile); a staff user signed in with a code reached /admin. The Admin -> Members 'App installs' box works: count, progress bar, missing list, per-sister Nudge turning into 'Nudged', Nudge all, and the 'No one to nudge' toast on repeat. No functional bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/code-verify", "issue": "The attempts check (find_one, then a separate $inc) is not atomic. Parallel wrong guesses could go past 5 tries on one code. The per-IP limit of 20 per 15 min caps the damage. Fix: use find_one_and_update with {attempts: {$lt: 5}} plus $inc, then compare the hash."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin -> Members -> App installs", "issues": ["The 'Nudge all' button stays enabled even when every missing sister was nudged in the last 7 days. Clicking it only shows 'No one to nudge right now'. Consider disabling it, or hiding it, when every missing sister was nudged recently."]},
+      {"screen": "Admin tab bar on mobile (390px), not part of this change", "issues": ["The wrapped admin tab list sits inside a rounded-full white container, so it looks like an oval blob. Use rounded-2xl when it wraps."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter58_app_nudge_email_code.py", "/app/backend/tests/qa_iter58_ui.py", "/app/test_reports/pytest/pytest_iter58.xml"],
+  "action_items": [
+    "Optional: make the code-verify attempts check atomic (find_one_and_update with attempts < 5)",
+    "Optional: disable 'Nudge all' when every missing sister was nudged within 7 days"
+  ],
+  "critical_code_review_comments": [
+    "GET /api/qr/app.png encodes CANONICAL_SITE_URL + '/app' (https://caringsistersclub.org/app). The QR content could not be decoded (no pyzbar/cv2 installed); this was checked by reading the code. The PNG signature and content-type were checked.",
+    "_app_block_html uses PUBLIC_APP_URL for the /app link and the QR image. It is included in _welcome_html, in _send_approved_alert (passed as extra_html) and in the nudge email. Checked by calling the functions.",
+    "app-nudge sets app_nudged_at before the background email loop runs. send_email swallows errors (e.g. a 422 from the provider), so a failed send still counts as nudged for 7 days. This is acceptable, but staff get no signal when a send fails.",
+    "code-request deletes the user's old codes and inserts a new one. Rate limits: auth_code_req 5 per 15 min per IP, and 5 per hour per IP+email. Unknown emails get the same generic 200. Verified."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter58_app_nudge_email_code.py", "/app/backend/tests/qa_iter58_ui.py"],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100%"},
+  "test_credentials": "Temporary users only (test58_* and ui58_* @example.com). All were deleted afterwards, together with their sessions, auth_tokens and the rate_hits keys starting with auth_code or app-nudge.",
+  "seed_data_creation": "None left behind. The preview DB had 0 active members before testing, so the all:true nudge only reached the temporary QA users.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && python -m pytest tests/test_iter58_app_nudge_email_code.py -p no:xdist -o addopts=''. For UI: python tests/qa_iter58_ui.py up|code <6digits> [user_id]|down; admin cookie session_token=ui58_admin_tok. The code-request API replaces any code you inserted, so insert the known code AFTER clicking 'Email me a code'. The test skips all:true if real active un-installed members exist."
+}

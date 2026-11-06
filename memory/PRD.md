@@ -539,3 +539,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - /app (pages/GetApp.jsx): detects iPhone Safari/Chrome/Firefox/Edge, Android Chrome/Samsung/Firefox and computers, with step-by-step guides. Shows an Install button when beforeinstallprompt is available (captured globally in index.js as window.__cscInstallEvt), an "installed" state in standalone mode, and a QR code on desktop.
 - Links: footer "Get the App", phone menu "Get the App", and "Get the app on your phone" on the Member Portal sign-in card and the Application received card. The InstallApp banner tip links to /app (no more Safari-only advice).
 - Not yet redeployed.
+
+
+## 2026-06 — App sharing, install count, email sign-in code (iteration 58, agent-tested, not user-confirmed)
+- Welcome and approval emails include _app_block_html: a Get the app button plus a QR image from GET /api/qr/app.png (pointing to https://caringsistersclub.org/app).
+- Admin > Members > "App installs": X of Y active sisters installed (users.app_installed_at), a list of who has not, a Nudge button per sister and Nudge all (POST /api/admin/members/app-nudge, max 1 per 7 days via users.app_nudged_at).
+- 6-digit email code sign-in for everyone (/members and /login): POST /api/auth/code-request (generic response, rate-limited) and /api/auth/code-verify (atomic attempts, 5 tries max, 10 min, single use; creates the same session_token session and marks email_verified). The UI link is "Email me a sign-in code instead"; the iOS app tip points to it.
+- Admin tab bar uses rounded-2xl on mobile. Redeploy queued.

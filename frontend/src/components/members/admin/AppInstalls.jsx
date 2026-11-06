@@ -22,7 +22,7 @@ export function AppInstalls({ toast }) {
     <div data-testid="app-installs">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <p data-testid="app-installs-count" className="flex items-center gap-2 text-[14px] text-[#3B0A2E]"><Smartphone size={16} className="text-[#B4247E]" /><b>{d.installed} of {d.total}</b> sisters installed the app ({pct}%)</p>
-        {missing.length > 0 && <button data-testid="app-nudge-all-btn" disabled={busy === 'all'} onClick={() => nudge({ all: true }, 'all')} className="btn-magenta rounded-full px-4 py-2 text-[13px] font-semibold flex items-center gap-1.5 disabled:opacity-60">{busy === 'all' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Nudge all</button>}
+        {missing.length > 0 && <button data-testid="app-nudge-all-btn" disabled={busy === 'all' || missing.every((r) => recent(r.app_nudged_at))} title={missing.every((r) => recent(r.app_nudged_at)) ? 'Everyone was nudged in the last 7 days' : undefined} onClick={() => nudge({ all: true }, 'all')} className="btn-magenta rounded-full px-4 py-2 text-[13px] font-semibold flex items-center gap-1.5 disabled:opacity-60">{busy === 'all' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Nudge all</button>}
       </div>
       <div className="h-2 rounded-full bg-[#F7EFE9] overflow-hidden mb-4"><div className="h-full bg-[#B4247E] transition-[width] duration-700" style={{ width: `${pct}%` }} /></div>
       {!missing.length ? <p data-testid="app-installs-all-done" className="text-[13.5px] text-[#3c7a2f] flex items-center gap-1.5"><Check size={15} /> Every sister has the app.</p> : (

@@ -129,7 +129,7 @@ export default function Admin() {
         <InstallApp light />
 
         {/* View switch */}
-        <div className="inline-flex flex-wrap gap-1 p-1.5 rounded-full mb-8 bg-white border border-[#3B0A2E]/8">
+        <div className="inline-flex flex-wrap gap-1 p-1.5 rounded-2xl sm:rounded-full mb-8 bg-white border border-[#3B0A2E]/8">
           {[
             { k: 'overview', l: 'Overview', icon: ShieldCheck },
             { k: 'gallery', l: 'Gallery', icon: ImageIcon },

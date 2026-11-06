@@ -12785,14 +12785,14 @@ async def auth_code_verify(payload: CodeVerifyIn, request: Request, response: Re
     u = await _user_by_email(_norm_email(payload.email))
     if not u or len(code) != 6:
         raise bad
-    t = await db.auth_tokens.find_one({"user_id": u["user_id"], "kind": "code", "used": False, "expires_at": {"$gt": datetime.now(timezone.utc)}})
+    live = {"user_id": u["user_id"], "kind": "code", "used": False, "expires_at": {"$gt": datetime.now(timezone.utc)}}
+    t = await db.auth_tokens.find_one_and_update({**live, "attempts": {"$lt": 5}}, {"$inc": {"attempts": 1}})
     if not t:
+        if await db.auth_tokens.find_one(live, {"_id": 1}):
+            await db.auth_tokens.update_many(live, {"$set": {"used": True}})
+            raise HTTPException(status_code=429, detail="Too many tries. Please request a new code.")
         raise bad
-    if t.get("attempts", 0) >= 5:
-        await db.auth_tokens.update_one({"_id": t["_id"]}, {"$set": {"used": True}})
-        raise HTTPException(status_code=429, detail="Too many tries. Please request a new code.")
     if not _asec.compare_digest(t["token_hash"], _code_hash(u["user_id"], code)):
-        await db.auth_tokens.update_one({"_id": t["_id"]}, {"$inc": {"attempts": 1}})
         raise bad
     res = await db.auth_tokens.update_one({"_id": t["_id"], "used": False}, {"$set": {"used": True, "used_at": datetime.now(timezone.utc)}})
     if not res.modified_count:
