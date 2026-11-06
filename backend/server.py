@@ -6779,7 +6779,16 @@ async def seed_bylaws():
         logging.error(f"Bylaws seed failed: {e}")
 
 
-def _member_email_html(eyebrow: str, heading: str, body: str, cta_label: str, cta_path: str) -> str:
+def _app_block_html() -> str:
+    return ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:26px 0 0;background:#F7EFE9;border-radius:14px"><tr>'
+            f'<td style="padding:18px 20px;font-family:Arial,sans-serif;vertical-align:middle"><p style="font-size:15px;font-weight:bold;color:#3B0A2E;margin:0 0 6px">Get the app on your phone</p>'
+            '<p style="font-size:13px;line-height:1.6;color:#4a3340;margin:0 0 12px">One tap to the portal, plus gathering reminders. Scan the code with your phone camera, or tap the button on your phone.</p>'
+            f'<a href="{PUBLIC_APP_URL}/app" style="display:inline-block;background:#3B0A2E;color:#F7EFE9;text-decoration:none;font-weight:bold;font-size:13px;padding:10px 18px;border-radius:999px">Get the app</a></td>'
+            f'<td width="124" style="padding:14px 18px 14px 0;vertical-align:middle"><img src="{PUBLIC_APP_URL}/api/qr/app.png" width="110" height="110" alt="QR code for caringsistersclub.org/app" style="display:block;border:0;border-radius:8px" /></td>'
+            '</tr></table>')
+
+
+def _member_email_html(eyebrow: str, heading: str, body: str, cta_label: str, cta_path: str, extra_html: str = "") -> str:
     return (
         '<table role="presentation" width="100%" style="background:#f7efe9"><tr><td align="center" style="padding:28px 16px">'
         '<table role="presentation" width="600" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden">'
@@ -6787,9 +6796,9 @@ def _member_email_html(eyebrow: str, heading: str, body: str, cta_label: str, ct
         '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
         f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:22px;margin:0 0 14px">{_esc(heading)}</h1>'
         f'<p style="font-size:15px;line-height:1.7;color:#4a3340;margin:0 0 22px">{_esc(body).replace(chr(10), "<br/>")}</p>'
-        + _btn(f"{PUBLIC_APP_URL}{cta_path}", _esc(cta_label), primary=True) +
+        + _btn(f"{PUBLIC_APP_URL}{cta_path}", _esc(cta_label), primary=True) + extra_html +
         '</td></tr><tr><td style="background:#29061F;padding:16px 32px;font-family:Arial,sans-serif">'
-        '<p style="font-size:11px;color:#b79aae;margin:0">Sign in with Google or your email and password. We will never ask for your password by email.</p></td></tr>'
+        '<p style="font-size:11px;color:#b79aae;margin:0">Sign in with Google, your email and password, or a one-time email code. We will never ask for your password by email.</p></td></tr>'
         '</table></td></tr></table>'
     )
 
@@ -7089,7 +7098,7 @@ async def _send_approved_alert(u: dict):
         await send_email(to=u["email"], subject="You're approved! Welcome to Caring Sisters Club",
                          html=_member_email_html("You're approved!", f"Welcome to the sisterhood, {first}!",
                                                  "Great news: your membership application has been approved. The full member portal is now open to you: meet your sisters, see upcoming gatherings, and join the conversation.",
-                                                 "Open the member portal", "/members"))
+                                                 "Open the member portal", "/members", _app_block_html()))
     except Exception as e:
         logging.error(f"Approval alert failed: {e}")
 
@@ -8971,8 +8980,8 @@ async def _welcome_html(u: dict, settings: dict) -> str:
         + _brand_header("Welcome, Sister") +
         '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
         f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 16px">Welcome, {_esc(first)}!</h1>{body}'
-        + _btn(f"{PUBLIC_APP_URL}/members", "Open the member portal", primary=True) +
-        '<p style="font-size:12px;color:#8a7380;margin:18px 0 0">Sign in with the Google account for this email address.</p>'
+        + _btn(f"{PUBLIC_APP_URL}/members", "Open the member portal", primary=True) + _app_block_html() +
+        '<p style="font-size:12px;color:#8a7380;margin:18px 0 0">Sign in with Google, your email and password, or a one-time email code.</p>'
         '</td></tr></table></td></tr></table>'
     )
 
@@ -12680,6 +12689,116 @@ async def list_videos():
             _yt_cache["items"] = (await db.settings.find_one({"key": "yt_videos"}, {"_id": 0}) or {}).get("items", [])
         _yt_cache["at"] = now - timedelta(minutes=25)
     return {"items": _yt_cache["items"], "channel_url": YT_CHANNEL_URL}
+
+
+# ---------- App install QR, stats and nudges ----------
+_qr_cache = {}
+
+
+@api_router.get("/qr/app.png")
+async def app_qr_png():
+    if "png" not in _qr_cache:
+        import io
+        import qrcode
+        img = qrcode.make(f"{CANONICAL_SITE_URL}/app", box_size=8, border=2)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        _qr_cache["png"] = buf.getvalue()
+    return Response(content=_qr_cache["png"], media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@api_router.get("/admin/members/app-installs")
+async def admin_app_installs(user=Depends(require_admin)):
+    rows = await db.users.find({"member_status": "active"}, {"_id": 0, "user_id": 1, "name": 1, "email": 1, "app_installed_at": 1, "app_nudged_at": 1}).sort("name", 1).to_list(5000)
+    return {"total": len(rows), "installed": sum(1 for r in rows if r.get("app_installed_at")), "rows": rows}
+
+
+class NudgeIn(BaseModel):
+    user_ids: List[str] = []
+    all: bool = False
+
+
+@api_router.post("/admin/members/app-nudge")
+async def admin_app_nudge(payload: NudgeIn, request: Request, background: BackgroundTasks, user=Depends(require_admin)):
+    await _rate_limit(request, f"app-nudge:{user['user_id']}", 20, 3600)
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    q = {"member_status": "active", "app_installed_at": {"$exists": False}, "email": {"$nin": [None, ""]},
+         "$or": [{"app_nudged_at": {"$exists": False}}, {"app_nudged_at": {"$lt": week_ago}}]}
+    if not payload.all:
+        q["user_id"] = {"$in": payload.user_ids[:500]}
+    targets = await db.users.find(q, {"_id": 0, "user_id": 1, "name": 1, "email": 1}).to_list(5000)
+    if targets:
+        await db.users.update_many({"user_id": {"$in": [t["user_id"] for t in targets]}}, {"$set": {"app_nudged_at": _now_iso()}})
+
+    async def _go(rows=targets):
+        for t in rows:
+            first = (t.get("name") or "Sister").split(" ")[0]
+            await send_email(to=t["email"], subject="Get the Caring Sisters Club app on your phone",
+                             html=_member_email_html("Get the app", f"Hi {first}!", "Add the Club to your phone's home screen for one-tap access to the member portal, gathering reminders and news alerts. It's free and takes about 30 seconds.",
+                                                     "Show me how", "/app", _app_block_html()))
+    background.add_task(_go)
+    return {"sent": len(targets)}
+
+
+# ---------- One-time email sign-in code ----------
+class CodeRequestIn(BaseModel):
+    email: str
+
+
+class CodeVerifyIn(BaseModel):
+    email: str
+    code: str
+
+
+def _code_hash(uid: str, code: str) -> str:
+    return _hashlib.sha256(f"{uid}:{code}".encode()).hexdigest()
+
+
+@api_router.post("/auth/code-request")
+async def auth_code_request(payload: CodeRequestIn, request: Request, background: BackgroundTasks):
+    await _rate_limit(request, "auth_code_req", 5, 900)
+    email = _norm_email(payload.email)
+    await _rate_limit(request, f"auth_code_req_email:{email}", 5, 3600)
+    u = await _user_by_email(email)
+    if u:
+        code = f"{_asec.randbelow(1000000):06d}"
+        await db.auth_tokens.delete_many({"user_id": u["user_id"], "kind": "code"})
+        await db.auth_tokens.insert_one({"token_hash": _code_hash(u["user_id"], code), "user_id": u["user_id"], "kind": "code", "used": False, "attempts": 0,
+                                         "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10), "created_at": datetime.now(timezone.utc)})
+        first = (u.get("name") or "Sister").split(" ")[0]
+        html = ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F7EFE9;padding:28px 12px"><tr><td align="center">'
+                '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:16px">'
+                '<tr><td style="padding:30px 32px;font-family:Arial,sans-serif;color:#241019">'
+                f'<p style="font-size:15px;margin:0 0 14px">Hello {_esc(first)},</p><p style="font-size:15px;line-height:1.6;margin:0 0 18px">Your Caring Sisters Club sign-in code is:</p>'
+                f'<p style="font-family:Georgia,serif;font-size:36px;letter-spacing:10px;font-weight:bold;color:#3B0A2E;margin:0 0 18px">{code}</p>'
+                '<p style="font-size:13px;line-height:1.6;color:#6b5563;margin:0">It works once and expires in 10 minutes. If you didn\'t ask for it, you can ignore this email. We will never ask you for this code.</p>'
+                '</td></tr></table></td></tr></table>')
+        background.add_task(send_email, to=u["email"], subject=f"{code} is your Caring Sisters Club sign-in code", html=html)
+    return {"ok": True, "message": "If an account exists for that email, we've sent a 6-digit code. It expires in 10 minutes."}
+
+
+@api_router.post("/auth/code-verify")
+async def auth_code_verify(payload: CodeVerifyIn, request: Request, response: Response):
+    await _rate_limit(request, "auth_code_verify", 20, 900)
+    bad = HTTPException(status_code=400, detail="That code isn't right or has expired. Please check it or request a new one.")
+    code = re.sub(r"\D", "", payload.code or "")
+    u = await _user_by_email(_norm_email(payload.email))
+    if not u or len(code) != 6:
+        raise bad
+    t = await db.auth_tokens.find_one({"user_id": u["user_id"], "kind": "code", "used": False, "expires_at": {"$gt": datetime.now(timezone.utc)}})
+    if not t:
+        raise bad
+    if t.get("attempts", 0) >= 5:
+        await db.auth_tokens.update_one({"_id": t["_id"]}, {"$set": {"used": True}})
+        raise HTTPException(status_code=429, detail="Too many tries. Please request a new code.")
+    if not _asec.compare_digest(t["token_hash"], _code_hash(u["user_id"], code)):
+        await db.auth_tokens.update_one({"_id": t["_id"]}, {"$inc": {"attempts": 1}})
+        raise bad
+    res = await db.auth_tokens.update_one({"_id": t["_id"], "used": False}, {"$set": {"used": True, "used_at": datetime.now(timezone.utc)}})
+    if not res.modified_count:
+        raise bad
+    await db.users.update_one({"user_id": u["user_id"]}, {"$set": {"email_verified": True}})
+    return await _start_session(u["user_id"], response)
 
 
 # ---------- Waiting-to-apply reminders ----------

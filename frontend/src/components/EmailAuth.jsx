@@ -42,18 +42,19 @@ export const Notice = ({ kind, children, testid }) => (
   </div>
 );
 
-const TITLES = { login: 'Log in with Email', signup: 'Sign up with Email', forgot: 'Forgot Password?' };
+const TITLES = { login: 'Log in with Email', signup: 'Sign up with Email', forgot: 'Forgot Password?', code: 'Sign in with an email code' };
 
 export function EmailAuth({ onBack, allowSignup = true }) {
   const { setUser } = useAuth();
   const [mode, setMode] = useState('login');
-  const [f, setF] = useState({ name: '', email: '', password: '', confirm: '' });
+  const [f, setF] = useState({ name: '', email: '', password: '', confirm: '', code: '' });
+  const [codeSent, setCodeSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
   const [unverified, setUnverified] = useState(false);
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
-  const go = (m) => { setMode(m); setErr(''); setOk(''); setUnverified(false); };
+  const go = (m) => { setMode(m); setErr(''); setOk(''); setUnverified(false); setCodeSent(false); setF((s) => ({ ...s, code: '' })); };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -64,6 +65,12 @@ export function EmailAuth({ onBack, allowSignup = true }) {
     try {
       if (mode === 'login') {
         const { data } = await api.post('/auth/login', { email: f.email, password: f.password });
+        setUser(data);
+      } else if (mode === 'code' && !codeSent) {
+        const { data } = await api.post('/auth/code-request', { email: f.email });
+        setOk(data.message); setCodeSent(true);
+      } else if (mode === 'code') {
+        const { data } = await api.post('/auth/code-verify', { email: f.email, code: f.code });
         setUser(data);
       } else if (mode === 'signup') {
         const { data } = await api.post('/auth/signup', { name: f.name, email: f.email, password: f.password });
@@ -88,18 +95,23 @@ export function EmailAuth({ onBack, allowSignup = true }) {
       <h2 data-testid="email-auth-title" className="font-serif text-[20px] text-[#3B0A2E] font-semibold text-center">{TITLES[mode]}</h2>
       {mode === 'signup' && <Field label="Your name" testid="email-auth-name" value={f.name} onChange={set('name')} autoComplete="name" placeholder="First and last name" />}
       <Field label="Email address" testid="email-auth-email" type="email" required value={f.email} onChange={set('email')} autoComplete="email" placeholder="name@example.com" />
-      {mode !== 'forgot' && <PasswordField testid="email-auth-password" value={f.password} onChange={set('password')} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />}
+      {mode === 'code' && codeSent && <Field label="6-digit code from your email" testid="email-auth-code" value={f.code} onChange={(e) => setF((s) => ({ ...s, code: e.target.value.replace(/\D/g, '').slice(0, 6) }))} inputMode="numeric" autoComplete="one-time-code" placeholder="123456" />}
+      {mode !== 'forgot' && mode !== 'code' && <PasswordField testid="email-auth-password" value={f.password} onChange={set('password')} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />}
       {mode === 'signup' && <>
         <p data-testid="email-auth-pw-rules" className={`text-[12px] -mt-2 ${f.password && !pwOk(f.password) ? 'text-[#9B1C3A]' : 'text-[#241019]/55'}`}>At least 8 characters, with at least 1 letter and 1 number.</p>
         <PasswordField label="Confirm password" testid="email-auth-confirm" value={f.confirm} onChange={set('confirm')} autoComplete="new-password" />
       </>}
-      {mode === 'login' && <button type="button" data-testid="email-auth-forgot-link" onClick={() => go('forgot')} className="text-[13px] font-semibold text-[#B4247E] hover:underline">Forgot Password?</button>}
+      {mode === 'login' && <div className="flex flex-wrap justify-between gap-2">
+        <button type="button" data-testid="email-auth-forgot-link" onClick={() => go('forgot')} className="text-[13px] font-semibold text-[#B4247E] hover:underline">Forgot Password?</button>
+        <button type="button" data-testid="email-auth-code-link" onClick={() => go('code')} className="text-[13px] font-semibold text-[#B4247E] hover:underline">Email me a sign-in code instead</button>
+      </div>}
+      {mode === 'code' && codeSent && <button type="button" data-testid="email-auth-code-resend" onClick={() => { setCodeSent(false); setOk(''); setErr(''); }} className="text-[13px] font-semibold text-[#B4247E] hover:underline">Use a different email or send a new code</button>}
       {err && <Notice kind="error" testid="email-auth-error">{err}</Notice>}
       {unverified && <button type="button" data-testid="email-auth-resend-btn" onClick={resend} className="text-[13px] font-semibold text-[#B4247E] hover:underline">Resend confirmation email</button>}
       {ok && <Notice kind="ok" testid="email-auth-success">{ok}</Notice>}
       <button type="submit" data-testid="email-auth-submit" disabled={busy} className="btn-magenta rounded-full w-full py-3.5 font-semibold flex items-center justify-center gap-2 disabled:opacity-60">
         {busy ? <Loader2 size={18} className="animate-spin" /> : <Mail size={18} />}
-        {mode === 'login' ? 'Log in' : mode === 'signup' ? 'Create account' : 'Send reset link'}
+        {mode === 'login' ? 'Log in' : mode === 'signup' ? 'Create account' : mode === 'code' ? (codeSent ? 'Sign in' : 'Email me a code') : 'Send reset link'}
       </button>
       <div className="text-center text-[13px] text-[#241019]/60 space-y-1.5">
         {mode === 'login' && allowSignup && <p>New here? <button type="button" data-testid="email-auth-to-signup" onClick={() => go('signup')} className="font-semibold text-[#B4247E] hover:underline">Sign up with Email</button></p>}
@@ -116,7 +128,7 @@ export function SignInOptions({ onGoogle, googleTestid, allowSignup = true }) {
   if (email) return <EmailAuth onBack={() => setEmail(false)} allowSignup={allowSignup} />;
   return (
     <div className="flex flex-col gap-3">
-      {iosApp && <div className="order-[-2]"><Notice kind="ok" testid="ios-app-signin-tip">In the iPhone app, please use <strong>{allowSignup ? 'Log in or Sign up with Email' : 'Log in with Email'}</strong>. Google sign-in opens Safari and can't return to the app. Google members can tap "Forgot Password?" there to set a password.</Notice></div>}
+      {iosApp && <div className="order-[-2]"><Notice kind="ok" testid="ios-app-signin-tip">In the iPhone app, please use <strong>{allowSignup ? 'Log in or Sign up with Email' : 'Log in with Email'}</strong>. Google sign-in opens Safari and can't return to the app. No password? Tap "Email me a sign-in code instead".</Notice></div>}
       <button data-testid={googleTestid} onClick={onGoogle} className={`${iosApp ? 'order-1 border-2 border-[#3B0A2E]/15 text-[#3B0A2E]' : 'btn-magenta'} rounded-full w-full py-3.5 font-semibold flex items-center justify-center gap-2`}>
         <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill={iosApp ? '#3B0A2E' : '#fff'} d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z" /></svg>
         Continue with Google
