@@ -1,0 +1,36 @@
+{
+  "summary": "Tested staff-log Undo, owner Preview-as-level (look only / fully working), and the Monday staff summary (settings, test send, cron). Backend: 13/13 pytest pass. Frontend: every requested flow works via Playwright. Undo button visibility, toast, strike-through, the new 'undid' row, and the previous change becoming undoable all work. The preview bar (owner only) shows the correct tabs per level (content 11, members 3, money 7). The look-only save shows the 403 toast. Mode switches to Fully working and Exit restores the 18 tabs. The non-owner session has no preview bar. The quiet-weeks toggle round-trips and the test send toasts 'Summary sent'. No functional bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/team/log/{id}/undo", "issue": "Not atomic. The undo_block check and the user update run before the conditional 'undone_at' update. Two concurrent undos can both apply the user change before one gets 'Already undone.' Fix: claim the row first with find_one_and_update({id, undone_at:{$exists:false}}), then apply the change."},
+      {"endpoint": "POST /api/admin/team/log/{id}/undo", "issue": "Undo restores every snapshot field (role, staff_level, member_status, member_since, require_login_code), not only the fields the action changed. If member_status was changed elsewhere (Members tab, which is not logged in staff_log), undoing a 'level' change quietly reverts it. Consider restoring only the fields each action touches (level -> staff_level; to_member -> role/member_status/member_since)."},
+      {"endpoint": "POST /api/admin/team/log/{id}/undo", "issue": "Undoing a 'granted' row created via /admin/team/allow (existing user) sets role back to pending but leaves the email in allowed_emails. The Team page keeps listing it as pre-approved and /auth/signup still blocks it as a staff email. Undoing removed/to_member restores admin but does not re-add the allowed email. Undoing 'preapproval_removed' re-adds pre-approval without the new-staff alert that the original pre-approve sent."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "StaffLog", "issue": "The Undo button shows on rows the backend always rejects: rows targeting an owner, or the current user's own account. Clicking gives a 'Could not undo' toast. _undo_block could take the actor and the owner check so those rows hide the button.", "selector": "[data-testid^=staff-log-undo-]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter61_undo_preview_summary.py", "/app/backend/tests/_qa61_ui.py", "/app/test_reports/pytest/iter61.xml"],
+  "action_items": [
+    "Optional: make undo atomic (claim the log row before mutating the user).",
+    "Optional: restore only the fields each action changed, and keep allowed_emails consistent when undoing granted/removed/to_member.",
+    "Optional: hide Undo on owner rows and self rows in the UI."
+  ],
+  "critical_code_review_comments": [
+    "require_admin preview handling is correct: only owners (ADMIN_OWNER_EMAILS) get the preview level, look-only blocks all non-GET requests first, and the level areas still apply in working mode.",
+    "_latest_log_ids scans the whole staff_log collection on every GET /admin/team/log and every undo. Fine at current scale; consider an index on (target.email, at).",
+    "Cron dedupe falls back to today's ET date when there is no X-Webhook-Id, so it is safe against retries. The work runs in BackgroundTasks, which is OK.",
+    "server.py is 13.4k lines. Team/staff code (~300 lines) should be split into its own router module."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter61_undo_preview_summary.py", "/app/backend/tests/_qa61_ui.py"],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100%"},
+  "seed_data_creation": "Temp only, all removed: qa_user/qa_tok_123, the qa_owner_tok session (owner user doc not modified), TEST_qa61_* users with example.com emails and their staff_log rows, allowed_emails test.qa61.pre@example.com, the scheduled_runs key staff_summary:TEST_qa61_*. The settings doc {key:'staff_summary'} did not exist before; it was created by the toggle test and then deleted, so the default is still quiet_weeks=true. Real emails sent: 1 cron run plus 1 summary-test click, both to the owner inboxes. No grant alerts sent.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with: pytest tests/test_iter61_undo_preview_summary.py -n 0 (pytest.ini forces xdist; -p no:xdist errors). The cron test sends a REAL owner email once per run. UI seed: python tests/_qa61_ui.py up|down. Undo rows are created through POST /admin/team/{uid}/level. Avoid undoing to_member/removed, because restoring admin sends real alerts."
+}

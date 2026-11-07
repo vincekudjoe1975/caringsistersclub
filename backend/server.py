@@ -6723,7 +6723,15 @@ async def _staff_log(actor: dict, action: str, target: dict, level: str = "", ex
     await db.staff_log.insert_one(row)
 
 
-def _undo_block(e: dict, latest_id: str) -> str:
+_UNDO_FIELDS = {"granted": ("role", "staff_level", "require_login_code"), "removed": ("role", "staff_level", "require_login_code"),
+                "to_member": ("role", "member_status", "member_since", "require_login_code"), "level": ("staff_level",)}
+
+
+def _undo_block(e: dict, latest_id: str, actor: Optional[dict] = None) -> str:
+    if e["target"].get("email") in ADMIN_OWNER_EMAILS:
+        return "Owner accounts always keep Full access."
+    if actor and e["target"].get("user_id") == actor.get("user_id"):
+        return "You cannot undo a change to your own access."
     if e.get("undone_at"):
         return "Already undone."
     if e["action"] not in _UNDOABLE or (e["target"].get("user_id") and "before" not in e):
@@ -6902,7 +6910,7 @@ async def admin_team_log(user=Depends(require_admin)):
     rows = await db.staff_log.find({}, {"_id": 0}).sort("at", -1).to_list(200)
     latest = await _latest_log_ids()
     for e in rows:
-        e["undo_block"] = _undo_block(e, latest.get(e["target"]["email"]))
+        e["undo_block"] = _undo_block(e, latest.get(e["target"]["email"]), user)
         e.pop("before", None)
     return rows
 
@@ -6912,31 +6920,30 @@ async def admin_team_undo(entry_id: str, background: BackgroundTasks, user=Depen
     e = await db.staff_log.find_one({"id": entry_id}, {"_id": 0})
     if not e:
         raise HTTPException(status_code=404, detail="Change not found")
-    why = _undo_block(e, (await _latest_log_ids()).get(e["target"]["email"]))
+    why = _undo_block(e, (await _latest_log_ids()).get(e["target"]["email"]), user)
     if why:
         raise HTTPException(status_code=400, detail=why)
     email, uid = e["target"]["email"], e["target"].get("user_id")
-    if uid == user["user_id"]:
-        raise HTTPException(status_code=400, detail="You cannot undo a change to your own access.")
+    t = await db.users.find_one({"user_id": uid}, {"_id": 0}) if uid else None
+    if uid and not t:
+        raise HTTPException(status_code=404, detail="That account no longer exists.")
+    claimed = await db.staff_log.find_one_and_update({"id": entry_id, "undone_at": {"$exists": False}}, {"$set": {"undone_at": _now_iso(), "undone_by": _who(user)}})
+    if not claimed:
+        raise HTTPException(status_code=400, detail="Already undone.")
     if e["action"] == "preapproved":
         await db.allowed_emails.delete_one({"email": email})
     elif e["action"] == "preapproval_removed":
         await db.allowed_emails.update_one({"email": email}, {"$set": {"email": email}}, upsert=True)
+        background.add_task(_alert_new_staff, user, e["target"], "full")
     else:
-        t = await db.users.find_one({"user_id": uid}, {"_id": 0})
-        if not t:
-            raise HTTPException(status_code=404, detail="That account no longer exists.")
-        if email in ADMIN_OWNER_EMAILS:
-            raise HTTPException(status_code=400, detail="Owner accounts always keep Full access.")
-        b = e["before"]
+        b = {k: e["before"].get(k) for k in _UNDO_FIELDS[e["action"]]}
         sets = {k: v for k, v in b.items() if v is not None}
         unsets = {k: "" for k, v in b.items() if v is None}
-        await db.users.update_one({"user_id": uid}, {"$set": sets, **({"$unset": unsets} if unsets else {})})
+        await db.users.update_one({"user_id": uid}, {**({"$set": sets} if sets else {}), **({"$unset": unsets} if unsets else {})})
+        if "role" in b and b["role"] != "admin":
+            await db.allowed_emails.delete_one({"email": email})
         if b.get("role") == "admin" and t.get("role") != "admin":
-            background.add_task(_alert_new_staff, user, t, _staff_level(b))
-    res = await db.staff_log.update_one({"id": entry_id, "undone_at": {"$exists": False}}, {"$set": {"undone_at": _now_iso(), "undone_by": _who(user)}})
-    if not res.modified_count:
-        raise HTTPException(status_code=400, detail="Already undone.")
+            background.add_task(_alert_new_staff, user, t, _staff_level(e["before"]))
     await db.staff_log.insert_one({"id": uuid.uuid4().hex, "at": _now_iso(), "action": "undo", "level": "", "by": _who(user),
                                    "target": e["target"], "undid": {"action": e["action"], "level": e.get("level", ""), "id": entry_id}})
     return {"ok": True}

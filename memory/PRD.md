@@ -565,3 +565,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Team Access: level menu per staff, "Make staff" asks level, Staff change log (db.staff_log; GET /api/admin/team/log), show 10 / show all.
 - New-staff alert email to owners + all Full staff on grant / pre-approve (deduped). admin@caringsistersclub.org (owner env) returns 422 from email provider.
 - Tested: iteration_60 backend 20/20; follow-ups fixed and self-verified.
+
+## 2026-06 — Undo staff changes, owner preview, Monday staff summary (iteration 61)
+- Undo on staff change log: only a person's latest (non-undone) change, within 7 days, never owners/self. Restores only fields that action changed (log rows store `before`). POST /api/admin/team/log/{id}/undo (atomic claim). Undo that restores Admin re-sends the new-staff alert.
+- Owner preview: "Preview Admin as Content/Members/Money" bar (owners only). sessionStorage csc_admin_preview -> headers X-Preview-Level/X-Preview-Mode; backend honours only for ADMIN_OWNER_EMAILS. Look only (default) blocks all writes; Fully working allowed within that level.
+- Monday summary: .emergent/crons.yml `staff-summary` 0 9 * * 1 America/New_York -> POST /api/cron/staff-summary (Bearer WEBHOOK_CRON_SECRET, dedupe via scheduled_runs). Toggle "Also send on quiet weeks" (default on) + "Send this week's summary now". Recipients = ADMIN_OWNER_EMAILS.
+- Tested iteration_61 backend 13/13, frontend 100%; follow-ups fixed. NOT deployed yet. Live role fixes (Evelyn, fem, VandJ) must be done by owner in production Team Access.
