@@ -163,12 +163,39 @@ def _needs_staff_code(u: dict) -> bool:
     return u.get("role") == "admin" and bool(u.get("require_login_code"))
 
 
+STAFF_LEVELS = {"full": "Full access", "content": "Content only", "members": "Members only", "money": "Money only"}
+_AREA_PREFIXES = {
+    "shared": ("auth", "submissions", "admin/submissions", "admin/security"),
+    "members": ("admin/members", "admin/member-emails", "admin/volunteer-hours"),
+    "money": ("admin/donations", "admin/donors", "admin/campaign", "admin/accounting", "admin/appeal-templates", "admin/appeals",
+              "admin/scheduled-appeals", "admin/recurring", "admin/reports", "admin/impact-email", "admin/winbacks", "admin/year-in-review",
+              "admin/transparency", "admin/promo-codes", "admin/auction", "admin/email", "admin/settings", "admin/badge-wall", "media"),
+    "content": ("media", "admin/about-content", "admin/home-content", "admin/gallery", "admin/gallery-albums", "admin/leaders", "admin/programs",
+                "admin/program-categories", "admin/sessions", "admin/stories", "admin/events", "admin/badge-wall", "admin/feedback",
+                "admin/feedback-alert-settings", "admin/waitlist", "admin/signups", "admin/impact-email", "admin/settings"),
+}
+
+
+def _staff_level(u: dict) -> str:
+    if (u.get("email") or "").lower() in ADMIN_OWNER_EMAILS:
+        return "full"
+    return u.get("staff_level") if u.get("staff_level") in STAFF_LEVELS else "full"
+
+
+def _path_areas(path: str) -> set:
+    p = path.split("/api/", 1)[-1].strip("/")
+    return {area for area, prefixes in _AREA_PREFIXES.items() if any(p == x or p.startswith(x + "/") for x in prefixes)}
+
+
 async def require_admin(request: Request):
     user = await get_current_user(request)
     if user.get("code_pending"):
         raise HTTPException(status_code=403, detail="Please enter the sign-in code we emailed you to open Admin.")
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+    lvl = _staff_level(user)
+    if lvl != "full" and not _path_areas(request.url.path) & {"shared", lvl}:
+        raise HTTPException(status_code=403, detail=f"Your staff access is {STAFF_LEVELS[lvl]}. Ask an owner if you need more.")
     return user
 
 
@@ -239,6 +266,7 @@ async def auth_me(request: Request, user=Depends(get_current_user)):
             await _detect_site_url(request)
         except Exception as e:
             logging.error(f"Site URL detection failed: {e}")
+        return {**user, "staff_level": _staff_level(user), "is_owner": (user.get("email") or "").lower() in ADMIN_OWNER_EMAILS}
     return user
 
 
@@ -6660,40 +6688,98 @@ class AllowEmail(BaseModel):
 
 class RoleUpdate(BaseModel):
     role: str
+    level: str = "full"
+
+
+class LevelUpdate(BaseModel):
+    level: str
+
+
+def _who(u: dict) -> dict:
+    return {"email": (u.get("email") or "").lower(), "name": u.get("name") or (u.get("email") or "").split("@")[0]}
+
+
+async def _staff_log(actor: dict, action: str, target: dict, level: str = ""):
+    await db.staff_log.insert_one({"id": uuid.uuid4().hex, "at": _now_iso(), "action": action, "level": level,
+                                   "by": _who(actor), "target": _who(target)})
+
+
+async def _alert_new_staff(actor: dict, target: dict, level: str):
+    fulls = await db.users.find({"role": "admin"}, {"_id": 0, "email": 1, "staff_level": 1}).to_list(200)
+    to = {e for e in ADMIN_OWNER_EMAILS} | {(u.get("email") or "").lower() for u in fulls if _staff_level(u) == "full"}
+    t, a = _who(target), _who(actor)
+    body = (f"{t['name']} ({t['email']}) was given {STAFF_LEVELS.get(level, 'Full access')} to the Caring Sisters Club back office "
+            f"by {a['name']} ({a['email']}) on {_today_et().strftime('%B %-d, %Y')}.\nIf this wasn't expected, open Team Access and tap \"Change to member\".")
+    html = _member_email_html("Staff alert", "Someone was given Admin access", body, "Open Team Access", "/admin?view=team")
+    for em in sorted(e for e in to if e and "@" in e):
+        await send_email(to=em, subject=f"New staff access: {t['name']}", html=html)
 
 
 @api_router.get("/admin/team")
 async def admin_team(user=Depends(require_admin)):
-    fields = {"_id": 0, "user_id": 1, "name": 1, "email": 1, "picture": 1, "role": 1, "member_status": 1, "created_at": 1}
+    fields = {"_id": 0, "user_id": 1, "name": 1, "email": 1, "picture": 1, "role": 1, "member_status": 1, "created_at": 1, "staff_level": 1}
     users = await db.users.find({"$or": [{"role": "admin"}, {"member_status": {"$exists": False}}]}, fields).sort("created_at", 1).to_list(500)
     for u in users:
         u["is_owner"] = (u.get("email") or "").lower() in ADMIN_OWNER_EMAILS
+        u["staff_level"] = _staff_level(u)
     allowed = await db.allowed_emails.find({}, {"_id": 0}).to_list(500)
     return {"users": users, "allowed_emails": [a["email"] for a in allowed], "me": user["user_id"]}
 
 
 @api_router.post("/admin/team/allow")
-async def admin_team_allow(payload: AllowEmail, user=Depends(require_admin)):
+async def admin_team_allow(payload: AllowEmail, background: BackgroundTasks, user=Depends(require_admin)):
     email = payload.email.strip().lower()
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Invalid email")
     await db.allowed_emails.update_one({"email": email}, {"$set": {"email": email}}, upsert=True)
-    # Promote an already-pending user with this email
     await db.users.update_one({"email": email}, {"$set": {"role": "admin"}})
+    target = {"email": email, "name": email.split("@")[0]}
+    await _staff_log(user, "preapproved", target, "full")
+    background.add_task(_alert_new_staff, user, target, "full")
     return {"message": "Email approved"}
 
 
 @api_router.post("/admin/team/{user_id}/role")
-async def admin_team_role(user_id: str, payload: RoleUpdate, user=Depends(require_admin)):
-    if payload.role not in ("admin", "pending"):
+async def admin_team_role(user_id: str, payload: RoleUpdate, background: BackgroundTasks, user=Depends(require_admin)):
+    if payload.role not in ("admin", "pending") or payload.level not in STAFF_LEVELS:
         raise HTTPException(status_code=400, detail="Invalid role")
     if user_id == user["user_id"] and payload.role != "admin":
         raise HTTPException(status_code=400, detail="You cannot remove your own admin access")
-    await db.users.update_one({"user_id": user_id}, {"$set": {"role": payload.role}})
+    t = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if (t.get("email") or "").lower() in ADMIN_OWNER_EMAILS and payload.role != "admin":
+        raise HTTPException(status_code=400, detail="This is an owner account and always keeps Admin access.")
+    await db.users.update_one({"user_id": user_id}, {"$set": {"role": payload.role, "staff_level": payload.level}})
     if payload.role != "admin":
-        t = await db.users.find_one({"user_id": user_id}, {"_id": 0, "email": 1})
-        await db.allowed_emails.delete_one({"email": ((t or {}).get("email") or "").lower()})
+        await db.allowed_emails.delete_one({"email": (t.get("email") or "").lower()})
+        await _staff_log(user, "removed", t)
+    elif t.get("role") != "admin":
+        await _staff_log(user, "granted", t, payload.level)
+        background.add_task(_alert_new_staff, user, t, payload.level)
     return {"message": "Role updated"}
+
+
+@api_router.post("/admin/team/{user_id}/level")
+async def admin_team_level(user_id: str, payload: LevelUpdate, user=Depends(require_admin)):
+    if payload.level not in STAFF_LEVELS:
+        raise HTTPException(status_code=400, detail="Invalid access level")
+    if user_id == user["user_id"]:
+        raise HTTPException(status_code=400, detail="You cannot change your own access level")
+    t = await db.users.find_one({"user_id": user_id, "role": "admin"}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Staff member not found")
+    if (t.get("email") or "").lower() in ADMIN_OWNER_EMAILS:
+        raise HTTPException(status_code=400, detail="Owner accounts always have Full access.")
+    if _staff_level(t) != payload.level:
+        await db.users.update_one({"user_id": user_id}, {"$set": {"staff_level": payload.level}})
+        await _staff_log(user, "level", t, payload.level)
+    return {"level": payload.level}
+
+
+@api_router.get("/admin/team/log")
+async def admin_team_log(user=Depends(require_admin)):
+    return await db.staff_log.find({}, {"_id": 0}).sort("at", -1).to_list(200)
 
 
 @api_router.post("/admin/team/{user_id}/make-member")
@@ -6711,14 +6797,15 @@ async def admin_team_make_member(user_id: str, user=Depends(require_admin)):
         update.update({"member_status": "active", "member_since": t.get("member_since") or _now_iso()})
     await db.users.update_one({"user_id": user_id}, {"$set": update})
     await db.allowed_emails.delete_one({"email": email})
-    logging.info(f"Team: {user.get('email')} changed {email} to member")
+    await _staff_log(user, "to_member", t)
     return {"message": "Changed to member", "member_status": update.get("member_status", t.get("member_status"))}
 
 
 @api_router.post("/admin/team/revoke-email")
 async def admin_team_revoke_email(payload: AllowEmail, user=Depends(require_admin)):
     email = payload.email.strip().lower()
-    await db.allowed_emails.delete_one({"email": email})
+    if (await db.allowed_emails.delete_one({"email": email})).deleted_count:
+        await _staff_log(user, "preapproval_removed", {"email": email})
     return {"message": "Email removed from allowlist"}
 
 

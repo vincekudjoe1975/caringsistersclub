@@ -27,6 +27,27 @@ import { StaffCodeToggle } from '../components/StaffCodeToggle';
 import { useToast } from '../hooks/use-toast';
 import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote, BarChart3, HeartHandshake } from 'lucide-react';
 
+const VIEWS = [
+  { k: 'overview', a: 'all', l: 'Overview', icon: ShieldCheck },
+  { k: 'gallery', a: 'content', l: 'Gallery', icon: ImageIcon },
+  { k: 'leadership', a: 'content', l: 'Leadership', icon: Users },
+  { k: 'media', a: 'content', l: 'Media Library', icon: Images },
+  { k: 'inbox', a: 'all', l: 'Form Submissions', icon: Inbox },
+  { k: 'home', a: 'content', l: 'Home Page', icon: LayoutTemplate },
+  { k: 'about', a: 'content', l: 'About Page', icon: BookOpen },
+  { k: 'stories', a: 'content', l: 'Stories & Updates', icon: MessageSquareQuote },
+  { k: 'reports', a: 'money', l: 'Reports', icon: BarChart3 },
+  { k: 'programs', a: 'content', l: 'Programs', icon: Layers },
+  { k: 'sessions', a: 'content', l: 'Sessions', icon: CalendarDays },
+  { k: 'events', a: 'content', l: 'Events', icon: CalendarHeart },
+  { k: 'transparency', a: 'money', l: 'Transparency', icon: PieChart },
+  { k: 'donations', a: 'money', l: 'Donations', icon: DollarSign },
+  { k: 'donors', a: 'money', l: 'Donors', icon: UserSearch },
+  { k: 'campaign', a: 'money', l: 'Campaign', icon: Target },
+  { k: 'members', a: 'members', l: 'Members', icon: HeartHandshake },
+  { k: 'team', a: 'full', l: 'Team Access', icon: ShieldCheck },
+];
+
 const TABS = [
   { key: 'event', label: 'Event Images', icon: CalendarDays, accept: 'image/*', titleLabel: 'Event Name', subLabel: 'Date / Location' },
   { key: 'document', label: 'Documents', icon: FileText, accept: '.pdf,application/pdf', titleLabel: 'Document Title', subLabel: 'Year / Label' },
@@ -104,6 +125,10 @@ export default function Admin() {
   if (user && user.code_pending) return <StaffCodeGate />;
   if (user && user.role !== 'admin') return <Navigate to="/members" replace />;
 
+  const lvl = user?.staff_level || 'full';
+  const views = VIEWS.filter((v) => lvl === 'full' || v.a === 'all' || v.a === lvl);
+  const cur = views.some((v) => v.k === view) ? view : views[0].k;
+
   return (
     <div className="min-h-screen" style={{ background: '#F7EFE9' }}>
       {/* Top bar */}
@@ -128,75 +153,58 @@ export default function Admin() {
           <p className="text-[#241019]/65 text-[14.5px] mt-1">Welcome{user?.name ? `, ${user.name}` : ''}. Manage media and review form submissions.</p>
         </div>
 
-        <SiteUrlBanner />
+        {lvl === 'full' && <SiteUrlBanner />}
+        {lvl !== 'full' && <p data-testid="admin-level-note" className="mb-6 text-[13px] text-[#241019]/65">Your staff access: <b className="text-[#3B0A2E]">{{ content: 'Content only', members: 'Members only', money: 'Money only' }[lvl]}</b>. Ask an owner if you need more.</p>}
+        {lvl !== 'full' && <StaffCodeToggle />}
         <InstallApp light />
 
         {/* View switch */}
         <div className="inline-flex flex-wrap gap-1 p-1.5 rounded-2xl sm:rounded-full mb-8 bg-white border border-[#3B0A2E]/8">
-          {[
-            { k: 'overview', l: 'Overview', icon: ShieldCheck },
-            { k: 'gallery', l: 'Gallery', icon: ImageIcon },
-            { k: 'leadership', l: 'Leadership', icon: Users },
-            { k: 'media', l: 'Media Library', icon: Images },
-            { k: 'inbox', l: 'Form Submissions', icon: Inbox },
-            { k: 'home', l: 'Home Page', icon: LayoutTemplate },
-            { k: 'about', l: 'About Page', icon: BookOpen },
-            { k: 'stories', l: 'Stories & Updates', icon: MessageSquareQuote },
-            { k: 'reports', l: 'Reports', icon: BarChart3 },
-            { k: 'programs', l: 'Programs', icon: Layers },
-            { k: 'sessions', l: 'Sessions', icon: CalendarDays },
-            { k: 'events', l: 'Events', icon: CalendarHeart },
-            { k: 'transparency', l: 'Transparency', icon: PieChart },
-            { k: 'donations', l: 'Donations', icon: DollarSign },
-            { k: 'donors', l: 'Donors', icon: UserSearch },
-            { k: 'campaign', l: 'Campaign', icon: Target },
-            { k: 'members', l: 'Members', icon: HeartHandshake },
-            { k: 'team', l: 'Team Access', icon: ShieldCheck },
-          ].map((v) => {
+          {views.map((v) => {
             const Icon = v.icon;
             return (
               <button key={v.k} onClick={() => setView(v.k)} data-testid={`admin-view-${v.k}`}
-                className={`px-5 py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 transition-all ${view === v.k ? 'text-white' : 'text-[#3B0A2E]'}`}
-                style={view === v.k ? { background: '#3B0A2E' } : {}}>
+                className={`px-5 py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 transition-all ${cur === v.k ? 'text-white' : 'text-[#3B0A2E]'}`}
+                style={cur === v.k ? { background: '#3B0A2E' } : {}}>
                 <Icon size={16} /> {v.l}
               </button>
             );
           })}
         </div>
 
-        {view === 'overview' ? (
+        {cur === 'overview' ? (
           <AdminOverview />
-        ) : view === 'gallery' ? (
+        ) : cur === 'gallery' ? (
           <AdminGallery />
-        ) : view === 'leadership' ? (
+        ) : cur === 'leadership' ? (
           <AdminLeadership />
-        ) : view === 'sessions' ? (
+        ) : cur === 'sessions' ? (
           <AdminSessions />
-        ) : view === 'inbox' ? (
+        ) : cur === 'inbox' ? (
           <AdminSubmissions />
-        ) : view === 'reports' ? (
+        ) : cur === 'reports' ? (
           <AdminReports />
-        ) : view === 'about' ? (
+        ) : cur === 'about' ? (
           <AdminAbout />
-        ) : view === 'stories' ? (
+        ) : cur === 'stories' ? (
           <AdminStories />
-        ) : view === 'home' ? (
+        ) : cur === 'home' ? (
           <AdminHome />
-        ) : view === 'programs' ? (
+        ) : cur === 'programs' ? (
           <AdminPrograms />
-        ) : view === 'transparency' ? (
+        ) : cur === 'transparency' ? (
           <AdminTransparency />
-        ) : view === 'events' ? (
+        ) : cur === 'events' ? (
           <AdminEvents />
-        ) : view === 'donations' ? (
+        ) : cur === 'donations' ? (
           <AdminDonations />
-        ) : view === 'donors' ? (
+        ) : cur === 'donors' ? (
           <AdminDonors />
-        ) : view === 'campaign' ? (
+        ) : cur === 'campaign' ? (
           <AdminCampaign />
-        ) : view === 'members' ? (
+        ) : cur === 'members' ? (
           <AdminMembers />
-        ) : view === 'team' ? (
+        ) : cur === 'team' ? (
           <><StaffCodeToggle /><AdminTeam currentUserId={user?.user_id} /></>
         ) : (
         <>

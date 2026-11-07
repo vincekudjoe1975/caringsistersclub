@@ -3,6 +3,8 @@ import { api } from '../lib/api';
 import { useToast } from '../hooks/use-toast';
 import { Loader2, UserPlus, Mail, X } from 'lucide-react';
 import { TeamList } from '../components/admin/TeamList';
+import { StaffLog } from '../components/admin/StaffLog';
+import { LEVELS } from '../components/admin/TeamList';
 import { MergeAccounts } from '../components/MergeAccounts';
 
 export default function AdminTeam({ currentUserId }) {
@@ -10,12 +12,14 @@ export default function AdminTeam({ currentUserId }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [newEmail, setNewEmail] = useState('');
+  const [log, setLog] = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get('/admin/team');
+      const [res, lg] = await Promise.all([api.get('/admin/team'), api.get('/admin/team/log')]);
       setData(res.data);
+      setLog(lg.data);
     } catch (e) {
       console.error('AdminTeam: failed to load', e);
     } finally {
@@ -39,11 +43,16 @@ export default function AdminTeam({ currentUserId }) {
     }
   };
 
-  const change = async (u, to) => {
+  const change = async (u, to, level) => {
+    const who = u.name || u.email;
     try {
       if (to === 'member') await api.post(`/admin/team/${u.user_id}/make-member`);
-      else await api.post(`/admin/team/${u.user_id}/role`, { role: 'admin' });
-      toast({ title: to === 'member' ? 'Changed to member' : 'Admin access granted', description: to === 'member' ? `${u.name || u.email} can no longer open Admin. She now appears under Members.` : undefined });
+      else if (to === 'level') await api.post(`/admin/team/${u.user_id}/level`, { level });
+      else await api.post(`/admin/team/${u.user_id}/role`, { role: 'admin', level });
+      toast({
+        title: to === 'member' ? 'Changed to member' : to === 'level' ? 'Access updated' : 'Admin access granted',
+        description: to === 'member' ? `${who} can no longer open Admin. She now appears under Members.` : `${who}: ${LEVELS[level]}`,
+      });
       load();
     } catch (err) {
       toast({ title: 'Failed', description: err?.response?.data?.detail || 'Try again', variant: 'destructive' });
@@ -68,7 +77,7 @@ export default function AdminTeam({ currentUserId }) {
 
   return (
     <div className="grid lg:grid-cols-[1fr_320px] gap-8 items-start">
-      <TeamList users={users} me={currentUserId} onConfirm={change} />
+      <div><TeamList users={users} me={currentUserId} onConfirm={change} /><StaffLog rows={log} /></div>
 
       {/* Pre-approve */}
       <div className="space-y-5">
