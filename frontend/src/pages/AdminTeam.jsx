@@ -5,6 +5,7 @@ import { Loader2, UserPlus, Mail, X } from 'lucide-react';
 import { TeamList } from '../components/admin/TeamList';
 import { StaffLog } from '../components/admin/StaffLog';
 import { LEVELS } from '../components/admin/TeamList';
+import { StaffSummary } from '../components/admin/StaffSummary';
 import { MergeAccounts } from '../components/MergeAccounts';
 
 export default function AdminTeam({ currentUserId }) {
@@ -59,6 +60,11 @@ export default function AdminTeam({ currentUserId }) {
     }
   };
 
+  const undo = async (e) => {
+    try { await api.post(`/admin/team/log/${e.id}/undo`); toast({ title: 'Change undone' }); load(); }
+    catch (err) { toast({ title: 'Could not undo', description: err?.response?.data?.detail || 'Try again', variant: 'destructive' }); }
+  };
+
   const removeAllowed = async (email) => {
     try {
       await api.post('/admin/team/revoke-email', { email });
@@ -77,7 +83,7 @@ export default function AdminTeam({ currentUserId }) {
 
   return (
     <div className="grid lg:grid-cols-[1fr_320px] gap-8 items-start">
-      <div><TeamList users={users} me={currentUserId} onConfirm={change} /><StaffLog rows={log} /></div>
+      <div><TeamList users={users} me={currentUserId} onConfirm={change} /><StaffLog rows={log} onUndo={undo} /></div>
 
       {/* Pre-approve */}
       <div className="space-y-5">
@@ -102,6 +108,7 @@ export default function AdminTeam({ currentUserId }) {
             </ul>
           </div>
         )}
+        <StaffSummary toast={toast} />
         <MergeAccounts toast={toast} onDone={load} />
       </div>
     </div>

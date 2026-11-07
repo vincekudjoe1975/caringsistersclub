@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { api, mediaSrc } from '../lib/api';
+import { api, mediaSrc, getPreview } from '../lib/api';
+import { PreviewBar } from '../components/admin/PreviewBar';
 import Logo from '../components/Logo';
 import AdminSubmissions from './AdminSubmissions';
 import AdminDonations from './AdminDonations';
@@ -125,7 +126,8 @@ export default function Admin() {
   if (user && user.code_pending) return <StaffCodeGate />;
   if (user && user.role !== 'admin') return <Navigate to="/members" replace />;
 
-  const lvl = user?.staff_level || 'full';
+  const preview = user?.is_owner ? getPreview() : null;
+  const lvl = preview?.level || user?.staff_level || 'full';
   const views = VIEWS.filter((v) => lvl === 'full' || v.a === 'all' || v.a === lvl);
   const cur = views.some((v) => v.k === view) ? view : views[0].k;
 
@@ -153,9 +155,10 @@ export default function Admin() {
           <p className="text-[#241019]/65 text-[14.5px] mt-1">Welcome{user?.name ? `, ${user.name}` : ''}. Manage media and review form submissions.</p>
         </div>
 
+        {user?.is_owner && <PreviewBar preview={preview} />}
         {lvl === 'full' && <SiteUrlBanner />}
-        {lvl !== 'full' && <p data-testid="admin-level-note" className="mb-6 text-[13px] text-[#241019]/65">Your staff access: <b className="text-[#3B0A2E]">{{ content: 'Content only', members: 'Members only', money: 'Money only' }[lvl]}</b>. Ask an owner if you need more.</p>}
-        {lvl !== 'full' && <StaffCodeToggle />}
+        {lvl !== 'full' && !preview && <p data-testid="admin-level-note" className="mb-6 text-[13px] text-[#241019]/65">Your staff access: <b className="text-[#3B0A2E]">{{ content: 'Content only', members: 'Members only', money: 'Money only' }[lvl]}</b>. Ask an owner if you need more.</p>}
+        {lvl !== 'full' && !preview && <StaffCodeToggle />}
         <InstallApp light />
 
         {/* View switch */}

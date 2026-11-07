@@ -10,5 +10,13 @@ export const api = axios.create({
   headers: { 'X-Requested-With': 'XMLHttpRequest' },
 });
 
+export const PREVIEW_KEY = 'csc_admin_preview';
+export const getPreview = () => { try { return JSON.parse(sessionStorage.getItem(PREVIEW_KEY)) || null; } catch { return null; } };
+api.interceptors.request.use((cfg) => {
+  const p = getPreview();
+  if (p) { cfg.headers['X-Preview-Level'] = p.level; cfg.headers['X-Preview-Mode'] = p.mode; }
+  return cfg;
+});
+
 // Build a full URL for a media item served by the backend
 export const mediaSrc = (urlPath) => `${BACKEND_URL}${urlPath}`;

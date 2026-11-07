@@ -1,0 +1,9 @@
+crons:
+  - name: staff-summary
+    description: "Emails the owners a Monday 9am Eastern summary of staff access changes from the past week"
+    cron: "0 9 * * 1"
+    timezone: "America/New_York"
+    endpoint: "{{BASE_URL}}/api/cron/staff-summary"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

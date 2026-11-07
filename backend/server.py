@@ -196,6 +196,11 @@ async def require_admin(request: Request):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     lvl = _staff_level(user)
+    pv = request.headers.get("x-preview-level")
+    if pv and (user.get("email") or "").lower() in ADMIN_OWNER_EMAILS and pv in STAFF_LEVELS and pv != "full":
+        lvl = pv
+        if request.headers.get("x-preview-mode") != "working" and request.method != "GET":
+            raise HTTPException(status_code=403, detail="You're previewing in look-only mode, so nothing was saved.")
     ok = {"shared", lvl} | ({f"read_{lvl}"} if request.method == "GET" else set())
     if lvl != "full" and not _path_areas(request.url.path) & ok:
         raise HTTPException(status_code=403, detail=f"Your staff access is {STAFF_LEVELS[lvl]}. Ask an owner if you need more.")
@@ -6706,9 +6711,35 @@ def _who(u: dict) -> dict:
     return {"email": (u.get("email") or "").lower(), "name": u.get("name") or (u.get("email") or "").split("@")[0]}
 
 
-async def _staff_log(actor: dict, action: str, target: dict, level: str = ""):
-    await db.staff_log.insert_one({"id": uuid.uuid4().hex, "at": _now_iso(), "action": action, "level": level,
-                                   "by": _who(actor), "target": _who(target)})
+_SNAP_FIELDS = ("role", "staff_level", "member_status", "member_since", "require_login_code")
+_UNDOABLE = {"granted", "removed", "to_member", "level", "preapproved", "preapproval_removed"}
+
+
+async def _staff_log(actor: dict, action: str, target: dict, level: str = "", extra: Optional[dict] = None):
+    row = {"id": uuid.uuid4().hex, "at": _now_iso(), "action": action, "level": level, "by": _who(actor),
+           "target": {**_who(target), "user_id": target.get("user_id")}, **(extra or {})}
+    if target.get("user_id"):
+        row["before"] = {k: target.get(k) for k in _SNAP_FIELDS}
+    await db.staff_log.insert_one(row)
+
+
+def _undo_block(e: dict, latest_id: str) -> str:
+    if e.get("undone_at"):
+        return "Already undone."
+    if e["action"] not in _UNDOABLE or (e["target"].get("user_id") and "before" not in e):
+        return "This change can't be undone."
+    if datetime.fromisoformat(e["at"]) < datetime.now(timezone.utc) - timedelta(days=7):
+        return "Only changes from the last 7 days can be undone."
+    if e["id"] != latest_id:
+        return "A newer change was made for this person. Undo that one first."
+    return ""
+
+
+async def _latest_log_ids() -> dict:
+    out = {}
+    async for e in db.staff_log.find({"action": {"$ne": "undo"}, "undone_at": {"$exists": False}}, {"_id": 0, "id": 1, "target.email": 1}).sort("at", -1):
+        out.setdefault(e["target"]["email"], e["id"])
+    return out
 
 
 async def _alert_new_staff(actor: dict, target: dict, level: str):
@@ -6794,9 +6825,121 @@ async def admin_team_level(user_id: str, payload: LevelUpdate, user=Depends(requ
     return {"level": payload.level}
 
 
+_ACTION_WORDS = {"granted": "gave {t} {lv}", "preapproved": "pre-approved {e} for Admin", "preapproval_removed": "removed the pre-approval for {e}",
+                 "removed": "removed Admin access from {t}", "to_member": "changed {t} to a member", "level": "changed {t} to {lv}", "undo": "undid a change for {t}"}
+
+
+def _log_line(e: dict) -> str:
+    when = datetime.fromisoformat(e["at"]).astimezone(EVENT_TZ).strftime("%a %b %-d, %-I:%M %p")
+    what = _ACTION_WORDS.get(e["action"], e["action"]).format(t=e["target"]["name"], e=e["target"]["email"], lv=STAFF_LEVELS.get(e.get("level"), "Admin access"))
+    return f"{when}: {e['by']['name']} {what}"
+
+
+async def _send_staff_summary(force: bool = False) -> dict:
+    cfg = await db.settings.find_one({"key": "staff_summary"}, {"_id": 0}) or {}
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    rows = await db.staff_log.find({"at": {"$gte": since}}, {"_id": 0}).sort("at", 1).to_list(500)
+    if not rows and cfg.get("quiet_weeks") is False and not force:
+        return {"sent": 0, "changes": 0, "skipped": "quiet week"}
+    staff = await db.users.find({"role": "admin"}, {"_id": 0, "name": 1, "email": 1, "staff_level": 1}).to_list(200)
+    counts = {}
+    for u in staff:
+        counts[_staff_level(u)] = counts.get(_staff_level(u), 0) + 1
+    team = ", ".join(f"{n} {STAFF_LEVELS[k]}" for k, n in counts.items())
+    body = ("Here are this week's changes to who can open the Caring Sisters Club back office:\n\n" + "\n".join(f"• {_log_line(e)}" for e in rows)
+            if rows else "No one was given or lost Admin access this week. Nothing to review.")
+    body += f"\n\nStaff right now: {len(staff)} ({team})."
+    html = _member_email_html("Weekly staff summary", f"{len(rows)} staff change{'s' if len(rows) != 1 else ''} this week", body, "Open Team Access", "/admin?view=team")
+    sent = 0
+    for em in sorted(ADMIN_OWNER_EMAILS):
+        if await send_email(to=em, subject=f"Weekly staff summary: {len(rows) or 'no'} change{'s' if len(rows) != 1 else ''}", html=html):
+            sent += 1
+    return {"sent": sent, "changes": len(rows)}
+
+
+@api_router.post("/cron/staff-summary")
+async def cron_staff_summary(request: Request, background: BackgroundTasks, authorization: str = Header(default="")):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET") or ""
+    if not secret or not authorization.startswith("Bearer ") or not _asec.compare_digest(authorization[7:], secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        env = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid body")
+    run_id = request.headers.get("x-webhook-id") or (env or {}).get("run_id") or _today_et().isoformat()
+    res = await db.scheduled_runs.update_one({"key": f"staff_summary:{run_id}"}, {"$setOnInsert": {"ran_at": _now_iso()}}, upsert=True)
+    if not res.upserted_id:
+        return {"ok": True, "duplicate": True}
+    background.add_task(_send_staff_summary)
+    return {"ok": True}
+
+
+class StaffSummaryIn(BaseModel):
+    quiet_weeks: bool
+
+
+@api_router.get("/admin/team/summary-settings")
+async def staff_summary_get(user=Depends(require_admin)):
+    cfg = await db.settings.find_one({"key": "staff_summary"}, {"_id": 0}) or {}
+    return {"quiet_weeks": cfg.get("quiet_weeks") is not False, "recipients": sorted(ADMIN_OWNER_EMAILS)}
+
+
+@api_router.put("/admin/team/summary-settings")
+async def staff_summary_put(payload: StaffSummaryIn, user=Depends(require_admin)):
+    await db.settings.update_one({"key": "staff_summary"}, {"$set": {"key": "staff_summary", "quiet_weeks": payload.quiet_weeks}}, upsert=True)
+    return {"quiet_weeks": payload.quiet_weeks}
+
+
+@api_router.post("/admin/team/summary-test")
+async def staff_summary_test(request: Request, user=Depends(require_admin)):
+    await _rate_limit(request, f"staff_summary_test:{user['user_id']}", 3, 3600)
+    return await _send_staff_summary(force=True)
+
+
 @api_router.get("/admin/team/log")
 async def admin_team_log(user=Depends(require_admin)):
-    return await db.staff_log.find({}, {"_id": 0}).sort("at", -1).to_list(200)
+    rows = await db.staff_log.find({}, {"_id": 0}).sort("at", -1).to_list(200)
+    latest = await _latest_log_ids()
+    for e in rows:
+        e["undo_block"] = _undo_block(e, latest.get(e["target"]["email"]))
+        e.pop("before", None)
+    return rows
+
+
+@api_router.post("/admin/team/log/{entry_id}/undo")
+async def admin_team_undo(entry_id: str, background: BackgroundTasks, user=Depends(require_admin)):
+    e = await db.staff_log.find_one({"id": entry_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Change not found")
+    why = _undo_block(e, (await _latest_log_ids()).get(e["target"]["email"]))
+    if why:
+        raise HTTPException(status_code=400, detail=why)
+    email, uid = e["target"]["email"], e["target"].get("user_id")
+    if uid == user["user_id"]:
+        raise HTTPException(status_code=400, detail="You cannot undo a change to your own access.")
+    if e["action"] == "preapproved":
+        await db.allowed_emails.delete_one({"email": email})
+    elif e["action"] == "preapproval_removed":
+        await db.allowed_emails.update_one({"email": email}, {"$set": {"email": email}}, upsert=True)
+    else:
+        t = await db.users.find_one({"user_id": uid}, {"_id": 0})
+        if not t:
+            raise HTTPException(status_code=404, detail="That account no longer exists.")
+        if email in ADMIN_OWNER_EMAILS:
+            raise HTTPException(status_code=400, detail="Owner accounts always keep Full access.")
+        b = e["before"]
+        sets = {k: v for k, v in b.items() if v is not None}
+        unsets = {k: "" for k, v in b.items() if v is None}
+        await db.users.update_one({"user_id": uid}, {"$set": sets, **({"$unset": unsets} if unsets else {})})
+        if b.get("role") == "admin" and t.get("role") != "admin":
+            background.add_task(_alert_new_staff, user, t, _staff_level(b))
+    res = await db.staff_log.update_one({"id": entry_id, "undone_at": {"$exists": False}}, {"$set": {"undone_at": _now_iso(), "undone_by": _who(user)}})
+    if not res.modified_count:
+        raise HTTPException(status_code=400, detail="Already undone.")
+    await db.staff_log.insert_one({"id": uuid.uuid4().hex, "at": _now_iso(), "action": "undo", "level": "", "by": _who(user),
+                                   "target": e["target"], "undid": {"action": e["action"], "level": e.get("level", ""), "id": entry_id}})
+    return {"ok": True}
 
 
 @api_router.post("/admin/team/{user_id}/make-member")
