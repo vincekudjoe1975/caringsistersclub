@@ -583,3 +583,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Members tab card "Signed up, not a member yet" now lists ALL non-staff accounts without member_status (Google ones too), with per-person "Send reminder" (POST /api/admin/members/{uid}/apply-reminder, 2/day).
 - One-time startup migration (scheduled_runs key migrate:owner_demote_2026_06): femmansaray2@gmail.com and rd7467@aol.com (Evelyn) changed from Admin to member, logged as "Owner request". Owner confirmed Vinny Kudjoe and VandJ stay staff.
 - Self-tested (API + screenshots + migration run-once check). Deploy queued.
+
+## 2026-06 — Reminder note, join funnel, Ask the Club team (iteration 63)
+- "Send reminder" now opens an optional personal note (shown at top of email, signed by staff).
+- Members tab: Joining this month card (signed up / applied / approved vs last month) GET /api/admin/members/funnel.
+- Directory: staff with Club team badge show "Ask <name> a question" -> db.team_questions; staff emailed (reply-to sister) + push; threads with replies in My Profile → Questions (both sides). Emails not exposed in API.
+- Tested iteration_63 backend 14/14; Enter/submit bug + rate-limit order + email exposure fixed. Not deployed yet.

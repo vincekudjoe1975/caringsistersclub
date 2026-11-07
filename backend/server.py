@@ -13434,10 +13434,10 @@ class ReminderNoteIn(BaseModel):
 
 @api_router.post("/admin/members/{uid}/apply-reminder")
 async def admin_member_apply_reminder(uid: str, request: Request, payload: Optional[ReminderNoteIn] = None, user=Depends(require_admin)):
-    await _rate_limit(request, f"apply_manual:{uid}", 2, 86400)
     u = await db.users.find_one({"user_id": uid, "role": {"$ne": "admin"}, "member_status": {"$exists": False}}, {"_id": 0})
     if not u or not u.get("email"):
         raise HTTPException(status_code=404, detail="She isn't waiting to apply.")
+    await _rate_limit(request, f"apply_manual:{uid}", 3, 86400)
     body = ("You created your Caring Sisters Club member portal account, but we haven't received your membership application yet. "
             "It only takes about two minutes, and our team reviews every application personally. We'd love to welcome you!")
     note = ((payload.note if payload else "") or "").strip()[:500]
@@ -13490,7 +13490,9 @@ class TeamReplyIn(BaseModel):
 
 
 def _q_public(q: dict) -> dict:
-    return {k: q.get(k) for k in ("id", "from", "to", "text", "created_at", "replies", "updated_at")}
+    who = lambda w: {"user_id": w.get("user_id"), "name": w.get("name")}
+    return {"id": q["id"], "from": who(q["from"]), "to": who(q["to"]), "text": q["text"], "created_at": q["created_at"], "updated_at": q.get("updated_at"),
+            "replies": [{"by": who(r["by"]), "text": r["text"], "at": r["at"]} for r in q.get("replies") or []]}
 
 
 async def _notify_team_q(to_uid: str, to_email: str, who: dict, text: str, first: bool, reply_to: str):
@@ -13506,13 +13508,13 @@ async def _notify_team_q(to_uid: str, to_email: str, who: dict, text: str, first
 
 @api_router.post("/members/team-questions")
 async def members_team_question(payload: TeamQuestionIn, request: Request, background: BackgroundTasks, user=Depends(require_member)):
-    await _rate_limit(request, f"team_q:{user['user_id']}", 10, 86400)
     text = payload.text.strip()[:1500]
     if len(text) < 3:
         raise HTTPException(status_code=400, detail="Please write your question.")
     staff = await db.users.find_one({"user_id": payload.to_user_id, "role": "admin", "club_team_badge": True}, {"_id": 0})
     if not staff or staff["user_id"] == user["user_id"]:
         raise HTTPException(status_code=400, detail="You can only ask a Club team member.")
+    await _rate_limit(request, f"team_q:{user['user_id']}", 10, 86400)
     now = _now_iso()
     q = {"id": uuid.uuid4().hex, "from": {"user_id": user["user_id"], **_who(user)}, "to": {"user_id": staff["user_id"], **_who(staff)},
          "text": text, "created_at": now, "updated_at": now, "replies": []}

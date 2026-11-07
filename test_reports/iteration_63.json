@@ -1,0 +1,36 @@
+{
+  "summary": "Tested the join funnel, the personal note on the apply reminder, Ask the Club team (questions and replies) and the Team Access regression, on the backend and in the UI. Backend: 14 of 14 pytest tests passed. UI: the funnel card, the reminder form (open, cancel, note, send, error toast), the Directory pill and Ask button with the dialog, the My Profile Questions threads (staff reply, sister follow-up, desktop and mobile) and Team Access staff-only all work. One UI bug was found: the Questions card sits inside the profile <form>, so the reply button and the Enter key also try to submit the profile form.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/members/{uid}/apply-reminder", "issue": "The rate-limit hit is recorded before the 404 check and before the send. If the email provider fails twice, staff cannot retry for 24h, but the error says 'Please try again shortly'. The limit is also per uid + IP, not strictly per person."},
+      {"endpoint": "POST /api/members/team-questions", "issue": "The rate-limit hit is recorded before the validation step. Invalid tries (text under 3 characters, or the wrong target) use up the 10/day quota."},
+      {"endpoint": "GET /api/members/team-questions", "issue": "The from/to/replies.by objects include email (from _who). A sister sees the staff member's email even when show_contact is off. The 'Club team' design may accept this; check that it is intended."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "TeamQuestions.jsx (rendered inside MyProfile <form data-testid='profile-form'>)", "issue": "The reply send button has no type, so it defaults to type=submit. Clicking it also submits the profile form: the browser shows a 'Please fill out this field' bubble on the Add password field, and for users whose password fields are not required it would also run PUT /members/profile. Pressing Enter in the reply input does NOT send the reply; it only triggers the profile form submit or validation bubble. Confirmed by request capture: Enter caused no /reply POST.", "selector": "[data-testid^='team-q-reply-send-'], [data-testid^='team-q-reply-']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter63_funnel_reminder_askteam.py", "/app/backend/tests/qa_iter63_setup.py", "/app/test_reports/pytest/iter63.xml"],
+  "action_items": [
+    "TeamQuestions Thread: add type=\"button\" to team-q-reply-send-{id}. Add onKeyDown on team-q-reply-{id}: on Enter, preventDefault() and send (same pattern as PasswordCard). Or render <TeamQuestions/> outside the profile <form>.",
+    "Optional: record the apply-reminder rate-limit hit only after a successful send, or reword the 400 message, so that provider failures do not block retries for 24h.",
+    "Optional: run the team_q rate limit after validation; consider removing staff email from the question payload shown to sisters."
+  ],
+  "critical_code_review_comments": [
+    "MyProfile.jsx nests interactive cards (CheckinCode, TeamQuestions, PasswordCard, LeaveRequest) inside <form onSubmit={save}>. Any button there without type='button' submits the profile. PasswordCard works around this already; TeamQuestions does not.",
+    "Funnel 'approved' only counts submissions with member_decision=active. Members activated by invite/import/_activate_invited are not counted, so approved can be lower than real activations.",
+    "The funnel runs 6 count_documents calls one after another. That is fine at this size."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter63_funnel_reminder_askteam.py", "/app/backend/tests/qa_iter63_setup.py"],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "~92% (1 bug: reply Enter/submit inside profile form)"},
+  "seed_data_creation": "Temp qa63_* users (example.com) + sessions via qa_iter63_setup.py up, plus qa_session.py admin. All were removed with 'down' (users, sessions, team_questions rows, rate_hits). Verified 0 left. No questions were sent to real staff.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: python3 tests/qa_session.py up && python3 tests/qa_iter63_setup.py up, then pytest tests/test_iter63_funnel_reminder_askteam.py -n 0 (the tests depend on order), then 'down' for both. Tokens: qa63_staff_tok (admin + club_team_badge), qa63_nb_tok (admin, no badge), qa63_a_tok/qa63_b_tok (active members), qa63_applied_tok (applied). qa63_waiting is a non-member waiting to apply. Emails to example.com fail with a provider 422, so the reminder returns 400 'could not be sent' (expected). Run 'down' between runs to clear rate_hits. Server date is Nov 2026.",
+  "rca of the issue": "Reply in My Profile: <TeamQuestions/> is a child of <form data-testid='profile-form'>. The <button> in Thread has no type, so it is a submit button, and Enter inside an <input> fires an implicit form submit. Both call MyProfile.save (or the native required validation on the PasswordField blocks it with a bubble). The Thread input has no Enter handler, so Enter never sends the reply. Repro: open the portal as a member who has a question, go to My Profile, type a reply and press Enter. No POST /reply is sent and a 'Please fill out this field' bubble appears on the password field. Fix: type='button' plus an Enter handler that calls preventDefault, or move the card outside the form."
+}

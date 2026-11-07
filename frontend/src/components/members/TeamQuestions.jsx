@@ -20,9 +20,9 @@ function Thread({ q, mine, onReply }) {
         </div>
       ))}
       <div className="mt-3 flex gap-2">
-        <input data-testid={`team-q-reply-${q.id}`} value={text} onChange={(e) => setText(e.target.value)} placeholder={mine ? 'Add a follow-up…' : 'Write your answer…'}
+        <input data-testid={`team-q-reply-${q.id}`} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); if (text.trim()) send(); } }} placeholder={mine ? 'Add a follow-up…' : 'Write your answer…'}
           className="flex-1 min-w-0 rounded-full border border-[#3B0A2E]/15 bg-white px-4 py-2 text-[13.5px] focus:outline-none focus:border-[#B4247E]" />
-        <button data-testid={`team-q-reply-send-${q.id}`} disabled={!text.trim()} onClick={send} aria-label="Send reply" className="btn-magenta rounded-full w-10 h-10 flex items-center justify-center disabled:opacity-50"><Send size={15} /></button>
+        <button type="button" data-testid={`team-q-reply-send-${q.id}`} disabled={!text.trim()} onClick={send} aria-label="Send reply" className="btn-magenta rounded-full w-10 h-10 flex items-center justify-center disabled:opacity-50"><Send size={15} /></button>
       </div>
     </li>
   );
