@@ -11,6 +11,7 @@ import { AdminDecember } from '../components/members/admin/AdminDecember';
 import { AdminTreasurer } from '../components/members/admin/AdminTreasurer';
 import { AdminReferrers } from '../components/members/admin/AdminReferrers';
 import { AdminImport } from '../components/members/admin/AdminImport';
+import { JoinFunnel } from '../components/members/admin/JoinFunnel';
 import { AdminWelcome } from '../components/members/admin/AdminWelcome';
 import { AdminAnnual, AdminSpotlight } from '../components/members/admin/AdminAnnualSpotlight';
 import { AdminGatheringPhotos, AdminPhotoControl } from '../components/members/Phase7';
@@ -179,6 +180,7 @@ export default function AdminMembers() {
     <div className="flex flex-wrap gap-1 mb-6">{tabs.map(([k, l]) => <button key={k} data-testid={`members-sub-${k}`} onClick={() => setSub(k)} className={`rounded-full px-4 py-2 text-[13px] font-semibold transition-colors ${sub === k ? 'bg-[#3B0A2E] text-white' : 'bg-white border border-[#3B0A2E]/15 text-[#3B0A2E]'}`}>{l}</button>)}</div>
     {sub === 'dues' ? <AdminDues /> : sub === 'meetings' ? <AdminMeetings /> : sub === 'votes' ? <AdminBallots /> : sub === 'support' ? <AdminCollections /> : sub === 'december' ? <AdminDecember /> : sub === 'treasurer' ? <AdminTreasurer /> : sub === 'referrers' ? <AdminReferrers /> : sub === 'import' ? <AdminImport /> : sub === 'welcome' ? <AdminWelcome /> : sub === 'annual' ? <AdminAnnual /> : sub === 'spotlight' ? <AdminSpotlight /> : sub === 'photos' ? <><AdminGatheringPhotos /><AdminRecaps /></> : (
     <div className="grid lg:grid-cols-2 gap-6" data-testid="admin-members">
+      <JoinFunnel />
       <Box title={`Applications (${apps.length})`} testid="admin-applications"><Applications rows={apps} act={act} focus={focus} /></Box>
       <Box title="Signed up, not a member yet" testid="admin-waiting"><WaitingToApply toast={toast} /></Box>
       <Box title="App installs" testid="admin-app-installs"><AppInstalls toast={toast} /></Box>

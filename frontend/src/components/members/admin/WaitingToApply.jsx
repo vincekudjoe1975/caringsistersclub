@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../../lib/api';
-import { Hourglass, Loader2, Send } from 'lucide-react';
+import { Hourglass, Loader2 } from 'lucide-react';
+import { RemindButton } from './RemindButton';
 
 const d = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
 
@@ -15,9 +16,9 @@ export function WaitingToApply({ toast }) {
     catch (ex) { toast({ title: 'Could not update', description: ex?.response?.data?.detail, variant: 'destructive' }); }
     finally { setBusy(false); }
   };
-  const remind = async (r) => {
-    try { await api.post(`/admin/members/${r.user_id}/apply-reminder`); toast({ title: 'Reminder sent', description: `We emailed ${r.email}.` }); load(); }
-    catch (ex) { toast({ title: 'Could not send', description: ex?.response?.data?.detail, variant: 'destructive' }); }
+  const remind = async (r, note) => {
+    try { await api.post(`/admin/members/${r.user_id}/apply-reminder`, { note }); toast({ title: 'Reminder sent', description: `We emailed ${r.email}.` }); load(); return true; }
+    catch (ex) { toast({ title: 'Could not send', description: ex?.response?.data?.detail, variant: 'destructive' }); return false; }
   };
   if (!s) return <Loader2 className="animate-spin text-[#B4247E]" size={18} />;
   return (
@@ -38,7 +39,7 @@ export function WaitingToApply({ toast }) {
                 <p data-testid={`waiting-reminders-${r.user_id}`} className="text-[12px] text-[#241019]/60 flex items-center gap-1.5"><Hourglass size={12} className="text-[#B4247E]" />
                   {!r.email_confirmed ? 'Hasn\'t confirmed her email yet' : r.manual_reminder_at ? `Reminder sent ${d(r.manual_reminder_at)}` : r.reminder_2_at ? `Reminded ${d(r.reminder_1_at)} and ${d(r.reminder_2_at)} (done)` : r.reminder_1_at ? `Reminded ${d(r.reminder_1_at)} · final at 7 days` : r.eligible ? 'First reminder at 3 days' : 'Joined before reminders started'}
                 </p>
-                {r.email_confirmed && <button data-testid={`waiting-remind-btn-${r.user_id}`} onClick={() => remind(r)} className="rounded-full px-3 py-1 text-[12px] font-semibold border border-[#3B0A2E]/15 text-[#3B0A2E] hover:border-[#B4247E] hover:text-[#B4247E] flex items-center gap-1 transition-colors"><Send size={12} /> Send reminder</button>}
+                {r.email_confirmed && <RemindButton r={r} onSend={remind} />}
               </div>
             </li>
           ))}

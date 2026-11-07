@@ -7425,7 +7425,7 @@ async def members_bylaws_file(user=Depends(require_member)):
 @api_router.get("/members/directory")
 async def members_directory(user=Depends(require_member)):
     rows = await db.users.find({"member_status": "active"}, {"_id": 0}).sort("name", 1).to_list(2000)
-    return [_member_public(u, user.get("role") == "admin") for u in rows]
+    return [{**_member_public(u, user.get("role") == "admin"), "is_me": u["user_id"] == user["user_id"]} for u in rows]
 
 
 @api_router.get("/members/announcements")
@@ -13428,14 +13428,21 @@ async def admin_members_waiting(user=Depends(require_admin)):
         "email_confirmed": u.get("email_verified") is not False, "manual_reminder_at": u.get("apply_manual_reminder_at", "")} for u in rows]}
 
 
+class ReminderNoteIn(BaseModel):
+    note: str = ""
+
+
 @api_router.post("/admin/members/{uid}/apply-reminder")
-async def admin_member_apply_reminder(uid: str, request: Request, user=Depends(require_admin)):
+async def admin_member_apply_reminder(uid: str, request: Request, payload: Optional[ReminderNoteIn] = None, user=Depends(require_admin)):
     await _rate_limit(request, f"apply_manual:{uid}", 2, 86400)
     u = await db.users.find_one({"user_id": uid, "role": {"$ne": "admin"}, "member_status": {"$exists": False}}, {"_id": 0})
     if not u or not u.get("email"):
         raise HTTPException(status_code=404, detail="She isn't waiting to apply.")
     body = ("You created your Caring Sisters Club member portal account, but we haven't received your membership application yet. "
             "It only takes about two minutes, and our team reviews every application personally. We'd love to welcome you!")
+    note = ((payload.note if payload else "") or "").strip()[:500]
+    if note:
+        body = f"{note}\n\n— {user.get('name') or 'The Caring Sisters Club team'}\n\n{body}"
     if not await send_email(to=u["email"], subject="Finish your Caring Sisters Club membership application",
                             html=_member_email_html("Membership application", f"Hello {_first(u)},", body, "Finish my application", "/members")):
         raise HTTPException(status_code=400, detail="The reminder could not be sent. Please try again shortly.")
@@ -13447,6 +13454,97 @@ async def admin_member_apply_reminder(uid: str, request: Request, user=Depends(r
 async def admin_apply_reminders_toggle(payload: ToggleIn, user=Depends(require_admin)):
     await db.settings.update_one({"key": "apply_reminders_since"}, {"$set": {"enabled": payload.enabled}, "$setOnInsert": {"at": _now_iso()}}, upsert=True)
     return {"enabled": payload.enabled}
+
+
+# ---------- Join funnel ----------
+def _month_bounds(offset: int) -> tuple:
+    t = _today_et().replace(day=1)
+    for _ in range(offset):
+        t = (t - timedelta(days=1)).replace(day=1)
+    nxt = (t + timedelta(days=32)).replace(day=1)
+    to_utc = lambda d: datetime(d.year, d.month, d.day, tzinfo=EVENT_TZ).astimezone(timezone.utc).isoformat()
+    return t, to_utc(t), to_utc(nxt)
+
+
+@api_router.get("/admin/members/funnel")
+async def admin_members_funnel(user=Depends(require_admin)):
+    out = []
+    for off in (0, 1):
+        m, a, b = _month_bounds(off)
+        rng = {"$gte": a, "$lt": b}
+        out.append({"label": m.strftime("%B %Y"),
+                    "signed_up": await db.users.count_documents({"role": {"$ne": "admin"}, "created_at": rng}),
+                    "applied": await db.submissions.count_documents({"type": "member", "created_at": rng}),
+                    "approved": await db.submissions.count_documents({"type": "member", "member_decision": "active", "decided_at": rng})})
+    return {"this_month": out[0], "last_month": out[1]}
+
+
+# ---------- Ask the Club team ----------
+class TeamQuestionIn(BaseModel):
+    to_user_id: str
+    text: str
+
+
+class TeamReplyIn(BaseModel):
+    text: str
+
+
+def _q_public(q: dict) -> dict:
+    return {k: q.get(k) for k in ("id", "from", "to", "text", "created_at", "replies", "updated_at")}
+
+
+async def _notify_team_q(to_uid: str, to_email: str, who: dict, text: str, first: bool, reply_to: str):
+    title = f"{who['name']} asked you a question" if first else f"{who['name']} replied to your question"
+    try:
+        await _push_users([to_uid], title, text[:120], "/members?tab=me", "custom")
+    except Exception as e:
+        logging.warning(f"Team question push failed: {e}")
+    body = f"{text}\n\nYou can reply right from this email (it goes straight to {who['name']}), or answer in the member portal under My Profile → Questions."
+    await send_email(to=to_email, subject=title, reply_to=reply_to,
+                     html=_member_email_html("Ask the Club team", title, body, "Open my questions", "/members?tab=me"))
+
+
+@api_router.post("/members/team-questions")
+async def members_team_question(payload: TeamQuestionIn, request: Request, background: BackgroundTasks, user=Depends(require_member)):
+    await _rate_limit(request, f"team_q:{user['user_id']}", 10, 86400)
+    text = payload.text.strip()[:1500]
+    if len(text) < 3:
+        raise HTTPException(status_code=400, detail="Please write your question.")
+    staff = await db.users.find_one({"user_id": payload.to_user_id, "role": "admin", "club_team_badge": True}, {"_id": 0})
+    if not staff or staff["user_id"] == user["user_id"]:
+        raise HTTPException(status_code=400, detail="You can only ask a Club team member.")
+    now = _now_iso()
+    q = {"id": uuid.uuid4().hex, "from": {"user_id": user["user_id"], **_who(user)}, "to": {"user_id": staff["user_id"], **_who(staff)},
+         "text": text, "created_at": now, "updated_at": now, "replies": []}
+    await db.team_questions.insert_one(dict(q))
+    background.add_task(_notify_team_q, staff["user_id"], staff["email"], _who(user), text, True, user.get("email"))
+    return _q_public(q)
+
+
+@api_router.get("/members/team-questions")
+async def members_team_questions(user=Depends(require_member)):
+    uid = user["user_id"]
+    rows = await db.team_questions.find({"$or": [{"from.user_id": uid}, {"to.user_id": uid}]}, {"_id": 0}).sort("updated_at", -1).to_list(200)
+    return {"asked": [_q_public(q) for q in rows if q["from"]["user_id"] == uid], "received": [_q_public(q) for q in rows if q["to"]["user_id"] == uid]}
+
+
+@api_router.post("/members/team-questions/{qid}/reply")
+async def members_team_reply(qid: str, payload: TeamReplyIn, request: Request, background: BackgroundTasks, user=Depends(require_member)):
+    await _rate_limit(request, f"team_r:{user['user_id']}", 40, 86400)
+    text = payload.text.strip()[:1500]
+    if not text:
+        raise HTTPException(status_code=400, detail="Please write a reply.")
+    uid = user["user_id"]
+    q = await db.team_questions.find_one({"id": qid, "$or": [{"from.user_id": uid}, {"to.user_id": uid}]}, {"_id": 0})
+    if not q:
+        raise HTTPException(status_code=404, detail="Question not found")
+    now = _now_iso()
+    await db.team_questions.update_one({"id": qid}, {"$push": {"replies": {"by": {"user_id": uid, **_who(user)}, "text": text, "at": now}}, "$set": {"updated_at": now}})
+    other = q["to"] if q["from"]["user_id"] == uid else q["from"]
+    o = await db.users.find_one({"user_id": other["user_id"]}, {"_id": 0, "email": 1})
+    if o and o.get("email"):
+        background.add_task(_notify_team_q, other["user_id"], o["email"], _who(user), text, False, user.get("email"))
+    return {"ok": True}
 
 
 # ---------- Merge duplicate accounts ----------

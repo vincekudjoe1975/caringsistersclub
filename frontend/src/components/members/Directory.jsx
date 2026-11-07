@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { AskTeam } from './AskTeam';
 import { Search, MapPin, Mail, Phone, List, Map as MapIcon, BadgeCheck } from 'lucide-react';
 
 const SisterMap = lazy(() => import('./SisterMap'));
@@ -42,6 +43,7 @@ export function Directory() {
               </div>
               {m.city && <p className="text-[13px] text-[#241019]/70 flex items-center gap-1.5"><MapPin size={13} className="text-[#B4247E]" /> {m.city}</p>}
               {m.bio && <p className="text-[13.5px] text-[#241019]/75 mt-2 line-clamp-3">{m.bio}</p>}
+              {m.club_team && !m.is_me && <AskTeam m={m} />}
               {(m.email || m.phone) && (
                 <div className="mt-3 pt-3 border-t border-[#3B0A2E]/8 space-y-1 text-[13px]">
                   {m.email && <a href={`mailto:${m.email}`} className="flex items-center gap-1.5 text-[#B4247E] truncate"><Mail size={13} /> {m.email}</a>}
