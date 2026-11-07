@@ -36,7 +36,10 @@ export function OpenQuestions({ toast, onFaq }) {
     try { await api.post(`/admin/team-questions/${q.id}/answered`, { answered }); load(); }
     catch (e) { toast({ title: 'Could not update', description: e?.response?.data?.detail, variant: 'destructive' }); }
   };
-  const share = async (all_staff) => { await api.put('/admin/team-questions/settings', { all_staff }); setCfg({ ...cfg, all_staff }); load(); };
+  const share = async (all_staff) => {
+    try { await api.put('/admin/team-questions/settings', { all_staff }); setCfg({ ...cfg, all_staff }); load(); }
+    catch (e) { toast({ title: 'Could not update', description: e?.response?.data?.detail, variant: 'destructive' }); }
+  };
   if (!rows) return null;
   const open = rows.filter((q) => !q.answered_at);
   const list = show === 'open' ? open : rows.filter((q) => q.answered_at);

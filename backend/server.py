@@ -13549,7 +13549,8 @@ async def members_team_reply(qid: str, payload: TeamReplyIn, request: Request, b
     if not q:
         raise HTTPException(status_code=404, detail="Question not found")
     now = _now_iso()
-    await db.team_questions.update_one({"id": qid}, {"$push": {"replies": {"by": {"user_id": uid, **_who(user)}, "text": text, "at": now}}, "$set": {"updated_at": now}})
+    reopen = {"$unset": {"answered_at": "", "answered_by": ""}} if q["from"]["user_id"] == uid else {}
+    await db.team_questions.update_one({"id": qid}, {"$push": {"replies": {"by": {"user_id": uid, **_who(user)}, "text": text, "at": now}}, "$set": {"updated_at": now}, **reopen})
     other = q["to"] if q["from"]["user_id"] == uid else q["from"]
     o = await db.users.find_one({"user_id": other["user_id"]}, {"_id": 0, "email": 1})
     if o and o.get("email"):

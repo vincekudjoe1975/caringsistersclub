@@ -589,3 +589,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Members tab: Joining this month card (signed up / applied / approved vs last month) GET /api/admin/members/funnel.
 - Directory: staff with Club team badge show "Ask <name> a question" -> db.team_questions; staff emailed (reply-to sister) + push; threads with replies in My Profile → Questions (both sides). Emails not exposed in API.
 - Tested iteration_63 backend 14/14; Enter/submit bug + rate-limit order + email exposure fixed. Not deployed yet.
+
+## 2026-06 — Questions & FAQ (iteration 64)
+- New Admin tab "Questions & FAQ" (all levels): open/answered sisters' questions, Mark answered, Add to FAQ (prefills question + staff's latest reply). Owners see all; others only their own unless owner turns on "Let all staff see every question" (settings key team_questions.all_staff). Asker follow-up re-opens a question.
+- Member FAQ: db.faqs, admin CRUD /api/admin/faq, published entries on member portal tab "FAQ" (accordion) via /api/members/faq.
+- One-time migration migrate:club_team_badges_2026_06: Club team badge on for all current staff.
+- Tested iteration_64 backend 16/17 (reopen verified fixed after reload), frontend 100%. Deployed with iterations 63-64.

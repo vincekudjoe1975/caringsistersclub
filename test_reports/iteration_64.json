@@ -1,0 +1,35 @@
+{
+  "summary": "Tested Questions & FAQ admin tab, open-question visibility/answered scope, owner-only share toggle, FAQ CRUD, member FAQ tab, and club team badge migration key. Backend: 16/17 pytest pass. The one failure: a follow-up reply from the asker does NOT re-open an answered question (answered_at is never cleared). Frontend: all requested flows work for owner, non-owner Full, Content-level staff and member (desktop + mobile).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/members/team-questions/{id}/reply", "issue": "Asker follow-up doesn't re-open the question. members_team_reply (server.py ~line 13552) only does $push replies + $set updated_at. It never $unset answered_at/answered_by, so the question stays 'Answered' and drops off the Open list. Repro: staff marks Q answered, member replies, then GET /api/admin/team-questions still shows answered_at set.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Open questions share toggle", "issue": "share() in OpenQuestions.jsx has no try/catch, so a failed PUT gives an unhandled rejection with no toast. Cosmetic since only owners see it.", "affected_selectors": ["[data-testid=open-questions-share-toggle]"]}
+    ],
+    "design_issues": [
+      {"screen": "Member portal mobile (390px)", "issues": ["Tab grid leaves 'My Profile' alone, centered on its own last row. Pre-existing layout, minor."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter64_questions_faq.py", "/app/backend/tests/qa_iter64_setup.py", "/app/test_reports/pytest/iter64.xml"],
+  "action_items": [
+    "In members_team_reply: when the replier is the asker (q['from']['user_id'] == uid), add '$unset': {'answered_at': '', 'answered_by': ''} to the update so the question re-opens. Optional: also re-open on email-inbound replies, if that path writes to team_questions.",
+    "Optional: wrap OpenQuestions share() in try/catch and show a toast."
+  ],
+  "critical_code_review_comments": [
+    "Reopen-on-follow-up is missing (see backend critical).",
+    "FAQ order = count_documents at insert time. After deletes, orders can repeat; created_at tiebreak keeps it stable. No reorder UI, which is fine.",
+    "DELETE /api/admin/faq/{id} returns 200 even for unknown ids. Acceptable."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter64_questions_faq.py", "/app/backend/tests/qa_iter64_setup.py"],
+  "success_rate": {"backend": "94% (16/17)", "frontend": "100%"},
+  "seed_data_creation": "Temp example.com users qa64_* plus sessions (including a temp session qa64_owner_tok for vincekudjoe's user_id), 2 team_questions and TEST_QA64 faqs. All removed via qa_iter64_setup.py down. The settings team_questions.all_staff was toggled during the test and reset to false (the key now exists with all_staff=false; before the test it did not exist).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: python3 tests/qa_iter64_setup.py up; pytest tests/test_iter64_questions_faq.py -n 0; then qa_iter64_setup.py down (the down step must run after each pytest run because the fixture creates questions). Migration key migrate:club_team_badges_2026_06 exists and both owner admins have club_team_badge=true. Not re-run. Verified in UI: owner sees toggle + all questions; non-owner/content see only own unless all_staff; Add to FAQ prefills question + recipient's last reply; Hidden tag; validation toast; edit/delete with confirm; member FAQ accordion shows only published entries, no sister name, and the empty state works.",
+  "rca of the issue": "members_team_reply's update_one lacks the $unset of answered_at/answered_by. The feature spec says an asker follow-up should clear answered_at. Fix: build the update dict, and if uid == q['from']['user_id'], add $unset."
+}
