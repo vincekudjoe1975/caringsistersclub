@@ -40,7 +40,7 @@ export function FaqManager({ toast, draft, clearDraft }) {
   return (
     <div data-testid="faq-manager" className="bg-white rounded-2xl border border-[#3B0A2E]/8">
       <div className="p-5 flex items-center justify-between gap-3 border-b border-[#3B0A2E]/8">
-        <div><p className="font-serif text-[19px] text-[#3B0A2E] font-semibold">Member FAQ</p><p className="text-[12.5px] text-[#241019]/60">Shown on the FAQ tab of the member portal.</p></div>
+        <div><p className="font-serif text-[19px] text-[#3B0A2E] font-semibold">Member FAQ</p><p className="text-[12.5px] text-[#241019]/60">Shown on the FAQ tab of the member portal, most helpful first. Entries with the same count keep this order.</p></div>
         <button data-testid="faq-add-btn" onClick={() => setEdit({ ...blank })} className="btn-magenta rounded-full px-4 py-2 text-[13px] font-semibold flex items-center gap-1.5"><Plus size={14} /> New entry</button>
       </div>
       {edit && <Editor f={edit} setF={setEdit} onSave={save} onCancel={() => setEdit(null)} />}

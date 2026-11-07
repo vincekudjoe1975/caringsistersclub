@@ -13709,6 +13709,7 @@ async def admin_faq_delete(fid: str, user=Depends(require_admin)):
 @api_router.get("/members/faq")
 async def members_faq(user=Depends(require_member)):
     rows = await db.faqs.find({"published": True}, {"_id": 0, "id": 1, "question": 1, "answer": 1, "helpful_by": 1}).sort([("order", 1), ("created_at", 1)]).to_list(300)
+    rows.sort(key=lambda r: -len(r.get("helpful_by") or []))
     for r in rows:
         r["helped"] = user["user_id"] in (r.pop("helpful_by", None) or [])
     return rows

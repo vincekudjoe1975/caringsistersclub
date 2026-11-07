@@ -605,3 +605,4 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 ## 2026-06 — Phrase removal
 - Owner request: removed "of/across/in/from the Diaspora" everywhere (code: pages, footer, emails, defaults, mock). One-time startup scrub migrate:remove_phrase_2026_06 over saved content collections (settings, leaders, programs, sessions, events, stories, faqs, member_settings, announcements...). Do not reintroduce the phrase.
 - Verified: 0 occurrences in code + preview DB; public pages checked. Deployed together with FAQ starter/search/helped/nudge batch.
+- 2026-06: Member FAQ sorted by "This helped" count (desc), ties keep staff order (members_faq). Self-tested. Not deployed yet.
