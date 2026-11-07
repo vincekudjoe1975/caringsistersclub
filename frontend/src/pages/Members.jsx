@@ -2,7 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
-import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText, Star, HandHeart, Camera, CalendarDays, Clock3, Smartphone } from 'lucide-react';
+import { Loader2, LogIn, Megaphone, MessagesSquare, Users, ScrollText, UserCircle, LogOut, Clock, ShieldCheck, Vote, Wallet, FileText, Star, HandHeart, Camera, CalendarDays, Clock3, Smartphone, HelpCircle } from 'lucide-react';
+import { MemberFaq } from '../components/members/MemberFaq';
 import { MemberApply } from '../components/members/MemberApply';
 import { Announcements } from '../components/members/Announcements';
 import { Discussion } from '../components/members/Discussion';
@@ -44,6 +45,7 @@ const TABS = [
   { k: 'photos', l: 'Photos', icon: Camera, C: PhotoAlbums },
   { k: 'minutes', l: 'Minutes', icon: FileText, C: Minutes },
   { k: 'bylaws', l: 'Bylaws', icon: ScrollText, C: Bylaws },
+  { k: 'faq', l: 'FAQ', icon: HelpCircle, C: MemberFaq },
   { k: 'week', l: 'This Week', icon: CalendarDays, C: ThisWeek },
   { k: 'hours', l: 'My Hours', icon: Clock3, C: MyHours },
   { k: 'me', l: 'My Profile', icon: UserCircle, C: MyProfile },

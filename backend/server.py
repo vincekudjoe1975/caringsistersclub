@@ -165,7 +165,7 @@ def _needs_staff_code(u: dict) -> bool:
 
 STAFF_LEVELS = {"full": "Full access", "content": "Content only", "members": "Members only", "money": "Money only"}
 _AREA_PREFIXES = {
-    "shared": ("auth", "submissions", "admin/submissions", "admin/security"),
+    "shared": ("auth", "submissions", "admin/submissions", "admin/security", "admin/team-questions", "admin/faq"),
     "members": ("admin/members", "admin/member-emails", "admin/volunteer-hours"),
     "money": ("admin/donations", "admin/donors", "admin/campaign", "admin/accounting", "admin/appeal-templates", "admin/appeals",
               "admin/scheduled-appeals", "admin/recurring", "admin/reports", "admin/impact-email", "admin/winbacks", "admin/year-in-review",
@@ -7116,6 +7116,14 @@ async def startup_owner_role_fix():
 
 
 @app.on_event("startup")
+async def startup_club_team_badges():
+    # One-time owner request (June 2026): every current staff member gets the Club team badge.
+    res = await db.scheduled_runs.update_one({"key": "migrate:club_team_badges_2026_06"}, {"$setOnInsert": {"ran_at": _now_iso()}}, upsert=True)
+    if res.upserted_id:
+        await db.users.update_many({"role": "admin", "email": {"$nin": list(_OWNER_DEMOTE_2026_06)}}, {"$set": {"club_team_badge": True}})
+
+
+@app.on_event("startup")
 async def startup_storage():
     try:
         init_storage()
@@ -13547,6 +13555,105 @@ async def members_team_reply(qid: str, payload: TeamReplyIn, request: Request, b
     if o and o.get("email"):
         background.add_task(_notify_team_q, other["user_id"], o["email"], _who(user), text, False, user.get("email"))
     return {"ok": True}
+
+
+# ---------- Open questions (staff) + member FAQ ----------
+def _is_owner(u: dict) -> bool:
+    return (u.get("email") or "").lower() in ADMIN_OWNER_EMAILS
+
+
+async def _q_all_staff() -> bool:
+    return bool((await db.settings.find_one({"key": "team_questions"}, {"_id": 0}) or {}).get("all_staff"))
+
+
+class AnsweredIn(BaseModel):
+    answered: bool
+
+
+class QSettingsIn(BaseModel):
+    all_staff: bool
+
+
+@api_router.get("/admin/team-questions/settings")
+async def admin_tq_settings(user=Depends(require_admin)):
+    return {"all_staff": await _q_all_staff(), "can_edit": _is_owner(user)}
+
+
+@api_router.put("/admin/team-questions/settings")
+async def admin_tq_settings_put(payload: QSettingsIn, user=Depends(require_admin)):
+    _require_owner(user)
+    await db.settings.update_one({"key": "team_questions"}, {"$set": {"key": "team_questions", "all_staff": payload.all_staff}}, upsert=True)
+    return {"all_staff": payload.all_staff}
+
+
+async def _tq_scope(user: dict) -> dict:
+    return {} if _is_owner(user) or await _q_all_staff() else {"to.user_id": user["user_id"]}
+
+
+@api_router.get("/admin/team-questions")
+async def admin_tq_list(user=Depends(require_admin)):
+    rows = await db.team_questions.find(await _tq_scope(user), {"_id": 0}).sort("updated_at", -1).to_list(300)
+    out = []
+    for q in rows:
+        p = _q_public(q)
+        p.update({"answered_at": q.get("answered_at"), "answered_by": (q.get("answered_by") or {}).get("name")})
+        out.append(p)
+    return out
+
+
+@api_router.post("/admin/team-questions/{qid}/answered")
+async def admin_tq_answered(qid: str, payload: AnsweredIn, user=Depends(require_admin)):
+    upd = {"$set": {"answered_at": _now_iso(), "answered_by": _who(user)}} if payload.answered else {"$unset": {"answered_at": "", "answered_by": ""}}
+    res = await db.team_questions.update_one({"id": qid, **await _tq_scope(user)}, upd)
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return {"answered": payload.answered}
+
+
+class FaqIn(BaseModel):
+    question: str
+    answer: str
+    published: bool = True
+    source_question_id: Optional[str] = None
+
+
+def _faq_clean(payload: FaqIn) -> dict:
+    q, a = payload.question.strip()[:300], payload.answer.strip()[:3000]
+    if len(q) < 3 or len(a) < 2:
+        raise HTTPException(status_code=400, detail="Please write both a question and an answer.")
+    return {"question": q, "answer": a, "published": payload.published}
+
+
+@api_router.get("/admin/faq")
+async def admin_faq_list(user=Depends(require_admin)):
+    return await db.faqs.find({}, {"_id": 0}).sort([("order", 1), ("created_at", 1)]).to_list(300)
+
+
+@api_router.post("/admin/faq")
+async def admin_faq_create(payload: FaqIn, user=Depends(require_admin)):
+    doc = {"id": uuid.uuid4().hex, **_faq_clean(payload), "source_question_id": payload.source_question_id, "order": await db.faqs.count_documents({}),
+           "created_at": _now_iso(), "created_by": _who(user)["name"]}
+    await db.faqs.insert_one(dict(doc))
+    return doc
+
+
+@api_router.put("/admin/faq/{fid}")
+async def admin_faq_update(fid: str, payload: FaqIn, user=Depends(require_admin)):
+    res = await db.faqs.update_one({"id": fid}, {"$set": {**_faq_clean(payload), "updated_at": _now_iso()}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="FAQ entry not found")
+    return {"ok": True}
+
+
+@api_router.delete("/admin/faq/{fid}")
+async def admin_faq_delete(fid: str, user=Depends(require_admin)):
+    await db.faqs.delete_one({"id": fid})
+    return {"ok": True}
+
+
+@api_router.get("/members/faq")
+async def members_faq(user=Depends(require_member)):
+    return await db.faqs.find({"published": True}, {"_id": 0, "id": 1, "question": 1, "answer": 1}).sort([("order", 1), ("created_at", 1)]).to_list(300)
 
 
 # ---------- Merge duplicate accounts ----------

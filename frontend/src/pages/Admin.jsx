@@ -26,7 +26,8 @@ import { InstallApp } from '../components/InstallApp';
 import { StaffCodeGate } from '../components/StaffCodeGate';
 import { StaffCodeToggle } from '../components/StaffCodeToggle';
 import { useToast } from '../hooks/use-toast';
-import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote, BarChart3, HeartHandshake } from 'lucide-react';
+import { LogOut, UploadCloud, Trash2, Loader2, Image as ImageIcon, Users, FileText, CalendarDays, ExternalLink, Home, Images, Inbox, DollarSign, ShieldCheck, Target, UserSearch, CalendarHeart, PieChart, Layers, LayoutTemplate, BookOpen, MessageSquareQuote, BarChart3, HeartHandshake, MessageCircleQuestion } from 'lucide-react';
+import { AdminQuestions } from '../components/admin/FaqManager';
 
 const VIEWS = [
   { k: 'overview', a: 'all', l: 'Overview', icon: ShieldCheck },
@@ -34,6 +35,7 @@ const VIEWS = [
   { k: 'leadership', a: 'content', l: 'Leadership', icon: Users },
   { k: 'media', a: 'content', l: 'Media Library', icon: Images },
   { k: 'inbox', a: 'all', l: 'Form Submissions', icon: Inbox },
+  { k: 'questions', a: 'all', l: 'Questions & FAQ', icon: MessageCircleQuestion },
   { k: 'home', a: 'content', l: 'Home Page', icon: LayoutTemplate },
   { k: 'about', a: 'content', l: 'About Page', icon: BookOpen },
   { k: 'stories', a: 'content', l: 'Stories & Updates', icon: MessageSquareQuote },
@@ -183,6 +185,8 @@ export default function Admin() {
           <AdminLeadership />
         ) : cur === 'sessions' ? (
           <AdminSessions />
+        ) : cur === 'questions' ? (
+          <AdminQuestions toast={toast} />
         ) : cur === 'inbox' ? (
           <AdminSubmissions />
         ) : cur === 'reports' ? (
