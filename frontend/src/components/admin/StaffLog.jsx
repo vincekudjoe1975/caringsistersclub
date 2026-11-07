@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { History, Undo2, Loader2 } from 'lucide-react';
 import { LEVELS } from './TeamList';
+import { fmtDay } from './StaffExtras';
 
 const WHAT = {
   granted: (e) => `gave ${e.target.name} ${LEVELS[e.level] || 'Admin access'}`,
@@ -9,7 +10,7 @@ const WHAT = {
   removed: (e) => `removed Admin access from ${e.target.name}`,
   to_member: (e) => `changed ${e.target.name} to a member`,
   level: (e) => `changed ${e.target.name} to ${LEVELS[e.level] || e.level}`,
-  expiry: (e) => (e.expires_on ? `set ${e.target.name}'s staff access to end ${e.expires_on}` : `removed the end date for ${e.target.name}`),
+  expiry: (e) => (e.expires_on ? `set ${e.target.name}'s staff access to end ${fmtDay(e.expires_on)}` : `removed the end date for ${e.target.name}`),
   expired: (e) => `ended ${e.target.name}'s temporary staff access (now a member)`,
   undo: (e) => `undid "${(WHAT[e.undid?.action] || (() => 'a change'))({ ...e, level: e.undid?.level })}"`,
 };

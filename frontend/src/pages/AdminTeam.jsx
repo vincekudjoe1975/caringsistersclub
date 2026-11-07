@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { fmtDay } from '../components/admin/StaffExtras';
 import { useToast } from '../hooks/use-toast';
 import { Loader2, UserPlus, Mail, X } from 'lucide-react';
 import { TeamList } from '../components/admin/TeamList';
@@ -63,7 +64,7 @@ export default function AdminTeam({ currentUserId }) {
   };
 
   const expiry = async (u, date) => {
-    try { await api.post(`/admin/team/${u.user_id}/expiry`, { date }); toast({ title: date ? 'End date set' : 'End date removed', description: date ? `${u.name || u.email} switches to member on ${date}. She and the owners get a reminder 3 days before.` : `${u.name || u.email} keeps staff access with no end date.` }); load(); }
+    try { await api.post(`/admin/team/${u.user_id}/expiry`, { date }); toast({ title: date ? 'End date set' : 'End date removed', description: date ? `${u.name || u.email} switches to member on ${fmtDay(date)}. She and the owners get a reminder 3 days before.` : `${u.name || u.email} keeps staff access with no end date.` }); load(); }
     catch (err) { toast({ title: 'Could not update', description: err?.response?.data?.detail || 'Try again', variant: 'destructive' }); }
   };
   const badge = async (u, on) => {

@@ -1,0 +1,43 @@
+{
+  "summary": "Tested Staff Sign-In Activity, Access Expiry Date and Club team badge (backend + UI) with an owner session (qa_owner_tok) and a non-owner full admin (qa_tok_123), using temp qa62_* staff users. 12/13 backend tests passed; the 1 failure is a minor date-format issue. All the UI flows tested work: activity text, 'Not used lately' (never opened and 45 days), expiry tag, owner controls, toasts, staff log rows, badge toggle, the text toggle on owner rows, no controls for non-owners, Directory 'Club team' pill, and the regressions (level change + undo, change to member, preview bar, summary card). The cron returns 401 with no secret or a wrong one. I did not call it with the real secret.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/team/{uid}/expiry", "issue": "The raw input string is stored. Python 3.11 date.fromisoformat accepts '20261126', so staff_expires_on is saved as '20261126' instead of '2026-11-26'. That breaks the frontend fmt() display and the string-based checks. Fix: store day.isoformat()."},
+      {"endpoint": "POST /api/admin/team/{uid}/role (pending) and /make-member", "issue": "Removing staff or changing her to a member leaves staff_expires_on (and staff_expiry_warned) on the user doc. I confirmed this in the DB. If she is made staff again later, the old end date comes back silently. If that date has passed, the next daily cron ends her new access right away and emails everyone. Fix: $unset staff_expires_on/staff_expiry_warned when the role leaves admin (and possibly reset club_team_badge)."},
+      {"endpoint": "require_admin (admin_last_seen_at)", "issue": "The last-seen update is skipped whenever any X-Preview-Level header is sent. require_admin only honors that header for owners, but anyone can send it (for example 'full'), so non-owner staff could hide their Admin activity. Fix: skip the update only when the preview is actually honored (owner + valid non-full level)."},
+      {"endpoint": "_ACTION_WORDS['expiry'] (weekly summary email)", "issue": "Clearing an end date is described as 'set an end date for X's staff access' in the Monday email. StaffLog.jsx gets this right ('removed the end date'), but the email does not."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Team Access owner controls", "issues": [
+        "The end date uses the browser's native <input type=date> (mm/dd/yyyy) instead of the shadcn Calendar/Popover used elsewhere. onChange fires as soon as the value is a valid date, so typing a date with the keyboard can send intermediate dates.",
+        "The 'End date set' toast and the staff log row show the raw ISO date ('2026-11-19'). The row tag shows 'Nov 19, 2026'. Use the same friendly format everywhere.",
+        "tomorrow() for the date min uses the browser's local date, but the server checks against America/New_York. Users outside ET can see a min that differs by one day from what the server accepts."
+      ]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter62_activity_expiry_badge.py", "/app/backend/tests/qa_iter62_setup.py", "/app/test_reports/pytest/iter62.xml"],
+  "action_items": [
+    "Store the normalized date (day.isoformat()) in /admin/team/{uid}/expiry",
+    "Unset staff_expires_on and staff_expiry_warned when staff loses the admin role (role->pending, make-member)",
+    "Only skip the admin_last_seen_at update when the owner preview is actually honored",
+    "Use different _ACTION_WORDS wording for clearing an end date",
+    "Optional: replace the native date input with the shadcn Calendar and show friendly dates in the toast and log"
+  ],
+  "critical_code_review_comments": [
+    "server.py is 13.5k lines. The new team/expiry code should move into its own module (routes/team.py).",
+    "_process_staff_expiry calls _date.fromisoformat on stored values with no try/except. One bad stored value (like the compact-format case) would stop processing for every staff member after it.",
+    "If expiry ends access for a user whose member_status is 'applied', 'declined' or 'suspended', her status is kept, so she does not get the member portal. The email still says she 'keeps the member portal'."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter62_activity_expiry_badge.py", "/app/backend/tests/qa_iter62_setup.py"],
+  "success_rate": {"backend": "92% (12/13)", "frontend": "100% of tested flows"},
+  "seed_data_creation": "Temp users qa62_staff_a/b/c (example.com), owner session qa_owner_tok and qa_user (qa_session.py) were all removed. 12 staff_log rows for qa62 targets were deleted. The owner's admin_last_seen_at was restored to its original value.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: python3 tests/qa_session.py up && python3 tests/qa_iter62_setup.py up, then pytest tests/test_iter62_activity_expiry_badge.py, then run both helpers with 'down'. The owner API requests send X-Preview-Level: full so the owner's last-seen is not bumped. In /members the WelcomeBack overlay must be dismissed (welcome-back-go-btn) before clicking portal-tab-people. Users who become active members disappear from the Team list, which is expected. Server date is Nov 2026. Never call /api/cron/staff-expiry with the real secret.",
+  "test_credentials": "From /app/memory/test_credentials.md: qa_tok_123 (non-owner full admin) plus a temporary owner session for vincekudjoe@gmail.com."
+}

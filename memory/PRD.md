@@ -571,3 +571,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Owner preview: "Preview Admin as Content/Members/Money" bar (owners only). sessionStorage csc_admin_preview -> headers X-Preview-Level/X-Preview-Mode; backend honours only for ADMIN_OWNER_EMAILS. Look only (default) blocks all writes; Fully working allowed within that level.
 - Monday summary: .emergent/crons.yml `staff-summary` 0 9 * * 1 America/New_York -> POST /api/cron/staff-summary (Bearer WEBHOOK_CRON_SECRET, dedupe via scheduled_runs). Toggle "Also send on quiet weeks" (default on) + "Send this week's summary now". Recipients = ADMIN_OWNER_EMAILS.
 - Tested iteration_61 backend 13/13, frontend 100%; follow-ups fixed. NOT deployed yet. Live role fixes (Evelyn, fem, VandJ) must be done by owner in production Team Access.
+
+## 2026-06 — Staff activity, temporary access, Club team badge (iteration 62)
+- users.admin_last_seen_at updated in require_admin (max hourly, not during honoured owner preview). Team Access shows "Opened Admin N days ago" + "Not used lately" (never or >30 days). Tracking starts from this release.
+- Owners-only: end date per staff (POST /api/admin/team/{uid}/expiry, shadcn calendar, ET dates) and Club team badge toggle (POST /api/admin/team/{uid}/badge). Badge shows on member directory cards (club_team).
+- Daily cron staff-expiry 8am ET (/api/cron/staff-expiry): email her + owners 3 days before; on the date switch to member, log "expired". Leaving staff clears end date + badge.
+- Tested iteration_62 (backend 12/13 -> all fixes applied, frontend pass).

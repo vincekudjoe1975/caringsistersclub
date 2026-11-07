@@ -197,7 +197,8 @@ async def require_admin(request: Request):
         raise HTTPException(status_code=403, detail="Admin access required")
     lvl = _staff_level(user)
     pv = request.headers.get("x-preview-level")
-    if pv and (user.get("email") or "").lower() in ADMIN_OWNER_EMAILS and pv in STAFF_LEVELS and pv != "full":
+    pv = pv if pv and (user.get("email") or "").lower() in ADMIN_OWNER_EMAILS and pv in STAFF_LEVELS and pv != "full" else None
+    if pv:
         lvl = pv
         if request.headers.get("x-preview-mode") != "working" and request.method != "GET":
             raise HTTPException(status_code=403, detail="You're previewing in look-only mode, so nothing was saved.")
@@ -6807,7 +6808,7 @@ async def admin_team_role(user_id: str, payload: RoleUpdate, background: Backgro
     if (t.get("email") or "").lower() in ADMIN_OWNER_EMAILS and payload.role != "admin":
         raise HTTPException(status_code=400, detail="This is an owner account and always keeps Admin access.")
     if payload.role != "admin":
-        await db.users.update_one({"user_id": user_id}, {"$set": {"role": "pending", "require_login_code": False}})
+        await db.users.update_one({"user_id": user_id}, {"$set": {"role": "pending", "require_login_code": False}, "$unset": {"staff_expires_on": "", "staff_expiry_warned": "", "club_team_badge": ""}})
         await db.allowed_emails.delete_one({"email": (t.get("email") or "").lower()})
         await _staff_log(user, "removed", t)
         return {"message": "Role updated"}
@@ -6840,12 +6841,13 @@ async def admin_team_level(user_id: str, payload: LevelUpdate, user=Depends(requ
 
 _ACTION_WORDS = {"granted": "gave {t} {lv}", "preapproved": "pre-approved {e} for Admin", "preapproval_removed": "removed the pre-approval for {e}",
                  "removed": "removed Admin access from {t}", "to_member": "changed {t} to a member", "level": "changed {t} to {lv}", "undo": "undid a change for {t}",
-                 "expiry": "set an end date for {t}'s staff access", "expired": "ended {t}'s temporary staff access"}
+                 "expiry": "set an end date for {t}'s staff access", "expiry_clear": "removed the end date for {t}'s staff access", "expired": "ended {t}'s temporary staff access"}
 
 
 def _log_line(e: dict) -> str:
     when = datetime.fromisoformat(e["at"]).astimezone(EVENT_TZ).strftime("%a %b %-d, %-I:%M %p")
-    what = _ACTION_WORDS.get(e["action"], e["action"]).format(t=e["target"]["name"], e=e["target"]["email"], lv=STAFF_LEVELS.get(e.get("level"), "Admin access"))
+    key = "expiry_clear" if e["action"] == "expiry" and not e.get("expires_on") else e["action"]
+    what = _ACTION_WORDS.get(key, e["action"]).format(t=e["target"]["name"], e=e["target"]["email"], lv=STAFF_LEVELS.get(e.get("level"), "Admin access"))
     return f"{when}: {e['by']['name']} {what}"
 
 
@@ -6940,6 +6942,7 @@ async def admin_team_expiry(user_id: str, payload: ExpiryIn, user=Depends(requir
             raise HTTPException(status_code=400, detail="Please pick a valid date.")
         if day <= _today_et():
             raise HTTPException(status_code=400, detail="Please pick a date after today.")
+        d = day.isoformat()
         await db.users.update_one({"user_id": user_id}, {"$set": {"staff_expires_on": d}, "$unset": {"staff_expiry_warned": ""}})
     else:
         await db.users.update_one({"user_id": user_id}, {"$unset": {"staff_expires_on": "", "staff_expiry_warned": ""}})
@@ -6978,7 +6981,7 @@ async def _process_staff_expiry() -> dict:
             if t.get("member_status") not in ("active", "applied", "declined", "suspended", "ended"):
                 update.update({"member_status": "active", "member_since": t.get("member_since") or _now_iso()})
             res = await db.users.update_one({"user_id": t["user_id"], "role": "admin", "staff_expires_on": t["staff_expires_on"]},
-                                            {"$set": update, "$unset": {"staff_expires_on": "", "staff_expiry_warned": ""}})
+                                            {"$set": update, "$unset": {"staff_expires_on": "", "staff_expiry_warned": "", "club_team_badge": ""}})
             if not res.modified_count:
                 continue
             await db.allowed_emails.delete_one({"email": (t.get("email") or "").lower()})
@@ -7075,7 +7078,7 @@ async def admin_team_make_member(user_id: str, user=Depends(require_admin)):
     update = {"role": "pending", "require_login_code": False}
     if t.get("member_status") not in ("active", "applied", "declined", "suspended", "ended"):
         update.update({"member_status": "active", "member_since": t.get("member_since") or _now_iso()})
-    await db.users.update_one({"user_id": user_id}, {"$set": update})
+    await db.users.update_one({"user_id": user_id}, {"$set": update, "$unset": {"staff_expires_on": "", "staff_expiry_warned": "", "club_team_badge": ""}})
     await db.allowed_emails.delete_one({"email": email})
     await _staff_log(user, "to_member", t)
     return {"message": "Changed to member", "member_status": update.get("member_status", t.get("member_status"))}
