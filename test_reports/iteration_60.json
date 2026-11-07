@@ -1,0 +1,42 @@
+{
+  "summary": "Tested Staff Permission Levels, the Staff change log, the New Staff Alert and the Team Access split, on both backend and frontend. Backend: 20 of 20 pytest tests pass. They cover /auth/me staff_level and is_owner, path enforcement for the content, members and money levels, shared paths for every level, team/log being full-only, own-level changes (403 for limited staff, 400 for a full admin changing herself), invalid level 400, owner level 400, level change with a log row and no duplicate row when the level is the same, level on a non-admin 404, grant with a level then make-member (log rows granted and to_member), and the log being newest first with no _id. Frontend: Team Access shows the staff list with Owner/Admin tags. Owners and self get a text label. Other staff get a level select that opens a confirm dialog; Cancel keeps the old value and OK saves with an 'Access updated' toast. 'Make staff' opens a dialog with the level select (default Content) and help text that changes with the level; the grant saved as Money only. 'Change to member' works. Removing a pre-approval with the X logs 'removed the pre-approval'. All log phrases show newest first. Limited staff see only their allowed tabs, the level note and the StaffCodeToggle card. Team Access is hidden. A saved csc_admin_view='team' falls back to Overview. Members sub-tabs give no 403s. Two areas are broken: the Programs tab for content staff and the Reports tab for money staff. Both call endpoints from other areas, get 403s, and show empty panels with no message. Alert email: 4 sends were attempted (owners 202; qa@example.com 422 as expected; admin@caringsistersclub.org 422). There were no exceptions. I used exactly 2 grants and no live pre-approve. All QA data was cleaned up.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/admin/settings", "issue": "'admin/settings' is in both the content and money areas. So Content-only and Money-only staff can change site_url, staff_notify_email, org_ein, lapsed auto-email and thank-you settings. staff_notify_email could be pointed at another inbox to capture staff notices. Suggest making /admin/settings full-only, or allowing only the campaign/thank-you fields for money staff."},
+      {"endpoint": "POST /api/admin/team/allow", "issue": "(1) It sets role=admin on an existing user but never resets staff_level. make-member and role=pending don't clear staff_level either, so a former Content staff who is pre-approved again comes back as Content, while the log and alert say Full access. (2) It logs and sends the alert every time, even when the email is already allowed or the user is already admin, which means duplicate real emails to the owners. (3) users.update_one({'email': email}) is case-sensitive, so it misses mixed-case stored emails."},
+      {"endpoint": "POST /api/admin/team/{user_id}/role", "issue": "role=admin on a user who is already admin with a different level changes staff_level without a staff_log row. role=pending writes staff_level='full' (the default) and keeps require_login_code, unlike make-member."},
+      {"endpoint": "_alert_new_staff", "issue": "The owner address admin@caringsistersclub.org (ADMIN_OWNER_EMAILS) gets 422 from the email provider on every alert. Either the address or domain is not valid, or the provider rejects it. send_email swallows the error."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminReports (money level)", "issue": "The Reports tab for Money-only staff calls GET /admin/programs, /admin/feedback-alert-settings and /admin/volunteer-hours, which all return 403. The HoursReview, ProgramForecast/ForecastHistory and SessionFeedback alert panels quietly show empty or 'none yet' states, which is misleading. Fix: hide program/hours panels for money staff, or add these read endpoints to the money area.", "selector": "[data-testid=admin-view-reports]", "priority": "MEDIUM"},
+      {"component": "AdminPrograms (content level)", "issue": "useSignupReport calls GET /admin/reports/program-signups (money area), which returns 403 twice. The program sign-up trend shows as empty for Content-only staff. Fix: add 'admin/reports/program-signups' to the content prefixes, or hide the trend.", "selector": "[data-testid=admin-view-programs]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Team Access", "issues": ["The Pre-approve input, the Approve Email button and the Approved Emails remove (X) buttons have no data-testid.", "The staff change log has no limit on height and no 'show more'. Up to 200 rows will make the page very long."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter60_staff_levels_log.py", "/app/backend/tests/_qa60_sessions.py", "/app/test_reports/pytest/iter60.xml"],
+  "action_items": [
+    "Make PUT/GET /api/admin/settings full-only (or split it by field). Content and money staff can currently change site_url and staff_notify_email.",
+    "Fix the cross-area 403s: money Reports tab (admin/programs, admin/feedback-alert-settings, admin/volunteer-hours) and content Programs tab (admin/reports/program-signups).",
+    "In /admin/team/allow: set staff_level='full' (or unset it), skip the log and alert when the email is already allowed or the user is already admin, and match email case-insensitively.",
+    "Log level changes made through the role endpoint. Clear staff_level and require_login_code on role=pending.",
+    "Check that admin@caringsistersclub.org can receive email (it gets 422 on every alert).",
+    "Add data-testids to the Pre-approve form and the Approved Emails remove buttons."
+  ],
+  "critical_code_review_comments": [
+    "The _AREA_PREFIXES check uses whole path segments (p == x or p.startswith(x + '/')), so it can't be bypassed with prefix tricks. Team endpoints are not in any area, so they are full-only. This is correct.",
+    "send_email still swallows errors (already noted in iteration 59), so failed alerts are invisible to the person granting access."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter60_staff_levels_log.py", "/app/backend/tests/_qa60_sessions.py"],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "~90% (all requested flows work; 2 tabs have 403-backed empty panels for limited levels)"},
+  "test_credentials": "Full admin: qa_session.py up (qa_tok_123). Limited staff: _qa60_sessions.py up creates TEST_qa60_{content,members,money} with tokens TEST_qa60_tok_{level}, plus target users. Run qa_session.py up first.",
+  "seed_data_creation": "Temp TEST_qa60_* users and sessions, one allowed_emails row and one fake 'preapproved' staff_log row (no alert sent). All removed with _qa60_sessions.py down and qa_session.py down. staff_log is now empty and staff_notify_email is restored to caringsistersclub@gmail.com. Real users were not changed. Note: qa_user/qa_tok_123 already existed before this run and has now been removed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Each grant (role endpoint to admin, or /team/allow) sends REAL emails to the owner inboxes. Keep grants to 2 or fewer. Run pytest with -n 0 (the log tests are order-dependent). Run 'qa_session.py up' before '_qa60_sessions.py up', and both 'down' afterwards. Retest: content Programs tab and money Reports tab with no 403s; PUT /admin/settings returns 403 for content and money staff after the fix."
+}

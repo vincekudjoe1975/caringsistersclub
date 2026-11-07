@@ -170,6 +170,8 @@ _AREA_PREFIXES = {
     "money": ("admin/donations", "admin/donors", "admin/campaign", "admin/accounting", "admin/appeal-templates", "admin/appeals",
               "admin/scheduled-appeals", "admin/recurring", "admin/reports", "admin/impact-email", "admin/winbacks", "admin/year-in-review",
               "admin/transparency", "admin/promo-codes", "admin/auction", "admin/email", "admin/settings", "admin/badge-wall", "media"),
+    "read_money": ("admin/programs", "admin/feedback-alert-settings", "admin/volunteer-hours"),
+    "read_content": ("admin/reports/program-signups",),
     "content": ("media", "admin/about-content", "admin/home-content", "admin/gallery", "admin/gallery-albums", "admin/leaders", "admin/programs",
                 "admin/program-categories", "admin/sessions", "admin/stories", "admin/events", "admin/badge-wall", "admin/feedback",
                 "admin/feedback-alert-settings", "admin/waitlist", "admin/signups", "admin/impact-email", "admin/settings"),
@@ -194,7 +196,8 @@ async def require_admin(request: Request):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     lvl = _staff_level(user)
-    if lvl != "full" and not _path_areas(request.url.path) & {"shared", lvl}:
+    ok = {"shared", lvl} | ({f"read_{lvl}"} if request.method == "GET" else set())
+    if lvl != "full" and not _path_areas(request.url.path) & ok:
         raise HTTPException(status_code=403, detail=f"Your staff access is {STAFF_LEVELS[lvl]}. Ask an owner if you need more.")
     return user
 
@@ -1494,6 +1497,10 @@ async def admin_get_settings(user=Depends(require_admin)):
 
 @api_router.put("/admin/settings")
 async def update_settings(payload: SettingsUpdate, user=Depends(require_admin)):
+    if _staff_level(user) != "full":
+        payload.site_url = payload.staff_notify_email = None
+        if _staff_level(user) != "content":
+            payload.story_requests_enabled = None
     update = {}
     if payload.campaign_title is not None:
         update["campaign_title"] = payload.campaign_title.strip()
@@ -6731,11 +6738,16 @@ async def admin_team_allow(payload: AllowEmail, background: BackgroundTasks, use
     email = payload.email.strip().lower()
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Invalid email")
-    await db.allowed_emails.update_one({"email": email}, {"$set": {"email": email}}, upsert=True)
-    await db.users.update_one({"email": email}, {"$set": {"role": "admin"}})
-    target = {"email": email, "name": email.split("@")[0]}
-    await _staff_log(user, "preapproved", target, "full")
-    background.add_task(_alert_new_staff, user, target, "full")
+    res = await db.allowed_emails.update_one({"email": email}, {"$set": {"email": email}}, upsert=True)
+    existing = await db.users.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0})
+    if existing and existing.get("role") == "admin":
+        return {"message": "Already staff"}
+    if existing:
+        await db.users.update_one({"user_id": existing["user_id"]}, {"$set": {"role": "admin", "staff_level": "full"}})
+    if existing or res.upserted_id:
+        target = existing or {"email": email, "name": email.split("@")[0]}
+        await _staff_log(user, "granted" if existing else "preapproved", target, "full")
+        background.add_task(_alert_new_staff, user, target, "full")
     return {"message": "Email approved"}
 
 
@@ -6750,11 +6762,16 @@ async def admin_team_role(user_id: str, payload: RoleUpdate, background: Backgro
         raise HTTPException(status_code=404, detail="Account not found")
     if (t.get("email") or "").lower() in ADMIN_OWNER_EMAILS and payload.role != "admin":
         raise HTTPException(status_code=400, detail="This is an owner account and always keeps Admin access.")
-    await db.users.update_one({"user_id": user_id}, {"$set": {"role": payload.role, "staff_level": payload.level}})
     if payload.role != "admin":
+        await db.users.update_one({"user_id": user_id}, {"$set": {"role": "pending", "require_login_code": False}})
         await db.allowed_emails.delete_one({"email": (t.get("email") or "").lower()})
         await _staff_log(user, "removed", t)
-    elif t.get("role") != "admin":
+        return {"message": "Role updated"}
+    await db.users.update_one({"user_id": user_id}, {"$set": {"role": "admin", "staff_level": payload.level}})
+    if t.get("role") == "admin":
+        if _staff_level(t) != payload.level:
+            await _staff_log(user, "level", t, payload.level)
+    else:
         await _staff_log(user, "granted", t, payload.level)
         background.add_task(_alert_new_staff, user, t, payload.level)
     return {"message": "Role updated"}

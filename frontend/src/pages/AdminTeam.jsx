@@ -84,9 +84,9 @@ export default function AdminTeam({ currentUserId }) {
         <form onSubmit={allow} className="bg-white rounded-2xl p-6 border border-[#3B0A2E]/8">
           <h3 className="font-serif text-[18px] text-[#3B0A2E] font-semibold mb-2 flex items-center gap-2"><UserPlus size={18} className="text-[#B4247E]" /> Pre-approve an email</h3>
           <p className="text-[12.5px] text-[#241019]/60 mb-4">They'll get admin access the first time they sign in with Google, or after setting a password with "Forgot Password?" on the staff login.</p>
-          <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="name@example.com"
+          <input data-testid="team-preapprove-input" type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="name@example.com"
             className="w-full rounded-lg border border-[#3B0A2E]/15 px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#B4247E] mb-3" />
-          <button type="submit" className="btn-magenta rounded-full w-full py-2.5 font-semibold text-[14px]">Approve Email</button>
+          <button data-testid="team-preapprove-btn" type="submit" className="btn-magenta rounded-full w-full py-2.5 font-semibold text-[14px]">Approve Email</button>
         </form>
 
         {allowed.length > 0 && (
@@ -96,7 +96,7 @@ export default function AdminTeam({ currentUserId }) {
               {allowed.map((em) => (
                 <li key={em} className="flex items-center justify-between text-[13px] text-[#3B0A2E]">
                   <span className="flex items-center gap-2 truncate"><Mail size={14} className="text-[#241019]/40 shrink-0" /> {em}</span>
-                  <button onClick={() => removeAllowed(em)} className="text-[#241019]/40 hover:text-red-500 p-1"><X size={15} /></button>
+                  <button data-testid={`team-preapproved-remove-${em}`} aria-label={`Remove ${em}`} onClick={() => removeAllowed(em)} className="text-[#241019]/40 hover:text-red-500 p-1"><X size={15} /></button>
                 </li>
               ))}
             </ul>

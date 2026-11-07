@@ -558,3 +558,10 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Team Access now shows "Staff with Admin access" (Owner/Admin tags) and "Member accounts" (signed up, not applied; "Member · portal only").
 - "Change to member" (confirm dialog) -> POST /api/admin/team/{uid}/make-member: role pending, member_status active if none, removed from pre-approved emails, owners/self blocked. "Make staff" also needs confirmation (old one-click shield likely caused accidental admin grants).
 - Self-tested via API + screenshots. Not deployed; owner must change Evelyn Davies, fem mansaray, VandJ on live site after deploy.
+
+## 2026-06 — Staff permission levels, change log, new-staff alert (iteration 60)
+- users.staff_level: full|content|members|money (missing = full; owners always full). Enforced in require_admin by API path area (_AREA_PREFIXES; shared: auth, submissions, admin/security; GET-only cross reads read_money/read_content). Team Access + unmapped admin routes = full only. Non-full staff can't change site_url/staff_notify_email in settings.
+- Admin.jsx shows only tabs for the level; level note + email-code toggle for limited staff.
+- Team Access: level menu per staff, "Make staff" asks level, Staff change log (db.staff_log; GET /api/admin/team/log), show 10 / show all.
+- New-staff alert email to owners + all Full staff on grant / pre-approve (deduped). admin@caringsistersclub.org (owner env) returns 422 from email provider.
+- Tested: iteration_60 backend 20/20; follow-ups fixed and self-verified.
