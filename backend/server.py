@@ -7123,6 +7123,27 @@ async def startup_club_team_badges():
         await db.users.update_many({"role": "admin", "email": {"$nin": list(_OWNER_DEMOTE_2026_06)}}, {"$set": {"club_team_badge": True}})
 
 
+_FAQ_STARTERS = [
+    ("How do I pay my dues?", "Open the My Dues tab in the member portal. It shows what you owe for the year and lets you pay online by card, and your receipt is emailed to you. If something looks wrong, tap \"Ask\" on a Club team member in the Directory."),
+    ("Where can I see upcoming gatherings?", "The This Week tab lists gatherings, birthdays and votes coming up. Tap a gathering to RSVP, get directions, or find a carpool with other sisters."),
+    ("How do I log my volunteer hours?", "Open the My Hours tab and add the date, what you did and how many hours. The Club team reviews each entry, and approved hours count toward your volunteer milestones."),
+    ("How do I get phone alerts?", "Add the Club app to your home screen (see the Get the App page), then open My Profile and turn on alerts. You'll hear about new announcements, gatherings and votes right away."),
+    ("Who can I ask if I have a question?", "Anyone with the Club team badge in the Directory. Tap \"Ask\" on her card and she'll get your question by email; her answer shows up in My Profile under Questions."),
+]
+
+
+@app.on_event("startup")
+async def startup_faq_starters():
+    res = await db.scheduled_runs.update_one({"key": "migrate:faq_starters_2026_06"}, {"$setOnInsert": {"ran_at": _now_iso()}}, upsert=True)
+    if not res.upserted_id:
+        return
+    base = await db.faqs.count_documents({})
+    for i, (q, a) in enumerate(_FAQ_STARTERS):
+        if not await db.faqs.find_one({"question": q}):
+            await db.faqs.insert_one({"id": uuid.uuid4().hex, "question": q, "answer": a, "published": True, "starter": True,
+                                      "order": base + i, "created_at": _now_iso(), "created_by": "Starter entry"})
+
+
 @app.on_event("startup")
 async def startup_storage():
     try:
@@ -13627,7 +13648,10 @@ def _faq_clean(payload: FaqIn) -> dict:
 
 @api_router.get("/admin/faq")
 async def admin_faq_list(user=Depends(require_admin)):
-    return await db.faqs.find({}, {"_id": 0}).sort([("order", 1), ("created_at", 1)]).to_list(300)
+    rows = await db.faqs.find({}, {"_id": 0}).sort([("order", 1), ("created_at", 1)]).to_list(300)
+    for r in rows:
+        r["helpful_count"] = len(r.pop("helpful_by", None) or [])
+    return rows
 
 
 @api_router.post("/admin/faq")
@@ -13640,7 +13664,7 @@ async def admin_faq_create(payload: FaqIn, user=Depends(require_admin)):
 
 @api_router.put("/admin/faq/{fid}")
 async def admin_faq_update(fid: str, payload: FaqIn, user=Depends(require_admin)):
-    res = await db.faqs.update_one({"id": fid}, {"$set": {**_faq_clean(payload), "updated_at": _now_iso()}})
+    res = await db.faqs.update_one({"id": fid}, {"$set": {**_faq_clean(payload), "updated_at": _now_iso(), "starter": False}})
     if not res.matched_count:
         raise HTTPException(status_code=404, detail="FAQ entry not found")
     return {"ok": True}
@@ -13654,7 +13678,59 @@ async def admin_faq_delete(fid: str, user=Depends(require_admin)):
 
 @api_router.get("/members/faq")
 async def members_faq(user=Depends(require_member)):
-    return await db.faqs.find({"published": True}, {"_id": 0, "id": 1, "question": 1, "answer": 1}).sort([("order", 1), ("created_at", 1)]).to_list(300)
+    rows = await db.faqs.find({"published": True}, {"_id": 0, "id": 1, "question": 1, "answer": 1, "helpful_by": 1}).sort([("order", 1), ("created_at", 1)]).to_list(300)
+    for r in rows:
+        r["helped"] = user["user_id"] in (r.pop("helpful_by", None) or [])
+    return rows
+
+
+class HelpfulIn(BaseModel):
+    helped: bool
+
+
+@api_router.post("/members/faq/{fid}/helpful")
+async def members_faq_helpful(fid: str, payload: HelpfulIn, user=Depends(require_member)):
+    op = {"$addToSet": {"helpful_by": user["user_id"]}} if payload.helped else {"$pull": {"helpful_by": user["user_id"]}}
+    res = await db.faqs.update_one({"id": fid, "published": True}, op)
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="FAQ entry not found")
+    return {"helped": payload.helped}
+
+
+async def _send_open_question_nudges() -> dict:
+    open_qs = await db.team_questions.find({"answered_at": {"$exists": False}}, {"_id": 0}).sort("created_at", 1).to_list(1000)
+    by_staff = {}
+    for q in open_qs:
+        by_staff.setdefault(q["to"]["user_id"], []).append(q)
+    sent = 0
+    for uid, qs in by_staff.items():
+        st = await db.users.find_one({"user_id": uid, "role": "admin"}, {"_id": 0, "email": 1, "name": 1})
+        if not st or not st.get("email"):
+            continue
+        lines = "\n".join(f"• {q['from']['name']} ({datetime.fromisoformat(q['created_at']).astimezone(EVENT_TZ).strftime('%b %-d')}): {q['text'][:140]}" for q in qs)
+        n = len(qs)
+        body = f"You have {n} question{'s' if n != 1 else ''} from sisters still waiting for an answer:\n\n{lines}\n\nReply in the member portal, or mark them answered in Admin → Questions & FAQ."
+        if await send_email(to=st["email"], subject=f"{n} sister question{'s' if n != 1 else ''} waiting for you",
+                            html=_member_email_html("Open questions", f"Hello {_first(st)},", body, "Open Questions & FAQ", "/admin?view=questions")):
+            sent += 1
+    return {"staff": len(by_staff), "sent": sent}
+
+
+@api_router.post("/cron/open-questions")
+async def cron_open_questions(request: Request, background: BackgroundTasks, authorization: str = Header(default="")):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not _cron_ok(authorization):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        env = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid body")
+    run_id = request.headers.get("x-webhook-id") or (env or {}).get("run_id") or _today_et().isoformat()
+    res = await db.scheduled_runs.update_one({"key": f"open_questions:{run_id}"}, {"$setOnInsert": {"ran_at": _now_iso()}}, upsert=True)
+    if not res.upserted_id:
+        return {"ok": True, "duplicate": True}
+    background.add_task(_send_open_question_nudges)
+    return {"ok": True}
 
 
 # ---------- Merge duplicate accounts ----------

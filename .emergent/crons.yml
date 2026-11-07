@@ -15,3 +15,11 @@ crons:
     method: POST
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
+  - name: open-questions
+    description: "Monday 9am Eastern: emails each staff member her unanswered sister questions"
+    cron: "0 9 * * 1"
+    timezone: "America/New_York"
+    endpoint: "{{BASE_URL}}/api/cron/open-questions"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

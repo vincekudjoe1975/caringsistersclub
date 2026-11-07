@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { Switch } from '../ui/switch';
-import { Plus, Pencil, Trash2, Save, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, Save, X, ThumbsUp } from 'lucide-react';
 import { OpenQuestions } from './OpenQuestions';
 
 const inputCls = 'w-full rounded-lg border border-[#3B0A2E]/15 px-3 py-2 text-[13.5px] focus:outline-none focus:border-[#B4247E]';
@@ -48,8 +48,9 @@ export function FaqManager({ toast, draft, clearDraft }) {
         {rows.length ? rows.map((r) => (
           <li key={r.id} data-testid={`faq-row-${r.id}`} className="p-4 flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[14px] font-semibold text-[#3B0A2E]">{r.question} {!r.published && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#f0ece4] text-[#8a6d2f] ml-1">Hidden</span>}</p>
+              <p className="text-[14px] font-semibold text-[#3B0A2E]">{r.question} {!r.published && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#f0ece4] text-[#8a6d2f] ml-1">Hidden</span>}{r.starter && <span data-testid={`faq-starter-${r.id}`} className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#FFF4DD] text-[#8a6d2f] ml-1">Starter entry · check the wording</span>}</p>
               <p className="text-[13px] text-[#241019]/65 line-clamp-2">{r.answer}</p>
+              <p data-testid={`faq-helpful-${r.id}`} className="text-[12px] text-[#B4247E] font-semibold mt-1 flex items-center gap-1"><ThumbsUp size={12} /> {r.helpful_count || 0} sister{r.helpful_count === 1 ? '' : 's'} found this helpful</p>
             </div>
             <div className="flex gap-1 shrink-0">
               <button data-testid={`faq-edit-${r.id}`} aria-label="Edit" onClick={() => setEdit(r)} className="p-2 text-[#241019]/50 hover:text-[#B4247E]"><Pencil size={15} /></button>

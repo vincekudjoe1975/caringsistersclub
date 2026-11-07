@@ -595,3 +595,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Member FAQ: db.faqs, admin CRUD /api/admin/faq, published entries on member portal tab "FAQ" (accordion) via /api/members/faq.
 - One-time migration migrate:club_team_badges_2026_06: Club team badge on for all current staff.
 - Tested iteration_64 backend 16/17 (reopen verified fixed after reload), frontend 100%. Deployed with iterations 63-64.
+
+## 2026-06 — FAQ starters, search, "This helped", open-question nudge
+- Startup migration migrate:faq_starters_2026_06 adds 5 published starter FAQs (dues, gatherings, hours, alerts, who to ask) tagged "Starter entry · check the wording" in Admin until edited (user picked both hidden & publish -> published + review tag).
+- Member FAQ: search box (all words, question+answer), "This helped" toggle per sister (faqs.helpful_by; POST /api/members/faq/{id}/helpful). Count shown only in Admin.
+- Cron open-questions Mon 9am ET -> /api/cron/open-questions: each staff gets list of her unanswered questions (skips staff with none).
+- Self-tested via API, fake-send nudge, screenshot. Not deployed yet.
