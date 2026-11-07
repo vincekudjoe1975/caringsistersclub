@@ -10,7 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date as _date
 
 
 ROOT_DIR = Path(__file__).parent
@@ -201,6 +201,10 @@ async def require_admin(request: Request):
         lvl = pv
         if request.headers.get("x-preview-mode") != "working" and request.method != "GET":
             raise HTTPException(status_code=403, detail="You're previewing in look-only mode, so nothing was saved.")
+    if not pv:
+        seen = user.get("admin_last_seen_at") or ""
+        if seen < (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat():
+            await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"admin_last_seen_at": _now_iso()}})
     ok = {"shared", lvl} | ({f"read_{lvl}"} if request.method == "GET" else set())
     if lvl != "full" and not _path_areas(request.url.path) & ok:
         raise HTTPException(status_code=403, detail=f"Your staff access is {STAFF_LEVELS[lvl]}. Ask an owner if you need more.")
@@ -6745,7 +6749,7 @@ def _undo_block(e: dict, latest_id: str, actor: Optional[dict] = None) -> str:
 
 async def _latest_log_ids() -> dict:
     out = {}
-    async for e in db.staff_log.find({"action": {"$ne": "undo"}, "undone_at": {"$exists": False}}, {"_id": 0, "id": 1, "target.email": 1}).sort("at", -1):
+    async for e in db.staff_log.find({"action": {"$nin": ["undo", "expiry"]}, "undone_at": {"$exists": False}}, {"_id": 0, "id": 1, "target.email": 1}).sort("at", -1):
         out.setdefault(e["target"]["email"], e["id"])
     return out
 
@@ -6763,7 +6767,8 @@ async def _alert_new_staff(actor: dict, target: dict, level: str):
 
 @api_router.get("/admin/team")
 async def admin_team(user=Depends(require_admin)):
-    fields = {"_id": 0, "user_id": 1, "name": 1, "email": 1, "picture": 1, "role": 1, "member_status": 1, "created_at": 1, "staff_level": 1}
+    fields = {"_id": 0, "user_id": 1, "name": 1, "email": 1, "picture": 1, "role": 1, "member_status": 1, "created_at": 1, "staff_level": 1,
+              "admin_last_seen_at": 1, "staff_expires_on": 1, "club_team_badge": 1}
     users = await db.users.find({"$or": [{"role": "admin"}, {"member_status": {"$exists": False}}]}, fields).sort("created_at", 1).to_list(500)
     for u in users:
         u["is_owner"] = (u.get("email") or "").lower() in ADMIN_OWNER_EMAILS
@@ -6834,7 +6839,8 @@ async def admin_team_level(user_id: str, payload: LevelUpdate, user=Depends(requ
 
 
 _ACTION_WORDS = {"granted": "gave {t} {lv}", "preapproved": "pre-approved {e} for Admin", "preapproval_removed": "removed the pre-approval for {e}",
-                 "removed": "removed Admin access from {t}", "to_member": "changed {t} to a member", "level": "changed {t} to {lv}", "undo": "undid a change for {t}"}
+                 "removed": "removed Admin access from {t}", "to_member": "changed {t} to a member", "level": "changed {t} to {lv}", "undo": "undid a change for {t}",
+                 "expiry": "set an end date for {t}'s staff access", "expired": "ended {t}'s temporary staff access"}
 
 
 def _log_line(e: dict) -> str:
@@ -6903,6 +6909,113 @@ async def staff_summary_put(payload: StaffSummaryIn, user=Depends(require_admin)
 async def staff_summary_test(request: Request, user=Depends(require_admin)):
     await _rate_limit(request, f"staff_summary_test:{user['user_id']}", 3, 3600)
     return await _send_staff_summary(force=True)
+
+
+def _require_owner(user: dict):
+    if (user.get("email") or "").lower() not in ADMIN_OWNER_EMAILS:
+        raise HTTPException(status_code=403, detail="Only the owners can do this.")
+
+
+class ExpiryIn(BaseModel):
+    date: Optional[str] = None
+
+
+class BadgeIn(BaseModel):
+    on: bool
+
+
+@api_router.post("/admin/team/{user_id}/expiry")
+async def admin_team_expiry(user_id: str, payload: ExpiryIn, user=Depends(require_admin)):
+    _require_owner(user)
+    t = await db.users.find_one({"user_id": user_id, "role": "admin"}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Staff member not found")
+    if (t.get("email") or "").lower() in ADMIN_OWNER_EMAILS or user_id == user["user_id"]:
+        raise HTTPException(status_code=400, detail="Owner access never expires.")
+    d = (payload.date or "").strip()
+    if d:
+        try:
+            day = _date.fromisoformat(d)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Please pick a valid date.")
+        if day <= _today_et():
+            raise HTTPException(status_code=400, detail="Please pick a date after today.")
+        await db.users.update_one({"user_id": user_id}, {"$set": {"staff_expires_on": d}, "$unset": {"staff_expiry_warned": ""}})
+    else:
+        await db.users.update_one({"user_id": user_id}, {"$unset": {"staff_expires_on": "", "staff_expiry_warned": ""}})
+    await _staff_log(user, "expiry", t, extra={"expires_on": d})
+    return {"staff_expires_on": d or None}
+
+
+@api_router.post("/admin/team/{user_id}/badge")
+async def admin_team_badge(user_id: str, payload: BadgeIn, user=Depends(require_admin)):
+    _require_owner(user)
+    res = await db.users.update_one({"user_id": user_id, "role": "admin"}, {"$set": {"club_team_badge": payload.on}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Staff member not found")
+    return {"club_team_badge": payload.on}
+
+
+_SYSTEM = {"email": "system", "name": "Automatic expiry"}
+
+
+async def _expiry_mail(t: dict, subject: str, body: str):
+    html = _member_email_html("Staff access", subject, body, "Open the member portal", "/members")
+    for em in sorted({(t.get("email") or "").lower(), *ADMIN_OWNER_EMAILS}):
+        if em and "@" in em:
+            await send_email(to=em, subject=subject, html=html)
+
+
+async def _process_staff_expiry() -> dict:
+    today, warned, ended = _today_et(), 0, 0
+    for t in await db.users.find({"role": "admin", "staff_expires_on": {"$exists": True}}, {"_id": 0}).to_list(500):
+        if (t.get("email") or "").lower() in ADMIN_OWNER_EMAILS:
+            continue
+        day = _date.fromisoformat(t["staff_expires_on"])
+        nice = day.strftime("%A, %B %-d")
+        if day <= today:
+            update = {"role": "pending", "require_login_code": False}
+            if t.get("member_status") not in ("active", "applied", "declined", "suspended", "ended"):
+                update.update({"member_status": "active", "member_since": t.get("member_since") or _now_iso()})
+            res = await db.users.update_one({"user_id": t["user_id"], "role": "admin", "staff_expires_on": t["staff_expires_on"]},
+                                            {"$set": update, "$unset": {"staff_expires_on": "", "staff_expiry_warned": ""}})
+            if not res.modified_count:
+                continue
+            await db.allowed_emails.delete_one({"email": (t.get("email") or "").lower()})
+            await _staff_log(_SYSTEM, "expired", t)
+            await _expiry_mail(t, f"{t.get('name') or 'Staff'}'s staff access has ended",
+                               f"The temporary staff access for {t.get('name')} ({t.get('email')}) ended today, {nice}. She is now a regular member and keeps the member portal.\nAn owner can make her staff again any time in Team Access.")
+            ended += 1
+        elif (day - today).days <= 3 and not t.get("staff_expiry_warned"):
+            res = await db.users.update_one({"user_id": t["user_id"], "staff_expiry_warned": {"$exists": False}}, {"$set": {"staff_expiry_warned": _now_iso()}})
+            if not res.modified_count:
+                continue
+            await _expiry_mail(t, f"{t.get('name') or 'Staff'}'s staff access ends {nice}",
+                               f"Heads up: the temporary staff access for {t.get('name')} ({t.get('email')}) ends on {nice}. After that she'll be a regular member with the member portal only.\nTo keep her on the team, an owner can change or clear the end date in Team Access.")
+            warned += 1
+    return {"warned": warned, "ended": ended}
+
+
+def _cron_ok(authorization: str) -> bool:
+    secret = os.environ.get("WEBHOOK_CRON_SECRET") or ""
+    return bool(secret) and authorization.startswith("Bearer ") and _asec.compare_digest(authorization[7:], secret)
+
+
+@api_router.post("/cron/staff-expiry")
+async def cron_staff_expiry(request: Request, background: BackgroundTasks, authorization: str = Header(default="")):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not _cron_ok(authorization):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        env = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid body")
+    run_id = request.headers.get("x-webhook-id") or (env or {}).get("run_id") or _today_et().isoformat()
+    res = await db.scheduled_runs.update_one({"key": f"staff_expiry:{run_id}"}, {"$setOnInsert": {"ran_at": _now_iso()}}, upsert=True)
+    if not res.upserted_id:
+        return {"ok": True, "duplicate": True}
+    background.add_task(_process_staff_expiry)
+    return {"ok": True}
 
 
 @api_router.get("/admin/team/log")
@@ -7115,6 +7228,7 @@ def _member_public(u: dict, viewer_admin: bool = False) -> dict:
     p = u.get("member_profile") or {}
     show = p.get("show_contact") or viewer_admin
     return {"user_id": u["user_id"], "name": u.get("name") or "", "picture": u.get("picture") or "",
+            "club_team": bool(u.get("club_team_badge")) and u.get("role") == "admin",
             "city": p.get("city", ""), "bio": p.get("bio", ""), "member_since": u.get("member_since", ""), "office": u.get("member_office", ""),
             "email": u.get("email", "") if show else "", "phone": p.get("phone", "") if show else ""}
 

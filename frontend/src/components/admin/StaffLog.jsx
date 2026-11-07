@@ -9,6 +9,8 @@ const WHAT = {
   removed: (e) => `removed Admin access from ${e.target.name}`,
   to_member: (e) => `changed ${e.target.name} to a member`,
   level: (e) => `changed ${e.target.name} to ${LEVELS[e.level] || e.level}`,
+  expiry: (e) => (e.expires_on ? `set ${e.target.name}'s staff access to end ${e.expires_on}` : `removed the end date for ${e.target.name}`),
+  expired: (e) => `ended ${e.target.name}'s temporary staff access (now a member)`,
   undo: (e) => `undid "${(WHAT[e.undid?.action] || (() => 'a change'))({ ...e, level: e.undid?.level })}"`,
 };
 const when = (iso) => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });

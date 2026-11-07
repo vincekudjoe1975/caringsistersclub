@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { api } from '../../lib/api';
-import { Search, MapPin, Mail, Phone, List, Map as MapIcon } from 'lucide-react';
+import { Search, MapPin, Mail, Phone, List, Map as MapIcon, BadgeCheck } from 'lucide-react';
 
 const SisterMap = lazy(() => import('./SisterMap'));
 import { Avatar } from './Avatar';
@@ -35,7 +35,7 @@ export function Directory() {
               <div className="flex items-center gap-3 mb-3">
                 <Avatar name={m.name} src={m.picture} size={48} />
                 <div className="min-w-0">
-                  <p className="font-semibold text-[#3B0A2E] truncate">{m.name}</p>
+                  <p className="font-semibold text-[#3B0A2E] truncate flex items-center gap-1.5"><span className="truncate">{m.name}</span>{m.club_team && <span data-testid={`directory-club-team-${m.user_id}`} title="Part of the Club team. Ask her anything!" className="shrink-0 inline-flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full text-white" style={{ background: 'linear-gradient(135deg,#3B0A2E,#B4247E)' }}><BadgeCheck size={11} /> Club team</span>}</p>
                   {m.office && <p className="text-[12px] text-[#B4247E] font-semibold">{m.office}</p>}
                   {m.member_since && <p className="text-[12px] text-[#241019]/45">Member since {fmtDate(m.member_since)}</p>}
                 </div>

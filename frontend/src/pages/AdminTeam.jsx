@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/use-toast';
 import { Loader2, UserPlus, Mail, X } from 'lucide-react';
 import { TeamList } from '../components/admin/TeamList';
@@ -10,6 +11,7 @@ import { MergeAccounts } from '../components/MergeAccounts';
 
 export default function AdminTeam({ currentUserId }) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [newEmail, setNewEmail] = useState('');
@@ -60,6 +62,15 @@ export default function AdminTeam({ currentUserId }) {
     }
   };
 
+  const expiry = async (u, date) => {
+    try { await api.post(`/admin/team/${u.user_id}/expiry`, { date }); toast({ title: date ? 'End date set' : 'End date removed', description: date ? `${u.name || u.email} switches to member on ${date}. She and the owners get a reminder 3 days before.` : `${u.name || u.email} keeps staff access with no end date.` }); load(); }
+    catch (err) { toast({ title: 'Could not update', description: err?.response?.data?.detail || 'Try again', variant: 'destructive' }); }
+  };
+  const badge = async (u, on) => {
+    try { await api.post(`/admin/team/${u.user_id}/badge`, { on }); toast({ title: on ? 'Club team badge shown' : 'Club team badge hidden', description: on ? 'It appears on her card in the member directory if she is a member.' : undefined }); load(); }
+    catch (err) { toast({ title: 'Could not update', description: err?.response?.data?.detail || 'Try again', variant: 'destructive' }); }
+  };
+
   const undo = async (e) => {
     try { await api.post(`/admin/team/log/${e.id}/undo`); toast({ title: 'Change undone' }); load(); }
     catch (err) { toast({ title: 'Could not undo', description: err?.response?.data?.detail || 'Try again', variant: 'destructive' }); }
@@ -83,7 +94,7 @@ export default function AdminTeam({ currentUserId }) {
 
   return (
     <div className="grid lg:grid-cols-[1fr_320px] gap-8 items-start">
-      <div><TeamList users={users} me={currentUserId} onConfirm={change} /><StaffLog rows={log} onUndo={undo} /></div>
+      <div><TeamList users={users} me={currentUserId} onConfirm={change} owner={!!user?.is_owner} onExpiry={expiry} onBadge={badge} /><StaffLog rows={log} onUndo={undo} /></div>
 
       {/* Pre-approve */}
       <div className="space-y-5">

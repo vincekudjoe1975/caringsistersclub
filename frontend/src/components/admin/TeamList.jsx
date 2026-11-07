@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ShieldCheck, UserRound } from 'lucide-react';
+import { StaffActivity, OwnerControls } from './StaffExtras';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 
 export const LEVELS = { full: 'Full access', content: 'Content only', members: 'Members only', money: 'Money only' };
@@ -21,7 +22,7 @@ const LevelSelect = ({ value, onChange, testid }) => (
   </select>
 );
 
-function Row({ u, me, onAsk }) {
+function Row({ u, me, onAsk, owner, onExpiry, onBadge }) {
   const staff = u.role === 'admin';
   const editable = staff && !u.is_owner && u.user_id !== me;
   return (
@@ -31,6 +32,7 @@ function Row({ u, me, onAsk }) {
         <div className="min-w-0">
           <p className="text-[14px] text-[#3B0A2E] font-semibold truncate">{u.name || u.email}{u.user_id === me && <span className="text-[#241019]/45 font-normal"> (you)</span>}</p>
           <p className="text-[12px] text-[#241019]/55 truncate">{u.email}</p>
+          {staff && <StaffActivity u={u} />}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -44,6 +46,8 @@ function Row({ u, me, onAsk }) {
           <button data-testid={`team-make-staff-${u.user_id}`} onClick={() => onAsk(u, 'admin', 'content')} className="rounded-full px-3 py-1.5 text-[12px] font-semibold text-[#1f7a4d] hover:bg-[#1f7a4d]/10 flex items-center gap-1 transition-colors"><ShieldCheck size={13} /> Make staff</button>
         )}
       </div>
+      {owner && editable && <OwnerControls u={u} onExpiry={onExpiry} onBadge={onBadge} />}
+      {owner && staff && !editable && <div className="w-full pl-12"><button data-testid={`team-badge-toggle-${u.user_id}`} onClick={() => onBadge(u, !u.club_team_badge)} className="text-[12px] font-semibold text-[#B4247E] hover:underline">{u.club_team_badge ? 'Hide Club team badge' : 'Show Club team badge'}</button></div>}
     </div>
   );
 }
@@ -55,14 +59,14 @@ const COPY = {
   level: (u, lv) => ({ t: `Change ${nm(u)} to ${LEVELS[lv]}?`, d: LEVEL_HELP[lv], b: 'Change access' }),
 };
 
-export function TeamList({ users, me, onConfirm }) {
+export function TeamList({ users, me, onConfirm, owner, onExpiry, onBadge }) {
   const [ask, setAsk] = useState(null);
   const staff = users.filter((u) => u.role === 'admin');
   const others = users.filter((u) => u.role !== 'admin');
   const c = ask && COPY[ask.to](ask.u, ask.level);
   const section = (list, testid, empty) => (
     <div data-testid={testid} className="bg-white rounded-2xl border border-[#3B0A2E]/8 divide-y divide-[#3B0A2E]/8">
-      {list.length ? list.map((u) => <Row key={u.user_id} u={u} me={me} onAsk={(x, to, level) => setAsk({ u: x, to, level })} />) : <p className="p-4 text-[13px] text-[#241019]/55">{empty}</p>}
+      {list.length ? list.map((u) => <Row key={u.user_id} u={u} me={me} owner={owner} onExpiry={onExpiry} onBadge={onBadge} onAsk={(x, to, level) => setAsk({ u: x, to, level })} />) : <p className="p-4 text-[13px] text-[#241019]/55">{empty}</p>}
     </div>
   );
   return (
