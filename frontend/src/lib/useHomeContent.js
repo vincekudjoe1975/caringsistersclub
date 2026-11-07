@@ -3,7 +3,7 @@ import { api, mediaSrc } from './api';
 import { mission as mockMission, pillars as mockPillars, testimonials as mockTestimonials } from '../mock/mock';
 
 const FALLBACK = {
-  mission_heading: mockMission.heading, mission_title: 'Bridging the distance for women in the Diaspora',
+  mission_heading: mockMission.heading, mission_title: 'Bridging the distance for women',
   mission_body: mockMission.body, mission_quote: mockMission.quote, mission_image: '',
   pillars: mockPillars, testimonials: mockTestimonials.map((t, i) => ({ ...t, id: `m${i}`, photo_url: '' })),
 };

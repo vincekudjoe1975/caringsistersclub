@@ -44,7 +44,7 @@ export const nav = [
 
 export const hero = {
   kicker: 'Welcome to Caring Sisters Club',
-  title: 'Connecting & Empowering Women of the Diaspora',
+  title: 'Connecting & Empowering Women',
   subtitle:
     'A powerful professional network fostering friendship, mutual respect, and philanthropic growth globally.',
   image:
@@ -54,7 +54,7 @@ export const hero = {
 export const mission = {
   heading: 'Our Mission',
   body:
-    'Caring Sisters Club, Inc. is dedicated to bridging the distance for women in the Diaspora. We provide a powerhouse platform for professional business elevation, comprehensive housing assistance, and collaborative philanthropic endeavors. By fostering a community rooted in friendship and mutual respect, we transform individual ambition into shared empowerment, ensuring every sister thrives in her journey toward success.',
+    'Caring Sisters Club, Inc. is dedicated to bridging the distance for women. We provide a powerhouse platform for professional business elevation, comprehensive housing assistance, and collaborative philanthropic endeavors. By fostering a community rooted in friendship and mutual respect, we transform individual ambition into shared empowerment, ensuring every sister thrives in her journey toward success.',
   quote: 'Through shared strength, we transform collective vision into lasting community change.',
   image:
     'https://images.unsplash.com/photo-1508002366005-75a695ee2d17?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBCbGFjayUyMHdvbWVufGVufDB8fHx8MTc5MDE4NDcwOHww&ixlib=rb-4.1.0&q=85',
@@ -64,7 +64,7 @@ export const pillars = [
   {
     icon: 'Briefcase',
     title: 'Professional Empowerment',
-    text: 'Connect with high-achieving women from the Diaspora to scale your business, share professional insights, and foster mutual growth in a supportive hub designed for excellence.',
+    text: 'Connect with high-achieving women to scale your business, share professional insights, and foster mutual growth in a supportive hub designed for excellence.',
     to: '/initiatives',
     cta: 'Explore Opportunities',
   },
@@ -88,7 +88,7 @@ export const stats = [
   { value: '2,400+', label: 'Sisters in our network' },
   { value: '38', label: 'Community programs delivered' },
   { value: '$610K', label: 'Granted to member initiatives' },
-  { value: '14', label: 'Cities across the Diaspora' },
+  { value: '14', label: 'Cities' },
 ];
 
 export const values = [
@@ -99,14 +99,14 @@ export const values = [
 ];
 
 export const story = [
-  { year: '2019', title: 'A Circle of Ten', text: 'Ten women of the Diaspora gathered around a kitchen table with a shared belief: no sister should build alone.' },
+  { year: '2019', title: 'A Circle of Ten', text: 'Ten women gathered around a kitchen table with a shared belief: no sister should build alone.' },
   { year: '2021', title: 'Formal 501(c)(3) Status', text: 'The club incorporated as a nonprofit, launching its first mentorship and housing-support cohort.' },
   { year: '2023', title: 'Regional Expansion', text: 'Chapters opened across 14 cities, delivering workshops, grants, and community drives.' },
   { year: '2025', title: 'The Sisterhood Fund', text: 'We launched a member grant fund distributing over $600K toward member-led businesses and relief.' },
 ];
 
 export const board = [
-  { name: 'Fem Mansaray', role: 'Founder & President', photo: femImg, bio: 'Founder and President of Caring Sisters Club, leading the vision to connect and empower women of the Diaspora.' },
+  { name: 'Fem Mansaray', role: 'Founder & President', photo: femImg, bio: 'Founder and President of Caring Sisters Club, leading the vision to connect and empower women.' },
   { name: 'Yeama Conteh', role: 'Co-Founder & Vice-President', photo: yeamaImg, bio: 'Co-Founder and Vice-President, championing member support, education, and community programs.' },
   { name: 'Patricia Nguessan', role: 'Co-Founder & Board Member', photo: patriciaImg, bio: 'Co-Founder and Board Member dedicated to sisterhood, service, and philanthropic impact.' },
   { name: 'Josephine Margai', role: 'Co-Founder & Board Member', photo: josephineImg, bio: 'Co-Founder and Board Member helping steward the club\u2019s mission and community engagement.' },

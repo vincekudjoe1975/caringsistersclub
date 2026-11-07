@@ -19,7 +19,7 @@ export default function Footer() {
           <div className="md:col-span-1">
             <Logo variant="light" />
             <p className="text-[13.5px] text-[#F7EFE9]/70 mt-5 leading-relaxed">
-              A sisterhood empowering women of the Diaspora through friendship, professional growth, and philanthropy.
+              A sisterhood empowering women through friendship, professional growth, and philanthropy.
             </p>
             <SocialLinks className="mt-5" itemClassName="border border-white/15 hover:border-[#CBA24B] hover:text-[#CBA24B]" />
           </div>

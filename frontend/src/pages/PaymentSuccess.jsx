@@ -15,7 +15,7 @@ export default function PaymentSuccess() {
   const attempts = useRef(0);
 
   const siteUrl = window.location.origin;
-  const shareText = 'I just donated to The Caring Sisters Club, empowering women of the Diaspora. Join me!';
+  const shareText = 'I just donated to The Caring Sisters Club, empowering women. Join me!';
   const shareLinks = {
     facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(siteUrl)}`,
     twitter: `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(siteUrl)}`,
@@ -95,7 +95,7 @@ export default function PaymentSuccess() {
                   </span>
                   <div>
                     <p className="font-serif text-[#F7EFE9] text-[18px] font-semibold leading-tight">I gave to the Caring Sisters Club</p>
-                    <p className="text-[#F7EFE9]/70 text-[13px] mt-1">Empowering women of the Diaspora. Join me &mdash; every gift counts.</p>
+                    <p className="text-[#F7EFE9]/70 text-[13px] mt-1">Empowering women. Join me &mdash; every gift counts.</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2.5 mt-5">

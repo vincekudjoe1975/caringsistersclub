@@ -44,7 +44,7 @@ function SpendBreakdown({ breakdown, published }) {
         <h2 className="font-serif text-[30px] lg:text-[38px] text-[#3B0A2E] font-semibold">How your gift is used</h2>
       </div>
       <p className="text-[#241019]/70 text-[15.5px] leading-relaxed mb-8">
-        We are proud that the vast majority of every donation goes directly to programs serving women across the Diaspora.
+        We are proud that the vast majority of every donation goes directly to programs serving women.
         {!published && <span className="italic"> (Illustrative figures.)</span>}
       </p>
       <div className="space-y-5" data-testid="spend-breakdown">

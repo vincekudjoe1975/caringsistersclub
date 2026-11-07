@@ -164,7 +164,7 @@ export default function Home() {
             Together, we transform vision into lasting change.
           </h2>
           <p className="text-[#F7EFE9]/75 text-[17px] mt-5 mb-9">
-            Become a sister, volunteer your time, or give to fuel programs that uplift women across the Diaspora.
+            Become a sister, volunteer your time, or give to fuel programs that uplift women.
           </p>
           <div className="flex flex-wrap justify-center gap-4">
             <Link to="/volunteer" className="btn-gold rounded-full px-8 py-3.5 font-semibold">Join the Sisterhood</Link>

@@ -1330,7 +1330,7 @@ def _receipt_html(name: str, amount, frequency: str, ein: str = "", manage_url: 
         + _brand_header("Love \u00b7 Respect \u00b7 Empowerment") +
         '<tr><td style="padding:32px;font-family:Arial,Helvetica,sans-serif;color:#241019">'
         f'<h1 style="font-family:Georgia,serif;color:#3B0A2E;font-size:24px;margin:0 0 16px">Thank you, {_esc(name)}!</h1>'
-        f'<p style="font-size:15px;line-height:1.6;color:#4a3340;margin:0 0 16px">Your generosity fuels professional empowerment, housing support, and community care for women across the Diaspora. We are deeply grateful for your {freq_txt} gift.</p>'
+        f'<p style="font-size:15px;line-height:1.6;color:#4a3340;margin:0 0 16px">Your generosity fuels professional empowerment, housing support, and community care for women. We are deeply grateful for your {freq_txt} gift.</p>'
         '<table role="presentation" width="100%" style="background:#faf2f7;border-radius:12px;margin:8px 0 20px">'
         f'<tr><td style="padding:18px 22px;font-size:14px;color:#3B0A2E">Gift amount</td>'
         f'<td align="right" style="padding:18px 22px;font-size:20px;font-weight:bold;color:#B4247E">${_esc(str(amount))}{" / month" if frequency=="monthly" else ""}</td></tr>'
@@ -1885,7 +1885,7 @@ def _reactivation_email_html(name: str) -> str:
         '<div style="font-size:11px;color:#CBA24B;letter-spacing:3px;text-transform:uppercase;margin-top:4px">We Miss You</div></td></tr>'
         '<tr><td style="padding:32px;font-family:Arial,sans-serif;color:#241019">'
         f'<h1 style="font-family:Georgia,serif;color:#B4247E;font-size:24px;margin:0 0 14px">We miss you, {_esc(name)}</h1>'
-        '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 16px">It has been a little while since your last gift, and we wanted to reach out — not to ask, but to say thank you. Your past generosity helped empower women of the Diaspora through friendship, professional growth, and community care.</p>'
+        '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 16px">It has been a little while since your last gift, and we wanted to reach out — not to ask, but to say thank you. Your past generosity helped empower women through friendship, professional growth, and community care.</p>'
         '<p style="font-size:14px;line-height:1.7;color:#4a3340;margin:0 0 20px">If you would like to rejoin our community of givers, we would be honored to welcome you back. Every gift, of any size, makes a real difference.</p>'
         '<a href="' + PUBLIC_APP_URL + '/donate" style="display:inline-block;background:#B4247E;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:999px">Rejoin Our Mission</a>'
         '<p style="font-size:13px;line-height:1.6;color:#6b5560;margin:22px 0 0">With warmth and gratitude,<br/>The Caring Sisters Club</p>'
@@ -2881,7 +2881,7 @@ DEFAULT_TRANSPARENCY = {
         {"value": "2,400+", "label": "Sisters in our network"},
         {"value": "38", "label": "Community programs delivered"},
         {"value": "$610K", "label": "Granted to member initiatives"},
-        {"value": "14", "label": "Cities across the Diaspora"},
+        {"value": "14", "label": "Cities"},
     ],
     "financials": [],
     "reports": [],
@@ -2983,7 +2983,7 @@ def _default_thank_note(name: str) -> dict:
     return {
         "subject": "Thank you for being part of our sisterhood",
         "message": (f"Dear {name},\n\nWe noticed your monthly gift has ended, and we simply wanted to say thank you. "
-                    "Every month you gave helped women across the Diaspora find mentorship, stable housing and community care.\n\n"
+                    "Every month you gave helped women find mentorship, stable housing and community care.\n\n"
                     "You'll always be part of the Caring Sisters family, and our door is open whenever you'd like to reconnect, "
                     "volunteer or join us at an event.\n\nWith heartfelt gratitude,\nThe Caring Sisters Club"),
     }
@@ -3370,9 +3370,9 @@ async def admin_program_categories(payload: CategoriesIn, user=Depends(require_a
 HOME_ICONS = ("Briefcase", "HeartHandshake", "Home", "Users", "GraduationCap", "Sparkles", "HandHeart", "Globe", "Heart", "Star", "Crown", "Sprout")
 HOME_HERO_FIELDS = {  # field: (default, max length, required)
     "hero_kicker": ("Welcome to Caring Sisters Club", 80, False),
-    "hero_title": ("Connecting & Empowering Women of the Diaspora", 140, True),
+    "hero_title": ("Connecting & Empowering Women", 140, True),
     "hero_subtitle": ("A powerful professional network fostering friendship, mutual respect, and philanthropic growth globally.", 300, False),
-    "hero_image_alt": ("Confident professional woman of the Diaspora in a magenta blazer", 160, False),
+    "hero_image_alt": ("Confident professional woman in a magenta blazer", 160, False),
     "hero_badge_number": ("2,400+", 20, False),
     "hero_badge_label": ("Sisters empowered", 40, False),
 }
@@ -3380,14 +3380,14 @@ DEFAULT_HOME = {
     **{k: v[0] for k, v in HOME_HERO_FIELDS.items()},
     "hero_image": "",
     "mission_heading": "Our Mission",
-    "mission_title": "Bridging the distance for women in the Diaspora",
-    "mission_body": ("Caring Sisters Club, Inc. is dedicated to bridging the distance for women in the Diaspora. We provide a powerhouse platform "
+    "mission_title": "Bridging the distance for women",
+    "mission_body": ("Caring Sisters Club, Inc. is dedicated to bridging the distance for women. We provide a powerhouse platform "
                      "for professional business elevation, comprehensive housing assistance, and targeted philanthropic outreach. Through shared "
                      "strength, we transform collective vision into lasting community change."),
     "mission_quote": "Through shared strength, we transform collective vision into lasting community change.",
     "mission_image": "",
     "pillars": [
-        {"icon": "Briefcase", "title": "Professional Empowerment", "text": "Connect with high-achieving women from the Diaspora to scale your business, share professional insights, and foster mutual growth in a supportive hub designed for excellence.", "cta": "Explore Opportunities", "to": "/initiatives"},
+        {"icon": "Briefcase", "title": "Professional Empowerment", "text": "Connect with high-achieving women to scale your business, share professional insights, and foster mutual growth in a supportive hub designed for excellence.", "cta": "Explore Opportunities", "to": "/initiatives"},
         {"icon": "HeartHandshake", "title": "Philanthropy", "text": "Join our collective mission to solve the evolving challenges women face and spearhead philanthropic endeavors that empower communities while building lifelong bonds of friendship.", "cta": "Join the Cause", "to": "/donate"},
         {"icon": "Home", "title": "Housing Assistance", "text": "We provide comprehensive housing navigation, emergency support, and resource connection so every sister has a stable foundation to build her future upon.", "cta": "Learn More", "to": "/initiatives"},
     ],
@@ -3525,7 +3525,7 @@ DEFAULT_ABOUT = {
     ],
     "story_title": "A journey of shared strength",
     "story": [
-        {"year": "2019", "title": "A Circle of Ten", "text": "Ten women of the Diaspora gathered around a kitchen table with a shared belief: no sister should build alone.", "image": ""},
+        {"year": "2019", "title": "A Circle of Ten", "text": "Ten women gathered around a kitchen table with a shared belief: no sister should build alone.", "image": ""},
         {"year": "2021", "title": "Formal 501(c)(3) Status", "text": "The club incorporated as a nonprofit, launching its first mentorship and housing-support cohort.", "image": ""},
         {"year": "2023", "title": "Regional Expansion", "text": "Chapters opened across 14 cities, delivering workshops, grants, and community drives.", "image": ""},
         {"year": "2025", "title": "The Sisterhood Fund", "text": "We launched a member grant fund distributing over $600K toward member-led businesses and relief.", "image": ""},
@@ -7142,6 +7142,36 @@ async def startup_faq_starters():
         if not await db.faqs.find_one({"question": q}):
             await db.faqs.insert_one({"id": uuid.uuid4().hex, "question": q, "answer": a, "published": True, "starter": True,
                                       "order": base + i, "created_at": _now_iso(), "created_by": "Starter entry"})
+
+
+_PHRASE_RX = re.compile(r"\s+(?:of|across|in|from) the Diaspora", re.I)
+
+
+def _scrub(v):
+    if isinstance(v, str):
+        return _PHRASE_RX.sub("", v)
+    if isinstance(v, list):
+        return [_scrub(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _scrub(x) for k, x in v.items()}
+    return v
+
+
+@app.on_event("startup")
+async def startup_remove_phrase():
+    # One-time owner request (June 2026): remove the phrase from all saved site text.
+    res = await db.scheduled_runs.update_one({"key": "migrate:remove_phrase_2026_06"}, {"$setOnInsert": {"ran_at": _now_iso()}}, upsert=True)
+    if not res.upserted_id:
+        return
+    changed = 0
+    for coll in ("settings", "leaders", "programs", "program_categories", "sessions", "events", "stories", "faqs", "member_settings", "announcements"):
+        async for d in db[coll].find({}):
+            clean = _scrub({k: v for k, v in d.items() if k != "_id"})
+            diff = {k: v for k, v in clean.items() if v != d.get(k)}
+            if diff:
+                await db[coll].update_one({"_id": d["_id"]}, {"$set": diff})
+                changed += 1
+    logging.info(f"Phrase cleanup: {changed} saved records updated")
 
 
 @app.on_event("startup")
@@ -12924,7 +12954,7 @@ async def _gala_total(eid: str) -> float:
 
 def _gala_thanks_html(e: dict, p: dict, total: float) -> str:
     did = "; ".join(dict.fromkeys(p["lines"]))
-    return _member_email_html("Thank you", f"Thank you, {p['name']}!", f"What a night! Thank you for {did} at {e['title']}.\n\nTogether we raised ${total:,.0f} for women of the Diaspora. Every seat, gift and paddle makes our programs possible.\n\nWith love and gratitude,\nThe Caring Sisters Club", "See what your support makes possible", "/donate")
+    return _member_email_html("Thank you", f"Thank you, {p['name']}!", f"What a night! Thank you for {did} at {e['title']}.\n\nTogether we raised ${total:,.0f} for women. Every seat, gift and paddle makes our programs possible.\n\nWith love and gratitude,\nThe Caring Sisters Club", "See what your support makes possible", "/donate")
 
 
 @api_router.get("/admin/events/{eid}/gala-thanks")

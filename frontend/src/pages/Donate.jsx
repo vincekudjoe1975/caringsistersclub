@@ -76,7 +76,7 @@ export default function Donate() {
       {gala && <div data-testid="gala-donate-banner" className="bg-[#CBA24B] text-[#3B0A2E] text-center px-5 py-3 font-semibold text-[14.5px]">Giving at {gala.title}: your gift will light up the screen!</div>}
       <PageHero
         kicker="Support the Sisterhood"
-        title="Your gift empowers women of the Diaspora"
+        title="Your gift empowers women"
         subtitle="Every contribution fuels professional programs, housing support, and community care. 82¢ of every dollar goes directly to our sisters."
       />
 

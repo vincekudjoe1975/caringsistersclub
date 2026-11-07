@@ -601,3 +601,7 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Member FAQ: search box (all words, question+answer), "This helped" toggle per sister (faqs.helpful_by; POST /api/members/faq/{id}/helpful). Count shown only in Admin.
 - Cron open-questions Mon 9am ET -> /api/cron/open-questions: each staff gets list of her unanswered questions (skips staff with none).
 - Self-tested via API, fake-send nudge, screenshot. Not deployed yet.
+
+## 2026-06 — Phrase removal
+- Owner request: removed "of/across/in/from the Diaspora" everywhere (code: pages, footer, emails, defaults, mock). One-time startup scrub migrate:remove_phrase_2026_06 over saved content collections (settings, leaders, programs, sessions, events, stories, faqs, member_settings, announcements...). Do not reintroduce the phrase.
+- Verified: 0 occurrences in code + preview DB; public pages checked. Deployed together with FAQ starter/search/helped/nudge batch.
