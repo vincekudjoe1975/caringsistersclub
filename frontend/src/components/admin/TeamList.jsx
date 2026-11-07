@@ -62,7 +62,6 @@ const COPY = {
 export function TeamList({ users, me, onConfirm, owner, onExpiry, onBadge }) {
   const [ask, setAsk] = useState(null);
   const staff = users.filter((u) => u.role === 'admin');
-  const others = users.filter((u) => u.role !== 'admin');
   const c = ask && COPY[ask.to](ask.u, ask.level);
   const section = (list, testid, empty) => (
     <div data-testid={testid} className="bg-white rounded-2xl border border-[#3B0A2E]/8 divide-y divide-[#3B0A2E]/8">
@@ -74,9 +73,7 @@ export function TeamList({ users, me, onConfirm, owner, onExpiry, onBadge }) {
       <h3 className="font-serif text-[20px] text-[#3B0A2E] font-semibold mb-1">Staff with Admin access</h3>
       <p className="text-[12.5px] text-[#241019]/60 mb-4">Only these people can open the back office. Use the access menu to limit someone to one area.</p>
       {section(staff, 'team-staff-list', 'No staff yet.')}
-      <h3 className="font-serif text-[20px] text-[#3B0A2E] font-semibold mt-10 mb-1">Member accounts</h3>
-      <p className="text-[12.5px] text-[#241019]/60 mb-4">People who signed up but haven't applied yet. They can't open Admin. Approve memberships under Members.</p>
-      {section(others, 'team-member-list', 'No member accounts waiting.')}
+      <p data-testid="team-members-note" className="text-[12.5px] text-[#241019]/60 mt-4">Members and people who signed up are managed in the <b className="text-[#3B0A2E]">Members</b> tab. They can only use the member portal.</p>
       <AlertDialog open={!!ask} onOpenChange={(o) => !o && setAsk(null)}>
         <AlertDialogContent data-testid="team-confirm-dialog">
           {c && <>

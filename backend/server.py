@@ -6770,7 +6770,7 @@ async def _alert_new_staff(actor: dict, target: dict, level: str):
 async def admin_team(user=Depends(require_admin)):
     fields = {"_id": 0, "user_id": 1, "name": 1, "email": 1, "picture": 1, "role": 1, "member_status": 1, "created_at": 1, "staff_level": 1,
               "admin_last_seen_at": 1, "staff_expires_on": 1, "club_team_badge": 1}
-    users = await db.users.find({"$or": [{"role": "admin"}, {"member_status": {"$exists": False}}]}, fields).sort("created_at", 1).to_list(500)
+    users = await db.users.find({"role": "admin"}, fields).sort("created_at", 1).to_list(500)
     for u in users:
         u["is_owner"] = (u.get("email") or "").lower() in ADMIN_OWNER_EMAILS
         u["staff_level"] = _staff_level(u)
@@ -7091,6 +7091,28 @@ async def admin_team_revoke_email(payload: AllowEmail, user=Depends(require_admi
         await _staff_log(user, "preapproval_removed", {"email": email})
     return {"message": "Email removed from allowlist"}
 
+
+
+_OWNER_DEMOTE_2026_06 = ("femmansaray2@gmail.com", "rd7467@aol.com")
+
+
+@app.on_event("startup")
+async def startup_owner_role_fix():
+    # One-time owner request (June 2026): these two accounts are members, not staff.
+    res = await db.scheduled_runs.update_one({"key": "migrate:owner_demote_2026_06"}, {"$setOnInsert": {"ran_at": _now_iso()}}, upsert=True)
+    if not res.upserted_id:
+        return
+    for em in _OWNER_DEMOTE_2026_06:
+        t = await db.users.find_one({"email": {"$regex": f"^{re.escape(em)}$", "$options": "i"}, "role": "admin"}, {"_id": 0})
+        if not t:
+            continue
+        update = {"role": "pending", "require_login_code": False}
+        if t.get("member_status") not in ("active", "applied", "declined", "suspended", "ended"):
+            update.update({"member_status": "active", "member_since": t.get("member_since") or _now_iso()})
+        await db.users.update_one({"user_id": t["user_id"]}, {"$set": update, "$unset": {"staff_expires_on": "", "staff_expiry_warned": "", "club_team_badge": ""}})
+        await db.allowed_emails.delete_one({"email": em})
+        await _staff_log({"email": "system", "name": "Owner request"}, "to_member", t)
+        logging.info(f"Owner role fix: {em} changed to member")
 
 
 @app.on_event("startup")
@@ -13396,13 +13418,29 @@ class ToggleIn(BaseModel):
 @api_router.get("/admin/members/waiting")
 async def admin_members_waiting(user=Depends(require_admin)):
     cfg = await db.settings.find_one({"key": "apply_reminders_since"}, {"_id": 0}) or {"at": _now_iso(), "enabled": True}
-    rows = await db.users.find({"role": {"$ne": "admin"}, "member_status": {"$exists": False}, "email_verified": True},
+    rows = await db.users.find({"role": {"$ne": "admin"}, "member_status": {"$exists": False}, "email": {"$nin": [None, ""]}},
                                {"_id": 0, "user_id": 1, "name": 1, "email": 1, "auth_providers": 1, "created_at": 1, "email_verified_at": 1,
-                                "apply_reminder_1_at": 1, "apply_reminder_2_at": 1}).sort("created_at", -1).to_list(500)
+                                "email_verified": 1, "apply_reminder_1_at": 1, "apply_reminder_2_at": 1, "apply_manual_reminder_at": 1}).sort("created_at", -1).to_list(500)
     return {"enabled": cfg.get("enabled") is not False, "rows": [{
         "user_id": u["user_id"], "name": u.get("name") or "", "email": u.get("email") or "", "signed_up_with": _signup_method(u),
         "confirmed_at": u.get("email_verified_at") or u.get("created_at") or "", "reminder_1_at": u.get("apply_reminder_1_at", ""),
-        "reminder_2_at": u.get("apply_reminder_2_at", ""), "eligible": (u.get("created_at") or "") >= cfg["at"]} for u in rows]}
+        "reminder_2_at": u.get("apply_reminder_2_at", ""), "eligible": (u.get("created_at") or "") >= cfg["at"],
+        "email_confirmed": u.get("email_verified") is not False, "manual_reminder_at": u.get("apply_manual_reminder_at", "")} for u in rows]}
+
+
+@api_router.post("/admin/members/{uid}/apply-reminder")
+async def admin_member_apply_reminder(uid: str, request: Request, user=Depends(require_admin)):
+    await _rate_limit(request, f"apply_manual:{uid}", 2, 86400)
+    u = await db.users.find_one({"user_id": uid, "role": {"$ne": "admin"}, "member_status": {"$exists": False}}, {"_id": 0})
+    if not u or not u.get("email"):
+        raise HTTPException(status_code=404, detail="She isn't waiting to apply.")
+    body = ("You created your Caring Sisters Club member portal account, but we haven't received your membership application yet. "
+            "It only takes about two minutes, and our team reviews every application personally. We'd love to welcome you!")
+    if not await send_email(to=u["email"], subject="Finish your Caring Sisters Club membership application",
+                            html=_member_email_html("Membership application", f"Hello {_first(u)},", body, "Finish my application", "/members")):
+        raise HTTPException(status_code=400, detail="The reminder could not be sent. Please try again shortly.")
+    await db.users.update_one({"user_id": uid}, {"$set": {"apply_manual_reminder_at": _now_iso()}})
+    return {"ok": True}
 
 
 @api_router.put("/admin/members/apply-reminders")

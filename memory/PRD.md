@@ -577,3 +577,9 @@ Stripe donations (claimable sandbox), managed email, donor administration, campa
 - Owners-only: end date per staff (POST /api/admin/team/{uid}/expiry, shadcn calendar, ET dates) and Club team badge toggle (POST /api/admin/team/{uid}/badge). Badge shows on member directory cards (club_team).
 - Daily cron staff-expiry 8am ET (/api/cron/staff-expiry): email her + owners 3 days before; on the date switch to member, log "expired". Leaving staff clears end date + badge.
 - Tested iteration_62 (backend 12/13 -> all fixes applied, frontend pass).
+
+## 2026-06 — Team Access = staff only; signups live in Members
+- /api/admin/team returns only role=admin. Team Access shows staff + note pointing to Members tab.
+- Members tab card "Signed up, not a member yet" now lists ALL non-staff accounts without member_status (Google ones too), with per-person "Send reminder" (POST /api/admin/members/{uid}/apply-reminder, 2/day).
+- One-time startup migration (scheduled_runs key migrate:owner_demote_2026_06): femmansaray2@gmail.com and rd7467@aol.com (Evelyn) changed from Admin to member, logged as "Owner request". Owner confirmed Vinny Kudjoe and VandJ stay staff.
+- Self-tested (API + screenshots + migration run-once check). Deploy queued.

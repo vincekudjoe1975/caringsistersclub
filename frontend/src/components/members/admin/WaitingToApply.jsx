@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../../lib/api';
-import { Hourglass, Loader2 } from 'lucide-react';
+import { Hourglass, Loader2, Send } from 'lucide-react';
 
 const d = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
 
@@ -15,11 +15,15 @@ export function WaitingToApply({ toast }) {
     catch (ex) { toast({ title: 'Could not update', description: ex?.response?.data?.detail, variant: 'destructive' }); }
     finally { setBusy(false); }
   };
+  const remind = async (r) => {
+    try { await api.post(`/admin/members/${r.user_id}/apply-reminder`); toast({ title: 'Reminder sent', description: `We emailed ${r.email}.` }); load(); }
+    catch (ex) { toast({ title: 'Could not send', description: ex?.response?.data?.detail, variant: 'destructive' }); }
+  };
   if (!s) return <Loader2 className="animate-spin text-[#B4247E]" size={18} />;
   return (
     <div data-testid="waiting-to-apply">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <p className="text-[13px] text-[#241019]/65 max-w-md">Sisters who created an account but haven't sent their application. They get a friendly reminder after 3 days and a final one after 7 days.</p>
+        <p className="text-[13px] text-[#241019]/65 max-w-md">People who created an account but haven't sent their application. They can't open Admin or the full portal until approved. They get a friendly reminder after 3 days and a final one after 7 days.</p>
         <label className="flex items-center gap-2 text-[13px] font-semibold text-[#3B0A2E] cursor-pointer">
           <input data-testid="apply-reminders-toggle" type="checkbox" checked={s.enabled} disabled={busy} onChange={toggle} className="accent-[#B4247E] w-5 h-5" />
           Send reminders
@@ -30,9 +34,12 @@ export function WaitingToApply({ toast }) {
           {s.rows.map((r) => (
             <li key={r.user_id} data-testid={`waiting-row-${r.user_id}`} className="py-2.5 flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0"><p className="text-[14px] font-semibold text-[#3B0A2E] truncate">{r.name || r.email}</p><p className="text-[12px] text-[#241019]/55 break-all">{r.email} · {r.signed_up_with} · joined {d(r.confirmed_at)}</p></div>
-              <p data-testid={`waiting-reminders-${r.user_id}`} className="text-[12px] text-[#241019]/60 flex items-center gap-1.5"><Hourglass size={12} className="text-[#B4247E]" />
-                {r.reminder_2_at ? `Reminded ${d(r.reminder_1_at)} and ${d(r.reminder_2_at)} (done)` : r.reminder_1_at ? `Reminded ${d(r.reminder_1_at)} · final at 7 days` : r.eligible ? 'First reminder at 3 days' : 'Joined before reminders started'}
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p data-testid={`waiting-reminders-${r.user_id}`} className="text-[12px] text-[#241019]/60 flex items-center gap-1.5"><Hourglass size={12} className="text-[#B4247E]" />
+                  {!r.email_confirmed ? 'Hasn\'t confirmed her email yet' : r.manual_reminder_at ? `Reminder sent ${d(r.manual_reminder_at)}` : r.reminder_2_at ? `Reminded ${d(r.reminder_1_at)} and ${d(r.reminder_2_at)} (done)` : r.reminder_1_at ? `Reminded ${d(r.reminder_1_at)} · final at 7 days` : r.eligible ? 'First reminder at 3 days' : 'Joined before reminders started'}
+                </p>
+                {r.email_confirmed && <button data-testid={`waiting-remind-btn-${r.user_id}`} onClick={() => remind(r)} className="rounded-full px-3 py-1 text-[12px] font-semibold border border-[#3B0A2E]/15 text-[#3B0A2E] hover:border-[#B4247E] hover:text-[#B4247E] flex items-center gap-1 transition-colors"><Send size={12} /> Send reminder</button>}
+              </div>
             </li>
           ))}
         </ul>
